@@ -1,9 +1,11 @@
 #include "document.h"
 
-Document::Document(QSize size) : size_(size) {}
+Document::Document(QSize size) : layer_(size, QImage::Format_RGBA8888) {
+    layer_.fill(Qt::white);
+}
 
-QImage Document::render() const {
-    QImage img(size_, QImage::Format_RGBA8888);
-    img.fill(Qt::white);
-    return img;
+QImage Document::render() const { return layer_; }
+
+void Document::stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples) {
+    paintStroke(brush.get(), layer_, samples);
 }

@@ -77,6 +77,29 @@ static bool bundledPencilLoads() {
     return b && mypaint_brush_get_base_value(b.get(), MYPAINT_BRUSH_SETTING_OPAQUE) == 0.7f;
 }
 
+// A recorded pen-sample list (pressure ramping up along a wave) replayed with the pencil renders as the golden.
+static bool replayedPencilStrokeMatchesGolden() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    std::vector<PenSample> samples;
+    for (int i = 0; i < 16; i++)
+        samples.push_back({4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01});
+    Document doc(QSize(64, 64));
+    doc.stroke(pencil, samples);
+    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage golden(GOLDEN_DIR "/pencil_wave_64x64.pgm");
+    bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
+    if (!same) {  // write plain-text PGM (Qt only writes binary) to eyeball and copy into golden/
+        if (FILE* f = std::fopen("actual_pencil_wave.pgm", "w")) {
+            std::fprintf(f, "P2\n%d %d\n255\n", got.width(), got.height());
+            for (int y = 0; y < got.height(); y++)
+                for (int x = 0; x < got.width(); x++) std::fprintf(f, "%d%c", got.constScanLine(y)[x], x + 1 < got.width() ? ' ' : '\n');
+            std::fclose(f);
+        }
+    }
+    return same;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -90,5 +113,6 @@ int main() {
     run("spiroMatchesReference", spiroMatchesReference);
     run("spiroFailsInsteadOfGarbage", spiroFailsInsteadOfGarbage);
     run("bundledPencilLoads", bundledPencilLoads);
+    run("replayedPencilStrokeMatchesGolden", replayedPencilStrokeMatchesGolden);
     return failed != 0;
 }
