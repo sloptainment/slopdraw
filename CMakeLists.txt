@@ -11,6 +11,10 @@ add_library(mydraw_core src/document.cpp)
 target_include_directories(mydraw_core PUBLIC src)
 target_link_libraries(mydraw_core PUBLIC Qt6::Gui)
 
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+add_executable(mydraw src/main.cpp)
+target_link_libraries(mydraw PRIVATE mydraw_core Qt6::Widgets)
+
 enable_testing()
 add_executable(test_document tests/test_document.cpp)
 target_link_libraries(test_document PRIVATE mydraw_core)
