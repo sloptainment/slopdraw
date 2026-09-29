@@ -1,4 +1,5 @@
 #pragma once
+#include <QColor>
 #include <QImage>
 #include <QSize>
 #include <memory>
@@ -14,6 +15,8 @@ public:
     // continuing = true carries on the current stroke (live pen input); otherwise a new stroke starts.
     // One stroke (a non-continuing call plus the continuing ones after it) is one undo step.
     void stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples, bool continuing = false);
+    // The visible (composite) color at a document pixel; an invalid QColor when p is off the canvas.
+    QColor colorAt(QPoint p) const;
     // Each returns false when there is nothing to undo / redo.
     bool undo();
     bool redo();

@@ -175,6 +175,18 @@ static bool budgetDropsOldestKeepsNewest() {
     return doc.undo() && doc.render() == first && !doc.undo();
 }
 
+// After the pencil wave, colorAt reads the golden's gray at a painted pixel (53,34), white elsewhere, and invalid off the canvas.
+static bool colorAtReadsCompositePixel() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    for (int i = 0; i < 16; i++)  // the golden's samples, as in replayedPencilStrokeMatchesGolden
+        doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
+    QColor painted = doc.colorAt({53, 34}), white = doc.colorAt({0, 0});
+    return painted == QColor(131, 131, 131, 255) && white == QColor(255, 255, 255, 255) &&
+           !doc.colorAt({-1, 0}).isValid() && !doc.colorAt({64, 0}).isValid() && !doc.colorAt({0, 64}).isValid();
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -194,5 +206,6 @@ int main() {
     run("newStrokeAfterUndoDiscardsRedo", newStrokeAfterUndoDiscardsRedo);
     run("liveFedStrokeIsOneUndoStep", liveFedStrokeIsOneUndoStep);
     run("budgetDropsOldestKeepsNewest", budgetDropsOldestKeepsNewest);
+    run("colorAtReadsCompositePixel", colorAtReadsCompositePixel);
     return failed != 0;
 }

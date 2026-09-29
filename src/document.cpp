@@ -34,6 +34,9 @@ Document::Document(QSize size, qsizetype undoBudget) : layer_(size, QImage::Form
 
 QImage Document::render() const { return layer_; }
 
+// ponytail: one layer, so composite == layer_; composite the stack here when #44 lands
+QColor Document::colorAt(QPoint p) const { return layer_.rect().contains(p) ? layer_.pixelColor(p) : QColor(); }
+
 void Document::stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples, bool continuing) {
     if (!continuing || strokeStart_.isNull()) {
         seal();
