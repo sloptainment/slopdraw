@@ -86,6 +86,11 @@ void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample
     if (!continuing) {
         mypaint_brush_reset(brush);
         mypaint_brush_new_stroke(brush);
+        // slow_tracking pulls the first sample toward the previous stroke's end unless dtime > libmypaint's max_dtime (5s); a long-dt call at the start point makes the reset land there without painting
+        if (!samples.empty()) {
+            const auto& p = samples.front();
+            mypaint_brush_stroke_to(brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, 6.0);
+        }
     }
     for (const auto& p : samples) mypaint_brush_stroke_to(brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, p.dt);
 }

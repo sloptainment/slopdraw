@@ -195,7 +195,7 @@ static bool colorAtReadsCompositePixel() {
     for (int i = 0; i < 16; i++)  // the golden's samples, as in replayedPencilStrokeMatchesGolden
         doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
     QColor painted = doc.colorAt({53, 34}), white = doc.colorAt({0, 0});
-    return painted == QColor(131, 131, 131, 255) && white == QColor(255, 255, 255, 255) &&
+    return painted == QColor(137, 137, 137, 255) && white == QColor(255, 255, 255, 255) &&
            !doc.colorAt({-1, 0}).isValid() && !doc.colorAt({64, 0}).isValid() && !doc.colorAt({0, 64}).isValid();
 }
 
@@ -221,11 +221,11 @@ static bool eraserStrokeErasesAndUndoes() {
             std::fclose(f);
         }
     }
-    bool lighter = doc.colorAt({53, 34}).red() > 131;  // the pixel colorAtReadsCompositePixel finds at 131 after painting
+    bool lighter = doc.colorAt({53, 34}).red() > 137;  // the pixel colorAtReadsCompositePixel finds at 137 after painting
     return same && lighter && doc.undo() && doc.render() == painted;
 }
 
-// The pencil wave painted after setBrushColor(red) is red at (53,34), where the default gray left 131.
+// The pencil wave painted after setBrushColor(red) is red at (53,34), where the default gray left 137.
 static bool brushColorPaintsInThatColor() {
     auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
     if (!pencil) return false;
@@ -234,7 +234,7 @@ static bool brushColorPaintsInThatColor() {
     for (int i = 0; i < 16; i++)  // the golden's samples, as in colorAtReadsCompositePixel
         doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
     QColor c = doc.colorAt({53, 34});
-    return c == QColor(255, 131, 131, 255);
+    return c == QColor(255, 137, 137, 255);
 }
 
 // The pencil wave painted with a larger radius covers more pixels, and with lower opacity is lighter at (53,34), than the default.
@@ -256,6 +256,23 @@ static bool brushRadiusAndOpacityChangeTheStroke() {
     };
     QImage base = render(0, 0), big = render(4, 0), faint = render(0, 0.2f);
     return inked(big) > inked(base) && faint.pixelColor(53, 34).value() > base.pixelColor(53, 34).value();
+}
+
+// Fed as Canvas does (first sample continuing=false, dt 0), a second stroke far from the first leaves the pixels between them white, and is its own undo step.
+static bool secondStrokeDoesNotJoinFirst() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    auto live = [&](float x0, float y0) {
+        for (int i = 0; i < 5; i++) doc.stroke(pencil, {{x0 + 1.f * i, y0 + 1.f * i, 0.5f, 0, 0, i ? 0.01 : 0.0}}, i > 0);
+    };
+    live(10, 10);
+    QImage first = doc.render().copy();
+    live(50, 50);
+    QImage both = doc.render();
+    for (int t = 23; t <= 41; t++)  // the line from (14,14) to (50,50), clear of both strokes' dabs
+        if (both.pixelColor(t, t) != QColor(Qt::white)) return false;
+    return doc.undo() && doc.render() == first;
 }
 
 int main() {
@@ -282,5 +299,6 @@ int main() {
     run("eraserStrokeErasesAndUndoes", eraserStrokeErasesAndUndoes);
     run("brushColorPaintsInThatColor", brushColorPaintsInThatColor);
     run("brushRadiusAndOpacityChangeTheStroke", brushRadiusAndOpacityChangeTheStroke);
+    run("secondStrokeDoesNotJoinFirst", secondStrokeDoesNotJoinFirst);
     return failed != 0;
 }
