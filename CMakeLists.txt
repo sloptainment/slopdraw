@@ -16,6 +16,7 @@ target_link_libraries(mydraw_core PUBLIC Qt6::Gui PkgConfig::MYPAINT)
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 add_executable(mydraw src/main.cpp)
 target_link_libraries(mydraw PRIVATE mydraw_core Qt6::Widgets)
+target_compile_definitions(mydraw PRIVATE BRUSH_DIR="${CMAKE_SOURCE_DIR}/brushes")
 
 enable_testing()
 add_executable(test_document tests/test_document.cpp)

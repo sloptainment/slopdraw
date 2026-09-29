@@ -100,6 +100,17 @@ static bool replayedPencilStrokeMatchesGolden() {
     return same;
 }
 
+// The same samples fed one call at a time (as live pen events arrive) render as the same golden.
+static bool liveFedPencilStrokeMatchesGolden() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    for (int i = 0; i < 16; i++)
+        doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
+    QImage golden(GOLDEN_DIR "/pencil_wave_64x64.pgm");
+    return !golden.isNull() && doc.render().convertToFormat(QImage::Format_Grayscale8) == golden.convertToFormat(QImage::Format_Grayscale8);
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -114,5 +125,6 @@ int main() {
     run("spiroFailsInsteadOfGarbage", spiroFailsInsteadOfGarbage);
     run("bundledPencilLoads", bundledPencilLoads);
     run("replayedPencilStrokeMatchesGolden", replayedPencilStrokeMatchesGolden);
+    run("liveFedPencilStrokeMatchesGolden", liveFedPencilStrokeMatchesGolden);
     return failed != 0;
 }

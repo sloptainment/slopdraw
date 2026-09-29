@@ -59,7 +59,7 @@ void getColor(MyPaintSurface* s, float x, float y, float radius, float* r, float
 
 }  // namespace
 
-void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample>& samples) {
+void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample>& samples, bool continuing) {
     ImageSurface s;
     s.draw_dab = drawDab;
     s.get_color = getColor;
@@ -69,7 +69,9 @@ void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample
     s.save_png = nullptr;
     s.refcount = 1;
     s.img = &layer;
-    mypaint_brush_reset(brush);
-    mypaint_brush_new_stroke(brush);
+    if (!continuing) {
+        mypaint_brush_reset(brush);
+        mypaint_brush_new_stroke(brush);
+    }
     for (const auto& p : samples) mypaint_brush_stroke_to(brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, p.dt);
 }

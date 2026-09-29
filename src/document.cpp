@@ -6,6 +6,6 @@ Document::Document(QSize size) : layer_(size, QImage::Format_RGBA8888) {
 
 QImage Document::render() const { return layer_; }
 
-void Document::stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples) {
-    paintStroke(brush.get(), layer_, samples);
+void Document::stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples, bool continuing) {
+    paintStroke(brush.get(), layer_, samples, continuing);
 }

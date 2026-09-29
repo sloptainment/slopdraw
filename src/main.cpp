@@ -7,27 +7,31 @@
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QPainter>
+#include <QTabletEvent>
 #include <QWheelEvent>
 #include <cmath>
 
 // Krita Default navigation (/r/5): middle drag or Space+left drag pans; +Ctrl zooms, +Shift rotates; wheel zooms; M mirrors.
+// Painting: the pen tip, or plain left button at pressure 0.5, feeds pen samples to the Document.
 class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); }
-    void setImage(const QImage& image) { image_ = image; view_ = View(); update(); }
+    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); update(); }
 
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::SmoothPixmapTransform);
         p.setTransform(view_.matrix());
-        p.drawImage(0, 0, image_);
+        p.drawImage(0, 0, doc_.render());
     }
     void mousePressEvent(QMouseEvent* e) override {
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
+        if (e->button() == Qt::LeftButton && !space_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
     }
     void mouseMoveEvent(QMouseEvent* e) override {
+        if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
         if (!dragging_) return;
         QPointF d = e->position() - last_;
         last_ = e->position();
@@ -36,7 +40,14 @@ protected:
         else view_.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { dragging_ = false; }
+    void mouseReleaseEvent(QMouseEvent*) override { dragging_ = painting_ = false; }
+    void tabletEvent(QTabletEvent* e) override {
+        if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
+        e->accept();
+        if (e->type() == QEvent::TabletRelease) painting_ = false;
+        else if (e->pointerType() == QPointingDevice::PointerType::Pen && (e->type() == QEvent::TabletPress || painting_))
+            paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp());  // libmypaint tilt is -1..1 for +-60 degrees
+    }
     void wheelEvent(QWheelEvent* e) override {
         view_.zoomAt(e->position(), std::pow(1.1, e->angleDelta().y() / 120.0));
         update();
@@ -51,10 +62,20 @@ protected:
     }
 
 private:
-    QImage image_;
+    void paintAt(QPointF pos, float pressure, float xtilt, float ytilt, ulong ms) {
+        if (!brush_) return;
+        QPointF d = view_.toDoc(pos);
+        doc_.stroke(brush_, {{float(d.x()), float(d.y()), pressure, xtilt, ytilt, painting_ ? (ms - lastMs_) / 1000.0 : 0.0}}, painting_);
+        painting_ = true;
+        lastMs_ = ms;
+        update();
+    }
+    Document doc_{QSize()};
+    std::shared_ptr<MyPaintBrush> brush_ = loadBrush(BRUSH_DIR "/pencil.myb");
+    ulong lastMs_ = 0;
     View view_;
     QPointF last_;
-    bool dragging_ = false, space_ = false;
+    bool dragging_ = false, space_ = false, painting_ = false;
 };
 
 int main(int argc, char** argv) {
@@ -72,7 +93,7 @@ int main(int argc, char** argv) {
         if (!ok) return;
         int h = QInputDialog::getInt(&window, "New", "Height (px):", 768, 1, 32768, 1, &ok);
         if (!ok) return;
-        canvas->setImage(Document(QSize(w, h)).render());
+        canvas->setDocument(Document(QSize(w, h)));
     });
 
     window.resize(1024, 768);
