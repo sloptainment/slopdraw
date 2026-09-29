@@ -1,6 +1,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include "brush.h"
 #include "document.h"
 #include "spiro.h"
 #include "spiro_fixtures.h"
@@ -70,6 +71,12 @@ static bool spiroFailsInsteadOfGarbage() {
     return fine && coincident && hairpin;
 }
 
+// The bundled pencil.myb loads, and its "opaque" setting reads back the file's 0.7.
+static bool bundledPencilLoads() {
+    auto b = loadBrush(BRUSH_DIR "/pencil.myb");
+    return b && mypaint_brush_get_base_value(b.get(), MYPAINT_BRUSH_SETTING_OPAQUE) == 0.7f;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -82,5 +89,6 @@ int main() {
     run("viewOpsKeepAnchorFixed", viewOpsKeepAnchorFixed);
     run("spiroMatchesReference", spiroMatchesReference);
     run("spiroFailsInsteadOfGarbage", spiroFailsInsteadOfGarbage);
+    run("bundledPencilLoads", bundledPencilLoads);
     return failed != 0;
 }
