@@ -77,6 +77,18 @@ static bool bundledPencilLoads() {
     return b && mypaint_brush_get_base_value(b.get(), MYPAINT_BRUSH_SETTING_OPAQUE) == 0.7f;
 }
 
+// The bundled brush list includes pencil, is sorted by name, and every entry loads.
+static bool bundledBrushesListAndLoad() {
+    auto list = listBrushes(BRUSH_DIR);
+    bool hasPencil = false;
+    for (size_t i = 0; i < list.size(); i++) {
+        hasPencil |= list[i].name == "pencil";
+        if (i && !(list[i - 1].name < list[i].name)) return false;
+        if (!loadBrush(list[i].path)) return false;
+    }
+    return hasPencil && list.size() > 1;
+}
+
 // A recorded pen-sample list (pressure ramping up along a wave) replayed with the pencil renders as the golden.
 static bool replayedPencilStrokeMatchesGolden() {
     auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
@@ -226,7 +238,8 @@ int main() {
     run("spiroMatchesReference", spiroMatchesReference);
     run("spiroFailsInsteadOfGarbage", spiroFailsInsteadOfGarbage);
     run("bundledPencilLoads", bundledPencilLoads);
-    run("replayedPencilStrokeMatchesGolden", replayedPencilStrokeMatchesGolden);
+    run("bundledBrushesListAndLoad", bundledBrushesListAndLoad);
+    run("replayedPencilStrokeMatchesGolden",replayedPencilStrokeMatchesGolden);
     run("liveFedPencilStrokeMatchesGolden", liveFedPencilStrokeMatchesGolden);
     run("undoRestoresAndRedoReapplies", undoRestoresAndRedoReapplies);
     run("newStrokeAfterUndoDiscardsRedo", newStrokeAfterUndoDiscardsRedo);

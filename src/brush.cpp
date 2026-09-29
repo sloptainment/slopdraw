@@ -1,5 +1,7 @@
 #include "brush.h"
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <algorithm>
 #include <cmath>
 
@@ -9,6 +11,14 @@ std::shared_ptr<MyPaintBrush> loadBrush(const QString& mybPath) {
     std::shared_ptr<MyPaintBrush> b(mypaint_brush_new(), mypaint_brush_unref);
     if (!mypaint_brush_from_string(b.get(), f.readAll().constData())) return nullptr;
     return b;
+}
+
+std::vector<BrushEntry> listBrushes(const QString& dir) {
+    std::vector<BrushEntry> out;
+    for (const QFileInfo& fi : QDir(dir).entryInfoList({"*.myb"}, QDir::Files))
+        out.push_back({fi.completeBaseName(), fi.filePath()});
+    std::sort(out.begin(), out.end(), [](const BrushEntry& a, const BrushEntry& b) { return a.name < b.name; });  // not QDir::Name: that sorts with ".myb" included
+    return out;
 }
 
 namespace {

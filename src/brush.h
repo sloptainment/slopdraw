@@ -8,6 +8,14 @@
 // A libmypaint brush loaded from a .myb file; null if the file is unreadable or not valid brush JSON.
 std::shared_ptr<MyPaintBrush> loadBrush(const QString& mybPath);
 
+// A .myb file in a brush directory: name is the file name without ".myb".
+struct BrushEntry {
+    QString name, path;
+};
+
+// The .myb files directly in dir, sorted by name.
+std::vector<BrushEntry> listBrushes(const QString& dir);
+
 // One pen reading in document coordinates; dt is seconds since the previous sample.
 struct PenSample {
     float x, y, pressure, xtilt, ytilt;
