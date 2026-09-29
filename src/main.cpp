@@ -11,7 +11,7 @@
 #include <QWheelEvent>
 #include <cmath>
 
-// Krita Default navigation (/r/5): middle drag or Space+left drag pans; +Ctrl zooms, +Shift rotates; wheel zooms; M mirrors.
+// Krita Default navigation (/r/5): middle drag or Space+left drag pans; +Ctrl zooms, +Shift rotates; wheel zooms; M mirrors; Ctrl+Z undoes, Ctrl+Shift+Z redoes.
 // Painting: the pen tip, or plain left button at pressure 0.5, feeds pen samples to the Document.
 class Canvas : public QWidget {
 public:
@@ -56,6 +56,10 @@ protected:
         if (e->isAutoRepeat()) return;
         if (e->key() == Qt::Key_Space) space_ = true;
         else if (e->key() == Qt::Key_M) { view_.mirrorAt(rect().center()); update(); }
+        else if (e->key() == Qt::Key_Z && (e->modifiers() & Qt::ControlModifier)) {
+            (e->modifiers() & Qt::ShiftModifier ? doc_.redo() : doc_.undo());
+            update();
+        }
     }
     void keyReleaseEvent(QKeyEvent* e) override {
         if (!e->isAutoRepeat() && e->key() == Qt::Key_Space) space_ = false;

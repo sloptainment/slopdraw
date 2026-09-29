@@ -111,6 +111,70 @@ static bool liveFedPencilStrokeMatchesGolden() {
     return !golden.isNull() && doc.render().convertToFormat(QImage::Format_Grayscale8) == golden.convertToFormat(QImage::Format_Grayscale8);
 }
 
+// A wavy stroke across row y with pressure ramping up, so different y give strokes that touch different pixels.
+static std::vector<PenSample> waveAt(float y) {
+    std::vector<PenSample> samples;
+    for (int i = 0; i < 16; i++) samples.push_back({4.f + 3.8f * i, y + 6.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01});
+    return samples;
+}
+
+// Two strokes, undo twice gives the blank layer; redo brings back the first stroke, redo again the second.
+static bool undoRestoresAndRedoReapplies() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    QImage blank = doc.render().copy();
+    doc.stroke(pencil, waveAt(16));
+    QImage first = doc.render().copy();
+    doc.stroke(pencil, waveAt(48));
+    QImage second = doc.render().copy();
+    if (first == blank || second == first) return false;  // the strokes must have painted something
+    bool a = doc.undo() && doc.render() == first;
+    bool b = doc.undo() && doc.render() == blank;
+    bool c = !doc.undo();
+    bool d = doc.redo() && doc.render() == first;
+    bool e = doc.redo() && doc.render() == second;
+    bool f = !doc.redo();
+    return a && b && c && d && e && f;
+}
+
+// A stroke after an undo replaces the undone one: redo has nothing, and undo goes back through the new stroke.
+static bool newStrokeAfterUndoDiscardsRedo() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    QImage blank = doc.render().copy();
+    doc.stroke(pencil, waveAt(16));
+    doc.undo();
+    doc.stroke(pencil, waveAt(48));
+    QImage second = doc.render().copy();
+    bool noRedo = !doc.redo() && doc.render() == second;
+    bool back = doc.undo() && doc.render() == blank && !doc.undo();
+    return noRedo && back;
+}
+
+// Strokes fed one sample per call (live pen input) are still one undo step.
+static bool liveFedStrokeIsOneUndoStep() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    QImage blank = doc.render().copy();
+    auto samples = waveAt(32);
+    for (size_t i = 0; i < samples.size(); i++) doc.stroke(pencil, {samples[i]}, i > 0);
+    return doc.render() != blank && doc.undo() && doc.render() == blank && !doc.undo();
+}
+
+// With a budget of one byte only the newest step survives: undo reaches the state before it, and no further.
+static bool budgetDropsOldestKeepsNewest() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    Document doc(QSize(64, 64), 1);
+    doc.stroke(pencil, waveAt(16));
+    QImage first = doc.render().copy();
+    doc.stroke(pencil, waveAt(48));
+    return doc.undo() && doc.render() == first && !doc.undo();
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -126,5 +190,9 @@ int main() {
     run("bundledPencilLoads", bundledPencilLoads);
     run("replayedPencilStrokeMatchesGolden", replayedPencilStrokeMatchesGolden);
     run("liveFedPencilStrokeMatchesGolden", liveFedPencilStrokeMatchesGolden);
+    run("undoRestoresAndRedoReapplies", undoRestoresAndRedoReapplies);
+    run("newStrokeAfterUndoDiscardsRedo", newStrokeAfterUndoDiscardsRedo);
+    run("liveFedStrokeIsOneUndoStep", liveFedStrokeIsOneUndoStep);
+    run("budgetDropsOldestKeepsNewest", budgetDropsOldestKeepsNewest);
     return failed != 0;
 }
