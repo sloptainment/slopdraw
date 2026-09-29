@@ -14,8 +14,10 @@ std::shared_ptr<MyPaintBrush> loadBrush(const QString& mybPath) {
 namespace {
 
 // A MyPaintSurface over a QImage; the layer is opaque, so alpha_eraser, lock_alpha and colorize are ignored.
+// eraser blends dabs toward white instead of their color (#79; transparent once #44's layers exist).
 struct ImageSurface : MyPaintSurface {
     QImage* img;
+    bool eraser;
 };
 
 // Calls fn(pixel, opacity) for each pixel the dab covers, with libmypaint's hardness falloff (brushmodes.c).
@@ -40,7 +42,8 @@ void forEachDabPixel(QImage& img, float x, float y, float radius, float hardness
 
 int drawDab(MyPaintSurface* s, float x, float y, float radius, float r, float g, float b, float opaque, float hardness,
             float, float aspect, float angle, float, float) {
-    const float rgb[3] = {r, g, b};
+    const bool eraser = static_cast<ImageSurface*>(s)->eraser;
+    const float rgb[3] = {eraser ? 1 : r, eraser ? 1 : g, eraser ? 1 : b};
     forEachDabPixel(*static_cast<ImageSurface*>(s)->img, x, y, radius, hardness, aspect, angle, [&](uchar* p, float opa) {
         const float a = opa * opaque;
         for (int c = 0; c < 3; c++) p[c] = uchar(std::lround(a * rgb[c] * 255 + (1 - a) * p[c]));
@@ -59,7 +62,7 @@ void getColor(MyPaintSurface* s, float x, float y, float radius, float* r, float
 
 }  // namespace
 
-void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample>& samples, bool continuing) {
+void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample>& samples, bool continuing, bool eraser) {
     ImageSurface s;
     s.draw_dab = drawDab;
     s.get_color = getColor;
@@ -69,6 +72,7 @@ void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample
     s.save_png = nullptr;
     s.refcount = 1;
     s.img = &layer;
+    s.eraser = eraser;
     if (!continuing) {
         mypaint_brush_reset(brush);
         mypaint_brush_new_stroke(brush);

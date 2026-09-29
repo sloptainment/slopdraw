@@ -187,6 +187,32 @@ static bool colorAtReadsCompositePixel() {
            !doc.colorAt({-1, 0}).isValid() && !doc.colorAt({64, 0}).isValid() && !doc.colorAt({0, 64}).isValid();
 }
 
+// Replaying the pencil wave's samples with the eraser flag lightens the painted stroke (golden), and undo restores the painted-only image.
+static bool eraserStrokeErasesAndUndoes() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    std::vector<PenSample> samples;  // the golden's samples, as in replayedPencilStrokeMatchesGolden
+    for (int i = 0; i < 16; i++)
+        samples.push_back({4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01});
+    Document doc(QSize(64, 64));
+    doc.stroke(pencil, samples);
+    QImage painted = doc.render().copy();
+    doc.stroke(pencil, samples, false, true);
+    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage golden(GOLDEN_DIR "/pencil_wave_erased_64x64.pgm");
+    bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
+    if (!same) {  // write plain-text PGM to eyeball and copy into golden/
+        if (FILE* f = std::fopen("actual_pencil_wave_erased.pgm", "w")) {
+            std::fprintf(f, "P2\n%d %d\n255\n", got.width(), got.height());
+            for (int y = 0; y < got.height(); y++)
+                for (int x = 0; x < got.width(); x++) std::fprintf(f, "%d%c", got.constScanLine(y)[x], x + 1 < got.width() ? ' ' : '\n');
+            std::fclose(f);
+        }
+    }
+    bool lighter = doc.colorAt({53, 34}).red() > 131;  // the pixel colorAtReadsCompositePixel finds at 131 after painting
+    return same && lighter && doc.undo() && doc.render() == painted;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -207,5 +233,6 @@ int main() {
     run("liveFedStrokeIsOneUndoStep", liveFedStrokeIsOneUndoStep);
     run("budgetDropsOldestKeepsNewest", budgetDropsOldestKeepsNewest);
     run("colorAtReadsCompositePixel", colorAtReadsCompositePixel);
+    run("eraserStrokeErasesAndUndoes", eraserStrokeErasesAndUndoes);
     return failed != 0;
 }

@@ -37,13 +37,13 @@ QImage Document::render() const { return layer_; }
 // ponytail: one layer, so composite == layer_; composite the stack here when #44 lands
 QColor Document::colorAt(QPoint p) const { return layer_.rect().contains(p) ? layer_.pixelColor(p) : QColor(); }
 
-void Document::stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples, bool continuing) {
+void Document::stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples, bool continuing, bool eraser) {
     if (!continuing || strokeStart_.isNull()) {
         seal();
         history_.resize(applied_);  // a new edit discards the redo branch
         strokeStart_ = layer_;
     }
-    paintStroke(brush.get(), layer_, samples, continuing);
+    paintStroke(brush.get(), layer_, samples, continuing, eraser);
 }
 
 void Document::seal() {
