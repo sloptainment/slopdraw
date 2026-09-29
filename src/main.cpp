@@ -45,8 +45,9 @@ protected:
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
         if (e->type() == QEvent::TabletRelease) painting_ = false;
-        else if (e->pointerType() == QPointingDevice::PointerType::Pen && (e->type() == QEvent::TabletPress || painting_))
-            paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp());  // libmypaint tilt is -1..1 for +-60 degrees
+        else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
+            paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
+                    e->pointerType() == QPointingDevice::PointerType::Eraser);  // the flag is per call (b20)
     }
     void wheelEvent(QWheelEvent* e) override {
         view_.zoomAt(e->position(), std::pow(1.1, e->angleDelta().y() / 120.0));
@@ -66,10 +67,10 @@ protected:
     }
 
 private:
-    void paintAt(QPointF pos, float pressure, float xtilt, float ytilt, ulong ms) {
+    void paintAt(QPointF pos, float pressure, float xtilt, float ytilt, ulong ms, bool eraser = false) {
         if (!brush_) return;
         QPointF d = view_.toDoc(pos);
-        doc_.stroke(brush_, {{float(d.x()), float(d.y()), pressure, xtilt, ytilt, painting_ ? (ms - lastMs_) / 1000.0 : 0.0}}, painting_);
+        doc_.stroke(brush_, {{float(d.x()), float(d.y()), pressure, xtilt, ytilt, painting_ ? (ms - lastMs_) / 1000.0 : 0.0}}, painting_, eraser);
         painting_ = true;
         lastMs_ = ms;
         update();
