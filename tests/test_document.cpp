@@ -1,6 +1,9 @@
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include "document.h"
+#include "spiro.h"
+#include "spiro_fixtures.h"
 #include "view.h"
 
 // New Document renders white, matching a golden PNG.
@@ -35,6 +38,38 @@ static bool viewOpsKeepAnchorFixed() {
     return near(v.toDoc(a), under);
 }
 
+// Each fixture node list becomes the same Beziers as the reference spiro.c, within 1e-6.
+static bool spiroMatchesReference() {
+    bool ok = true;
+    for (const auto& f : kSpiroFixtures) {
+        auto path = spiroToPath(f.nodes, f.closed);
+        bool same = path && size_t(path->elementCount()) == [&] {  // a curve is 3 elements, a line or move 1
+            size_t n = 0;
+            for (auto& r : f.out) n += r[0] == 2 ? 3 : 1;
+            return n;
+        }();
+        for (int i = 0, row = 0; same && i < path->elementCount(); row++) {
+            auto& r = f.out[row];
+            int k = r[0] == 2 ? 3 : 1;
+            for (int j = 0; j < k; j++)
+                same = same && near(path->elementAt(i + j), {r[1 + 2 * j], r[2 + 2 * j]});
+            i += k;
+        }
+        if (!same) std::printf("  mismatch: %s\n", f.name);
+        ok = ok && same;
+    }
+    return ok;
+}
+
+// Coincident nodes and a path the solver cannot fit give no curve, rather than NaN Beziers.
+static bool spiroFailsInsteadOfGarbage() {
+    using T = SpiroType;
+    bool fine = spiroToPath({{0, 0, T::G2}, {50, 50, T::G2}, {60, 50, T::G2}, {100, 0, T::G2}}, false).has_value();
+    bool coincident = !spiroToPath({{0, 0, T::G2}, {50, 50, T::G2}, {50, 50, T::G2}, {100, 0, T::G2}}, false);
+    bool hairpin = !spiroToPath({{0, 0, T::G2}, {100, 0, T::G2}, {0, 5, T::G2}, {100, 10, T::G2}, {0, 15, T::G2}, {100, 20, T::G2}}, false);
+    return fine && coincident && hairpin;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -45,5 +80,7 @@ int main() {
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);
     run("viewOpsKeepAnchorFixed", viewOpsKeepAnchorFixed);
+    run("spiroMatchesReference", spiroMatchesReference);
+    run("spiroFailsInsteadOfGarbage", spiroFailsInsteadOfGarbage);
     return failed != 0;
 }

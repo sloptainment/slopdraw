@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Gui)
 
 # Headless core: QtGui only, never QtWidgets (#35).
-add_library(mydraw_core src/document.cpp)
+add_library(mydraw_core src/document.cpp src/spiro.cpp)
 target_include_directories(mydraw_core PUBLIC src)
 target_link_libraries(mydraw_core PUBLIC Qt6::Gui)
 
