@@ -225,6 +225,18 @@ static bool eraserStrokeErasesAndUndoes() {
     return same && lighter && doc.undo() && doc.render() == painted;
 }
 
+// The pencil wave painted after setBrushColor(red) is red at (53,34), where the default gray left 131.
+static bool brushColorPaintsInThatColor() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    setBrushColor(pencil.get(), Qt::red);
+    Document doc(QSize(64, 64));
+    for (int i = 0; i < 16; i++)  // the golden's samples, as in colorAtReadsCompositePixel
+        doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
+    QColor c = doc.colorAt({53, 34});
+    return c == QColor(255, 131, 131, 255);
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -247,5 +259,6 @@ int main() {
     run("budgetDropsOldestKeepsNewest", budgetDropsOldestKeepsNewest);
     run("colorAtReadsCompositePixel", colorAtReadsCompositePixel);
     run("eraserStrokeErasesAndUndoes", eraserStrokeErasesAndUndoes);
+    run("brushColorPaintsInThatColor", brushColorPaintsInThatColor);
     return failed != 0;
 }

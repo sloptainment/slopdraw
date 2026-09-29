@@ -89,3 +89,9 @@ void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample
     }
     for (const auto& p : samples) mypaint_brush_stroke_to(brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, p.dt);
 }
+
+void setBrushColor(MyPaintBrush* brush, const QColor& color) {
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_COLOR_H, std::max(0.f, color.hsvHueF()));  // hue is -1 for grays
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_COLOR_S, color.hsvSaturationF());
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_COLOR_V, color.valueF());
+}

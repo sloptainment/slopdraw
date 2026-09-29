@@ -1,6 +1,7 @@
 #pragma once
 #include <libmypaint/mypaint-brush.h>
 #include <memory>
+#include <QColor>
 #include <QImage>
 #include <QString>
 #include <vector>
@@ -15,6 +16,9 @@ struct BrushEntry {
 
 // The .myb files directly in dir, sorted by name.
 std::vector<BrushEntry> listBrushes(const QString& dir);
+
+// Sets the brush's base color (libmypaint color_h/color_s/color_v) for the strokes painted after.
+void setBrushColor(MyPaintBrush* brush, const QColor& color);
 
 // One pen reading in document coordinates; dt is seconds since the previous sample.
 struct PenSample {

@@ -2,11 +2,17 @@
 #include "view.h"
 
 #include <QApplication>
+#include <QDockWidget>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QPainter>
+#include <QConicalGradient>
+#include <QPainterPath>
+#include <QMouseEvent>
+#include <algorithm>
+#include <functional>
 #include <QTabletEvent>
 #include <QWheelEvent>
 #include <cmath>
@@ -17,6 +23,7 @@ class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); }
     void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); update(); }
+    void setColor(const QColor& c) { if (brush_) setBrushColor(brush_.get(), c); }
 
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -83,12 +90,81 @@ private:
     bool dragging_ = false, space_ = false, painting_ = false;
 };
 
+// Hue ring around a saturation/value square. Dragging either calls onChange with the new color; setColor moves it from outside.
+class ColorPicker : public QWidget {
+public:
+    std::function<void(const QColor&)> onChange;
+    ColorPicker() { setFixedSize(180, 180); }
+    void setColor(const QColor& c) {
+        if (c.hsvHueF() >= 0) h_ = c.hsvHueF();  // grays have no hue: keep the last one
+        s_ = c.hsvSaturationF();
+        v_ = c.valueF();
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QConicalGradient g(center(), 0);
+        for (int i = 0; i <= 6; i++) g.setColorAt(i / 6.0, QColor::fromHsvF(i % 6 / 6.0, 1, 1));  // conical angles run counter-clockwise, like the hue math below
+        p.setPen(QPen(QBrush(g), kRing));
+        p.drawEllipse(center(), kOuter - kRing / 2, kOuter - kRing / 2);
+        QImage sq(kN, kN, QImage::Format_RGB32);
+        for (int y = 0; y < kN; y++)
+            for (int x = 0; x < kN; x++) sq.setPixelColor(x, y, QColor::fromHsvF(h_, x / double(kN - 1), 1 - y / double(kN - 1)));
+        p.drawImage(square(), sq);
+        QPointF hue = center() + (kOuter - kRing / 2) * QPointF(std::cos(h_ * 2 * M_PI), -std::sin(h_ * 2 * M_PI));
+        QPointF sv = square().topLeft() + QPointF(s_ * square().width(), (1 - v_) * square().height());
+        for (QPointF m : {hue, sv}) {  // white ring on black, visible on any color
+            p.setPen(QPen(Qt::black, 3));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(m, 5, 5);
+            p.setPen(QPen(Qt::white, 1.5));
+            p.drawEllipse(m, 5, 5);
+        }
+    }
+    void mousePressEvent(QMouseEvent* e) override {
+        QPointF d = e->position() - center();
+        double r = std::hypot(d.x(), d.y());
+        mode_ = r >= kOuter - kRing && r <= kOuter ? Ring : square().contains(e->position()) ? Square : None;
+        mouseMoveEvent(e);
+    }
+    void mouseMoveEvent(QMouseEvent* e) override {
+        QPointF d = e->position() - center();
+        if (mode_ == Ring) h_ = std::fmod(std::atan2(-d.y(), d.x()) / (2 * M_PI) + 1, 1.0);
+        else if (mode_ == Square) {
+            s_ = std::clamp((e->position().x() - square().left()) / square().width(), 0.0, 1.0);
+            v_ = 1 - std::clamp((e->position().y() - square().top()) / square().height(), 0.0, 1.0);
+        } else return;
+        update();
+        if (onChange) onChange(QColor::fromHsvF(h_, s_, v_));
+    }
+    void mouseReleaseEvent(QMouseEvent*) override { mode_ = None; }
+
+private:
+    static constexpr int kOuter = 88, kRing = 16, kN = 64;  // kN: resolution of the square's image, scaled up to fit
+    enum Mode { None, Ring, Square } mode_ = None;
+    QPointF center() const { return {width() / 2.0, height() / 2.0}; }
+    QRectF square() const {  // the square inscribed in the ring's inner circle
+        double half = (kOuter - kRing - 4) / std::sqrt(2.0);
+        return {center().x() - half, center().y() - half, 2 * half, 2 * half};
+    }
+    double h_ = 0, s_ = 0, v_ = 0;
+};
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
 
     QMainWindow window;
     auto* canvas = new Canvas;
     window.setCentralWidget(canvas);
+
+    auto* picker = new ColorPicker;
+    picker->onChange = [canvas](const QColor& c) { canvas->setColor(c); };
+    auto* colorDock = new QDockWidget("Color", &window);
+    colorDock->setWidget(picker);
+    window.addDockWidget(Qt::RightDockWidgetArea, colorDock);
 
     auto* fileNew = window.menuBar()->addMenu("&File")->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);
