@@ -95,3 +95,11 @@ void setBrushColor(MyPaintBrush* brush, const QColor& color) {
     mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_COLOR_S, color.hsvSaturationF());
     mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_COLOR_V, color.valueF());
 }
+
+void setBrushRadius(MyPaintBrush* brush, float radius) {
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, std::log(radius));
+}
+
+void setBrushOpacity(MyPaintBrush* brush, float opacity) {
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_OPAQUE, opacity);
+}

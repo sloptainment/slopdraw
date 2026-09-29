@@ -5,6 +5,10 @@
 #include <QDockWidget>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QLabel>
+#include <QListWidget>
+#include <QSlider>
+#include <QVBoxLayout>
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QPainter>
@@ -24,6 +28,18 @@ public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); }
     void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); update(); }
     void setColor(const QColor& c) { if (brush_) setBrushColor(brush_.get(), c); }
+    void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); }
+    void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
+    float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
+    float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
+    // Swaps the brush; color, size and opacity carry over (the dock's sliders are global, not per brush).
+    void setBrush(const QString& mybPath) {
+        auto b = loadBrush(mybPath);
+        if (!b) return;
+        for (auto s : {MYPAINT_BRUSH_SETTING_COLOR_H, MYPAINT_BRUSH_SETTING_COLOR_S, MYPAINT_BRUSH_SETTING_COLOR_V, MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, MYPAINT_BRUSH_SETTING_OPAQUE})
+            mypaint_brush_set_base_value(b.get(), s, mypaint_brush_get_base_value(brush_.get(), s));
+        brush_ = b;
+    }
 
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -165,6 +181,30 @@ int main(int argc, char** argv) {
     auto* colorDock = new QDockWidget("Color", &window);
     colorDock->setWidget(picker);
     window.addDockWidget(Qt::RightDockWidgetArea, colorDock);
+
+    auto* brushList = new QListWidget;
+    auto brushes = listBrushes(BRUSH_DIR);
+    for (const auto& b : brushes) brushList->addItem(b.name);
+    brushList->setCurrentRow(std::find_if(brushes.begin(), brushes.end(), [](const BrushEntry& b) { return b.name == "pencil"; }) - brushes.begin());  // matches Canvas's starting brush
+    QObject::connect(brushList, &QListWidget::currentRowChanged, [canvas, brushes](int row) { if (row >= 0) canvas->setBrush(brushes[row].path); });
+    auto* size = new QSlider(Qt::Horizontal);  // radius in px
+    size->setRange(1, 200);
+    size->setValue(std::lround(canvas->radius()));
+    QObject::connect(size, &QSlider::valueChanged, [canvas](int v) { canvas->setRadius(v); });
+    auto* opacity = new QSlider(Qt::Horizontal);  // percent
+    opacity->setRange(1, 100);
+    opacity->setValue(std::lround(canvas->opacity() * 100));
+    QObject::connect(opacity, &QSlider::valueChanged, [canvas](int v) { canvas->setOpacity(v / 100.f); });
+    auto* brushPanel = new QWidget;
+    auto* col = new QVBoxLayout(brushPanel);
+    col->addWidget(brushList);
+    col->addWidget(new QLabel("Size"));
+    col->addWidget(size);
+    col->addWidget(new QLabel("Opacity"));
+    col->addWidget(opacity);
+    auto* brushDock = new QDockWidget("Brushes", &window);
+    brushDock->setWidget(brushPanel);
+    window.addDockWidget(Qt::RightDockWidgetArea, brushDock);
 
     auto* fileNew = window.menuBar()->addMenu("&File")->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);

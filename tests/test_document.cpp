@@ -237,6 +237,27 @@ static bool brushColorPaintsInThatColor() {
     return c == QColor(255, 131, 131, 255);
 }
 
+// The pencil wave painted with a larger radius covers more pixels, and with lower opacity is lighter at (53,34), than the default.
+static bool brushRadiusAndOpacityChangeTheStroke() {
+    auto render = [](float radius, float opacity) {
+        auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+        if (radius) setBrushRadius(pencil.get(), radius);
+        if (opacity) setBrushOpacity(pencil.get(), opacity);
+        Document doc(QSize(64, 64));
+        for (int i = 0; i < 16; i++)  // the golden's samples, as in brushColorPaintsInThatColor
+            doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
+        return doc.render();
+    };
+    auto inked = [](const QImage& im) {
+        int n = 0;
+        for (int y = 0; y < im.height(); y++)
+            for (int x = 0; x < im.width(); x++) n += im.pixelColor(x, y) != QColor(Qt::white);
+        return n;
+    };
+    QImage base = render(0, 0), big = render(4, 0), faint = render(0, 0.2f);
+    return inked(big) > inked(base) && faint.pixelColor(53, 34).value() > base.pixelColor(53, 34).value();
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -260,5 +281,6 @@ int main() {
     run("colorAtReadsCompositePixel", colorAtReadsCompositePixel);
     run("eraserStrokeErasesAndUndoes", eraserStrokeErasesAndUndoes);
     run("brushColorPaintsInThatColor", brushColorPaintsInThatColor);
+    run("brushRadiusAndOpacityChangeTheStroke", brushRadiusAndOpacityChangeTheStroke);
     return failed != 0;
 }
