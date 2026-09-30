@@ -19,6 +19,7 @@
 #include <QMouseEvent>
 #include <algorithm>
 #include <functional>
+#include <optional>
 #include <QTabletEvent>
 #include <QWheelEvent>
 #include <cmath>
@@ -29,14 +30,14 @@
 // Painting: the pen tip, or plain left button at pressure 0.5, feeds pen samples to the Document.
 class Canvas : public QWidget {
 public:
-    Canvas() { setFocusPolicy(Qt::StrongFocus); }
+    Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
     void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return doc_; }
     std::function<void()> onLayersChange;  // fired when the layer stack may have changed outside the Layers dock (undo, redo, new document)
     void setColor(const QColor& c) { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
     std::function<void()> onRadiusChange;  // fired after a drag resize so the Size slider can follow
     std::function<void(const QColor&)> onColorPick;  // fired after Ctrl+click so the Color dock can follow
-    void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); }
+    void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); update(); }
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
@@ -61,6 +62,16 @@ protected:
             p.setPen(pen);
             p.drawPolyline(lasso_.data(), lasso_.size());  // the layer is untouched until pen-up
         }
+        if (cursor_ && brush_ && !fillTool_) {  // brush outline: dark with a light line beside it, readable on any color
+            p.resetTransform();
+            p.setRenderHint(QPainter::Antialiasing);
+            double r = view_.screenRadius(radius());
+            p.setBrush(Qt::NoBrush);
+            p.setPen(Qt::white);
+            p.drawEllipse(*cursor_, r + 1, r + 1);
+            p.setPen(Qt::black);
+            p.drawEllipse(*cursor_, r, r);
+        }
     }
     void mousePressEvent(QMouseEvent* e) override {
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
@@ -71,6 +82,8 @@ protected:
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
     }
     void mouseMoveEvent(QMouseEvent* e) override {
+        if (!resizing_) cursor_ = e->position();  // the circle stays at the press point while Shift+drag resizes
+        update();
         if (resizing_) return resizeTo(e->position());
         if (lassoing_) return lassoAt(e->position(), eraseMode_);
         if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
@@ -86,6 +99,8 @@ protected:
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
+        if (e->type() == QEvent::TabletLeaveProximity) { cursor_.reset(); update(); }
+        else if (!resizing_ || e->type() == QEvent::TabletPress) { cursor_ = e->position(); update(); }
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
         if (e->type() == QEvent::TabletRelease) { endLasso(); painting_ = resizing_ = false; }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) pickAt(e->position());
@@ -96,6 +111,7 @@ protected:
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
                     eraser);  // the flag is per call (b20)
     }
+    void leaveEvent(QEvent*) override { cursor_.reset(); update(); }
     void wheelEvent(QWheelEvent* e) override {
         view_.zoomAt(e->position(), std::pow(1.1, e->angleDelta().y() / 120.0));
         update();
@@ -158,6 +174,7 @@ private:
     ulong lastMs_ = 0;
     View view_;
     QPointF last_;
+    std::optional<QPointF> cursor_;  // pointer position over the canvas, for the brush outline
     bool dragging_ = false, space_ = false, painting_ = false, resizing_ = false;
     QColor color_ = Qt::black;  // matches pencil.myb and the Color dock's start
     QPolygonF lasso_;

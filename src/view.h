@@ -1,6 +1,7 @@
 #pragma once
 #include <QPointF>
 #include <QTransform>
+#include <cmath>
 
 // Document -> view mapping for pan, zoom, rotate and mirror. Ops act in view space.
 class View {
@@ -11,6 +12,7 @@ public:
     void mirrorAt(QPointF a) { about(a, QTransform().scale(-1, 1)); }
     QPointF toView(QPointF doc) const { return m_.map(doc); }
     QPointF toDoc(QPointF view) const { return m_.inverted().map(view); }
+    double screenRadius(double docRadius) const { return docRadius * std::hypot(m_.m11(), m_.m12()); }  // zoom only; rotate and mirror keep length
     const QTransform& matrix() const { return m_; }
 
 private:

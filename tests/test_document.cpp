@@ -42,6 +42,17 @@ static bool viewOpsKeepAnchorFixed() {
     return near(v.toDoc(a), under);
 }
 
+// A brush radius on screen scales with zoom only: rotation and mirror leave it unchanged.
+static bool viewScreenRadiusFollowsZoomOnly() {
+    View v;
+    bool ok = std::abs(v.screenRadius(10) - 10) < 1e-9;
+    v.zoomAt({0, 0}, 2);
+    ok = ok && std::abs(v.screenRadius(10) - 20) < 1e-9;
+    v.rotateAt({3, 4}, 37);
+    v.mirrorAt({5, 6});
+    return ok && std::abs(v.screenRadius(10) - 20) < 1e-9;
+}
+
 // Each fixture node list becomes the same Beziers as the reference spiro.c, within 1e-6.
 static bool spiroMatchesReference() {
     bool ok = true;
@@ -444,6 +455,7 @@ int main() {
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);
     run("viewOpsKeepAnchorFixed", viewOpsKeepAnchorFixed);
+    run("viewScreenRadiusFollowsZoomOnly", viewScreenRadiusFollowsZoomOnly);
     run("spiroMatchesReference", spiroMatchesReference);
     run("spiroFailsInsteadOfGarbage", spiroFailsInsteadOfGarbage);
     run("bundledPencilLoads", bundledPencilLoads);
