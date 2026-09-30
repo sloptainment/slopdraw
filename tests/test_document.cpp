@@ -587,6 +587,34 @@ static bool selectingAPathShowsItsKnotHandles() {
     return hit && handles;
 }
 
+// On a straight 3-node path at y=32 (width 8): projectKnot maps a pointer to the nearest path time and twice its signed offset
+// along the left normal (below the path is +); previewKnots redraws without a history step, so a drag that ends by restoring the
+// start knots and calling setKnots once undoes in one step.
+static bool draggingAKnotProjectsAndUndoesOnce() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 32, T::G2}, {32, 32, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
+    auto near = [](QPointF a, QPointF b) { return std::abs(a.x() - b.x()) < 1e-3 && std::abs(a.y() - b.y()) < 1e-3; };
+    auto start = doc.projectKnot(1, 0, {8, 36});
+    auto end = doc.projectKnot(1, 0, {56, 40});
+    auto mid = doc.projectKnot(1, 0, {32, 30});
+    bool ends = start && end && start->t < 1e-3 && std::abs(start->width - 8) < 1e-6 && std::abs(end->width - 16) < 1e-6;
+    bool sideways = mid && std::abs(mid->width + 4) < 1e-6 && mid->t > 0 && mid->t < end->t;
+    if (!ends || !sideways) return false;
+    QImage original = doc.render();
+    auto k0 = doc.knots(1, 0), k1 = k0;
+    k1[0] = *mid;
+    doc.previewKnots(1, 0, k1);
+    QImage live = doc.render();
+    bool showing = live != original && near(doc.knotHandles(1, 0)[0], {32, 30});
+    doc.previewKnots(1, 0, k0);
+    bool restored = doc.render() == original;
+    doc.setKnots(1, 0, k1);
+    bool oneStep = doc.render() == live && doc.undo() && doc.render() == original && doc.redo() && doc.render() == live;
+    return showing && restored && oneStep;
+}
+
 // A closed 4-node square path (width 12) is a ring: the stroke is black at the node (8,8) and the hole at the centre stays white.
 static bool closedPathIsARing() {
     using T = SpiroType;
@@ -685,6 +713,7 @@ int main() {
     run("closedPathIsARing", closedPathIsARing);
     run("setKnotsRedrawsAndUndoes", setKnotsRedrawsAndUndoes);
     run("selectingAPathShowsItsKnotHandles", selectingAPathShowsItsKnotHandles);
+    run("draggingAKnotProjectsAndUndoesOnce", draggingAKnotProjectsAndUndoesOnce);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     return failed != 0;

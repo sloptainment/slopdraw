@@ -134,25 +134,60 @@ int Document::pathAt(int layer, QPointF p, double tol) const {
     return -1;
 }
 
+// The skeleton point at path time t.
+static QPointF skeletonAt(const std::vector<Cubic>& skeleton, double t) {
+    int i = std::clamp(int(t), 0, int(skeleton.size()) - 1);
+    double u = t - i, w = 1 - u;
+    const Cubic& c = skeleton[i];
+    return c[0] * (w * w * w) + c[1] * (3 * w * w * u) + c[2] * (3 * w * u * u) + c[3] * (u * u * u);
+}
+
+// The unit left normal (-ty, tx) at path time t, from nearby points, since a line's end control points coincide with its ends.
+static QPointF leftNormal(const std::vector<Cubic>& skeleton, double t) {
+    double e = 1e-3;
+    QPointF d = skeletonAt(skeleton, std::min<double>(t + e, skeleton.size())) - skeletonAt(skeleton, std::max(t - e, 0.0));
+    return QPointF(-d.y(), d.x()) / std::hypot(d.x(), d.y());
+}
+
 std::vector<QPointF> Document::knotHandles(int layer, int path) const {
     if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return {};
     const VPath& v = layers_[layer].paths[path];
     std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
-    int n = int(skeleton.size());
-    auto at = [&](double t) {  // the skeleton point at path time t
-        int i = std::clamp(int(t), 0, n - 1);
-        double u = t - i, w = 1 - u;
-        const Cubic& c = skeleton[i];
-        return c[0] * (w * w * w) + c[1] * (3 * w * w * u) + c[2] * (3 * w * u * u) + c[3] * (u * u * u);
-    };
     std::vector<QPointF> out;
-    for (const WidthKnot& k : v.knots) {
-        double e = 1e-3;  // the tangent from nearby points, since a line's end control points coincide with its ends
-        QPointF d = at(std::min<double>(k.t + e, n)) - at(std::max(k.t - e, 0.0));
-        double len = std::hypot(d.x(), d.y());
-        out.push_back(at(k.t) + QPointF(-d.y(), d.x()) * (k.width / 2 / len));
-    }
+    for (const WidthKnot& k : v.knots) out.push_back(skeletonAt(skeleton, k.t) + leftNormal(skeleton, k.t) * (k.width / 2));
     return out;
+}
+
+std::vector<WidthKnot> Document::knots(int layer, int path) const {
+    if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return {};
+    return layers_[layer].paths[path].knots;
+}
+
+// ponytail: samples each cubic then ternary-searches around the best sample; a far-off pointer between two lobes may pick the other one
+std::optional<WidthKnot> Document::projectKnot(int layer, int path, QPointF p) const {
+    if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return std::nullopt;
+    const VPath& v = layers_[layer].paths[path];
+    std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
+    auto dist2 = [&](double t) { QPointF d = skeletonAt(skeleton, t) - p; return d.x() * d.x() + d.y() * d.y(); };
+    const int steps = 32;
+    double n = skeleton.size(), best = 0;
+    for (int i = 1; i <= steps * int(n); i++)
+        if (dist2(i / double(steps)) < dist2(best)) best = i / double(steps);
+    double lo = std::max(best - 1.0 / steps, 0.0), hi = std::min(best + 1.0 / steps, n);
+    for (int i = 0; i < 40; i++) {
+        double a = lo + (hi - lo) / 3, b = hi - (hi - lo) / 3;
+        if (dist2(a) < dist2(b)) hi = b;
+        else lo = a;
+    }
+    double t = (lo + hi) / 2;
+    QPointF d = p - skeletonAt(skeleton, t), nrm = leftNormal(skeleton, t);
+    return WidthKnot{t, 2 * (d.x() * nrm.x() + d.y() * nrm.y())};
+}
+
+void Document::previewKnots(int layer, int path, const std::vector<WidthKnot>& knots) {
+    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size())) return;
+    layers_[layer].paths[path].knots = knots;
+    rasterize(layers_[layer]);
 }
 
 void Document::rasterize(Layer& l) {

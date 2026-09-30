@@ -5,6 +5,7 @@
 #include <QString>
 #include <QSize>
 #include <memory>
+#include <optional>
 #include <vector>
 #include "brush.h"
 #include "powerstroke.h"
@@ -39,6 +40,13 @@ public:
     int pathAt(int layer, QPointF p, double tol) const;
     // Where each Width Knot of a path is drawn: its point on the curve moved half the knot's width along the left normal (-ty, tx); empty for a bad layer or path index.
     std::vector<QPointF> knotHandles(int layer, int path) const;
+    // The path's current Width Knots; empty for a bad layer or path index.
+    std::vector<WidthKnot> knots(int layer, int path) const;
+    // The Width Knot a pointer at p drags a knot to: t of the nearest point of the path's curve, width twice the signed distance
+    // from p to that point along the left normal (-ty, tx), so crossing the path makes it negative. nullopt for a bad layer or path index.
+    std::optional<WidthKnot> projectKnot(int layer, int path, QPointF p) const;
+    // Like setKnots but only redraws: no undo step, no checks beyond the indexes. For live dragging; finish with setKnots.
+    void previewKnots(int layer, int path, const std::vector<WidthKnot>& knots);
     int layerCount() const { return int(layers_.size()); }
     int current() const { return current_; }
     bool visible(int layer) const { return layers_[layer].visible; }
