@@ -445,6 +445,19 @@ static bool layerOpsUndoAndRedoInOneHistory() {
     return ok && !doc.redo();
 }
 
+// Layers are named "Background" then "Layer 1", "Layer 2"; setName is one undo step, a same-name call is none, and a deleted layer's name survives undo.
+static bool layerNamesAreStoredAndUndoable() {
+    Document doc(QSize(8, 8));
+    doc.addLayer(); doc.addLayer();
+    bool ok = doc.name(0) == "Background" && doc.name(1) == "Layer 1" && doc.name(2) == "Layer 2";
+    doc.setName(1, "Ink");
+    doc.setName(1, "Ink");
+    ok = ok && doc.name(1) == "Ink" && doc.undo() && doc.name(1) == "Layer 1" && doc.redo() && doc.name(1) == "Ink";
+    ok = ok && doc.deleteLayer(1) && doc.undo() && doc.name(1) == "Ink" && doc.name(2) == "Layer 2";
+    doc.undo(); doc.undo();  // the rename, then one more: the same-name call pushed no step, so this undoes add 2
+    return ok && doc.layerCount() == 2 && doc.redo() && doc.name(2) == "Layer 2";
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -481,5 +494,6 @@ int main() {
     run("strokeLandsOnCurrentLayerOnly", strokeLandsOnCurrentLayerOnly);
     run("compositeOfThreeLayersMatchesGolden", compositeOfThreeLayersMatchesGolden);
     run("layerOpsUndoAndRedoInOneHistory", layerOpsUndoAndRedoInOneHistory);
+    run("layerNamesAreStoredAndUndoable", layerNamesAreStoredAndUndoable);
     return failed != 0;
 }

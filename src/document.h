@@ -2,6 +2,7 @@
 #include <QColor>
 #include <QImage>
 #include <QPointF>
+#include <QString>
 #include <QSize>
 #include <memory>
 #include <vector>
@@ -28,6 +29,9 @@ public:
     int current() const { return current_; }
     bool visible(int layer) const { return layers_[layer].visible; }
     double opacity(int layer) const { return layers_[layer].opacity; }
+    // "Background" for layer 0, "Layer N" for the Nth added layer; setName is one undo step (a same-name call is none).
+    QString name(int layer) const { return layers_[layer].name; }
+    void setName(int layer, const QString& name);
     void setCurrent(int layer);
     void setVisible(int layer, bool visible);
     void setOpacity(int layer, double opacity);
@@ -42,8 +46,8 @@ public:
 private:
     // Pixels: before/after pixels of the rect a stroke changed. The layer ops keep what undo needs: Add nothing (its layer is blank
     // once later steps are undone), Delete the layer's image in before plus its visible/opacity in a/b, Move the target index in to,
-    // Visible and Opacity the old and new value in a and b.
-    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity };
+    // Visible and Opacity the old and new value in a and b, Name the old and new in na and nb.
+    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name };
     struct Step {
         Kind kind = Pixels;
         int layer = 0;
@@ -51,6 +55,7 @@ private:
         QImage before, after;
         int to = 0;
         double a = 0, b = 0;
+        QString na, nb;  // Add: the new layer's name (nb unused); Delete: the deleted name in na; Name: old and new
     };
     // Discards the redo branch, appends s as applied, and drops the oldest steps past the budget.
     void push(Step s);
@@ -64,6 +69,7 @@ private:
         bool visible = true;
         double opacity = 1;
         QImage image;
+        QString name;
     };
     std::vector<Layer> layers_;  // bottom to top, never empty
     int current_ = 0;

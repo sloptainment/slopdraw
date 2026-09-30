@@ -31,7 +31,7 @@ void paste(QImage& dst, const QImage& src, QPoint at) {
 }  // namespace
 
 Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget) {
-    layers_.push_back({true, 1, QImage(size, QImage::Format_RGBA8888)});
+    layers_.push_back({true, 1, QImage(size, QImage::Format_RGBA8888), "Background"});
     layers_[0].image.fill(Qt::white);
 }
 
@@ -55,6 +55,7 @@ int Document::addLayer() {
     Step s;
     s.kind = Add;
     s.layer = int(layers_.size());
+    s.na = "Layer " + QString::number(s.layer);
     push(s);
     apply(s, false);
     return current_;
@@ -73,6 +74,18 @@ void Document::setVisible(int layer, bool visible) {
     s.layer = layer;
     s.a = !visible;
     s.b = visible;
+    push(s);
+    apply(s, false);
+}
+
+void Document::setName(int layer, const QString& name) {
+    if (layers_[layer].name == name) return;
+    seal();
+    Step s;
+    s.kind = Name;
+    s.layer = layer;
+    s.na = layers_[layer].name;
+    s.nb = name;
     push(s);
     apply(s, false);
 }
@@ -98,6 +111,7 @@ bool Document::deleteLayer(int layer) {
     s.before = layers_[layer].image;
     s.a = layers_[layer].opacity;
     s.b = layers_[layer].visible;
+    s.na = layers_[layer].name;
     push(s);
     apply(s, false);
     return true;
@@ -138,16 +152,17 @@ void Document::apply(const Step& s, bool reverse) {
     case Pixels: paste(layers_[s.layer].image, reverse ? s.before : s.after, s.rect.topLeft()); break;
     case Add:
         if (reverse) { remove(); break; }
-        insert({true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888)});
+        insert({true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), s.na});
         layers_[s.layer].image.fill(Qt::transparent);
         break;
     case Delete:
-        if (reverse) insert({bool(s.b), s.a, s.before});
+        if (reverse) insert({bool(s.b), s.a, s.before, s.na});
         else remove();
         break;
     case Move: reverse ? applyMove(s.to, s.layer) : applyMove(s.layer, s.to); break;
     case Visible: layers_[s.layer].visible = reverse ? s.a : s.b; break;
     case Opacity: layers_[s.layer].opacity = reverse ? s.a : s.b; break;
+    case Name: layers_[s.layer].name = reverse ? s.na : s.nb; break;
     }
 }
 
