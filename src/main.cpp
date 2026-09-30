@@ -13,6 +13,8 @@
 #include <QListWidget>
 #include <QHBoxLayout>
 #include <QPushButton>
+#include <QToolButton>
+#include <QActionGroup>
 #include <QSlider>
 #include <QVBoxLayout>
 #include <QMainWindow>
@@ -52,6 +54,13 @@ public:
         if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(doc_.nodes(doc_.current(), selected_), nodeSel_, t));
     }
     std::function<void(bool)> onToolChange;  // fired with whether the Spiro Pen or Select tool is now the tool, so the Tool Options dock can follow
+    // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (the Select tool).
+    void setTool(int t) {
+        fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3;
+        if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
+        update();
+        if (onToolChange) onToolChange(spiroTool_ || selectTool_);
+    }
     // Swaps the brush; color, size and opacity carry over (the dock's sliders are global, not per brush).
     void setBrush(const QString& mybPath) {
         auto b = loadBrush(mybPath);
@@ -168,10 +177,6 @@ protected:
     void keyPressEvent(QKeyEvent* e) override {
         if (e->isAutoRepeat()) return;
         if (e->key() == Qt::Key_Space) space_ = true;
-        else if (e->key() == Qt::Key_F) { fillTool_ = true; spiroTool_ = selectTool_ = false; }
-        else if (e->key() == Qt::Key_B) fillTool_ = spiroTool_ = selectTool_ = false;
-        else if (e->key() == Qt::Key_P) { spiroTool_ = true; fillTool_ = selectTool_ = false; }
-        else if (e->key() == Qt::Key_V) { selectTool_ = true; selected_ = -1; nodeSel_.clear(); fillTool_ = spiroTool_ = false; update(); }
         else if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) finishPath(e->modifiers() & Qt::ShiftModifier);
         else if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
             if (selectTool_) deleteSelectedNodes();
@@ -188,7 +193,6 @@ protected:
             update();
             if (onLayersChange) onLayersChange();
         }
-        if (onToolChange) onToolChange(spiroTool_ || selectTool_);
     }
     void keyReleaseEvent(QKeyEvent* e) override {
         if (!e->isAutoRepeat() && e->key() == Qt::Key_Space) space_ = false;
@@ -547,6 +551,29 @@ int main(int argc, char** argv) {
     auto* optionsDock = new QDockWidget("Tool Options", &window);
     optionsDock->setWidget(optionsPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, optionsDock);
+
+    // Tools dock (#154): one checkable action per tool, exclusive, its key a window-wide shortcut so it works whichever dock has focus.
+    auto* toolPanel = new QWidget;
+    auto* toolCol = new QVBoxLayout(toolPanel);
+    auto* toolGroup = new QActionGroup(&window);
+    const struct { const char* text; const char* key; } kTools[] = {{"\U0001F58C Brush (B)", "B"}, {"\u2B2E Lasso Fill (F)", "F"}, {"\u2712 Spiro Pen (P)", "P"}, {"\u2316 Node/Knot edit (N)", "N"}};
+    for (int i = 0; i < 4; i++) {
+        auto* a = toolGroup->addAction(kTools[i].text);
+        a->setCheckable(true);
+        a->setChecked(i == 0);
+        a->setShortcut(QKeySequence(kTools[i].key));
+        window.addAction(a);
+        QObject::connect(a, &QAction::triggered, [canvas, i] { canvas->setTool(i); });
+        auto* b = new QToolButton;
+        b->setDefaultAction(a);
+        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        toolCol->addWidget(b);
+    }
+    toolCol->addStretch();
+    auto* toolDock = new QDockWidget("Tools", &window);
+    toolDock->setWidget(toolPanel);
+    window.addDockWidget(Qt::LeftDockWidgetArea, toolDock);
 
     auto* fileMenu = window.menuBar()->addMenu("&File");
     auto* fileNew = fileMenu->addAction("&New...");
