@@ -227,9 +227,20 @@ void Document::rasterize(Layer& l) {
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
     for (const VPath& v : l.paths) {
-        std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
-        p.fillPath(expandPowerStroke(skeleton, v.closed, v.knots), v.color);
+        p.fillPath(outline(v), v.color);
     }
+}
+
+QPainterPath Document::outline(const VPath& v) {
+    return expandPowerStroke(skeletonOf(v.nodes, v.closed), v.closed, v.knots);
+}
+
+void Document::restorePaths(int layer, const std::vector<VPath>& paths) {
+    layers_[layer].vector = true;
+    layers_[layer].paths = paths;
+    rasterize(layers_[layer]);
+    history_.clear();
+    applied_ = 0;
 }
 
 void Document::restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity) {

@@ -19,6 +19,72 @@ bool add(mz_zip_archive& z, const char* name, const QByteArray& data, mz_uint le
     return mz_zip_writer_add_mem(&z, name, data.constData(), size_t(data.size()), level);
 }
 
+const char* const kNs = "urn:mydraw";
+
+QString num(double v) { return QString::number(v, 'g', 17); }
+
+// The outline as SVG path data; every subpath of a filled shape is closed.
+QString pathData(const QPainterPath& p) {
+    QString d;
+    for (int i = 0; i < p.elementCount(); i++) {
+        auto e = p.elementAt(i);
+        if (e.type == QPainterPath::MoveToElement) d += QString(d.isEmpty() ? "M%1 %2" : "ZM%1 %2").arg(num(e.x), num(e.y));
+        else if (e.type == QPainterPath::LineToElement) d += QString("L%1 %2").arg(num(e.x), num(e.y));
+        else if (e.type == QPainterPath::CurveToElement) d += QString("C%1 %2").arg(num(e.x), num(e.y));
+        else d += QString(" %1 %2").arg(num(e.x), num(e.y));
+    }
+    return d + "Z";
+}
+
+// data/layerN.svg: one <path> per Vector Path, d = its outline so any viewer draws it; the rest is mydraw's own attributes.
+QByteArray svg(const Document& doc, int layer) {
+    QByteArray out;
+    QXmlStreamWriter w(&out);
+    w.writeStartDocument();
+    w.writeStartElement("svg");
+    w.writeDefaultNamespace("http://www.w3.org/2000/svg");
+    w.writeNamespace(kNs, "mydraw");
+    w.writeAttribute("width", QString::number(doc.image(0).width()));
+    w.writeAttribute("height", QString::number(doc.image(0).height()));
+    for (const Document::VPath& v : doc.paths(layer)) {
+        w.writeEmptyElement("path");
+        w.writeAttribute("d", pathData(Document::outline(v)));
+        w.writeAttribute("fill", v.color.name());
+        w.writeAttribute("fill-opacity", num(v.color.alphaF()));
+        QStringList nodes, knots;
+        for (const SpiroNode& n : v.nodes) nodes << QString("%1,%2,%3").arg(num(n.x), num(n.y), QChar(char(n.type)));
+        for (const WidthKnot& k : v.knots) knots << QString("%1,%2").arg(num(k.t), num(k.width));
+        w.writeAttribute(kNs, "nodes", nodes.join(' '));
+        w.writeAttribute(kNs, "closed", v.closed ? "1" : "0");
+        w.writeAttribute(kNs, "width", num(v.width));
+        w.writeAttribute(kNs, "knots", knots.join(' '));
+    }
+    w.writeEndDocument();
+    return out;
+}
+
+std::vector<Document::VPath> readSvg(const QByteArray& data) {
+    std::vector<Document::VPath> paths;
+    QXmlStreamReader r(data);
+    while (!r.atEnd()) {
+        r.readNext();
+        if (!r.isStartElement() || r.name() != u"path") continue;
+        auto a = r.attributes();
+        Document::VPath v{{}, a.value(kNs, "closed") == u"1", QColor(a.value("fill").toString()), a.value(kNs, "width").toDouble(), {}};
+        v.color.setAlphaF(a.value("fill-opacity").toDouble());
+        for (const auto& n : a.value(kNs, "nodes").split(' ', Qt::SkipEmptyParts)) {
+            auto f = n.split(',');
+            v.nodes.push_back({f[0].toDouble(), f[1].toDouble(), SpiroType(f[2].at(0).toLatin1())});
+        }
+        for (const auto& k : a.value(kNs, "knots").split(' ', Qt::SkipEmptyParts)) {
+            auto f = k.split(',');
+            v.knots.push_back({f[0].toDouble(), f[1].toDouble()});
+        }
+        paths.push_back(v);
+    }
+    return paths;
+}
+
 }  // namespace
 
 bool writeOra(const Document& doc, const QString& path) {
@@ -26,6 +92,7 @@ bool writeOra(const Document& doc, const QString& path) {
     QXmlStreamWriter w(&xml);
     w.writeStartDocument();
     w.writeStartElement("image");
+    w.writeNamespace(kNs, "mydraw");
     w.writeAttribute("version", "0.0.3");
     w.writeAttribute("w", QString::number(doc.image(0).width()));
     w.writeAttribute("h", QString::number(doc.image(0).height()));
@@ -38,6 +105,7 @@ bool writeOra(const Document& doc, const QString& path) {
         w.writeAttribute("opacity", QString::number(doc.opacity(i), 'g', 17));
         w.writeAttribute("x", "0");
         w.writeAttribute("y", "0");
+        if (doc.vector(i)) w.writeAttribute(kNs, "svg", QString("data/layer%1.svg").arg(i));
     }
     w.writeEndDocument();
 
@@ -45,7 +113,8 @@ bool writeOra(const Document& doc, const QString& path) {
     if (!mz_zip_writer_init_heap(&z, 0, 0)) return false;
     bool ok = add(z, "mimetype", "image/openraster", MZ_NO_COMPRESSION) && add(z, "stack.xml", xml, MZ_DEFAULT_COMPRESSION);
     for (int i = 0; ok && i < doc.layerCount(); i++)
-        ok = add(z, QString("data/layer%1.png").arg(i).toUtf8().constData(), png(doc.image(i)), MZ_DEFAULT_COMPRESSION);
+        ok = add(z, QString("data/layer%1.png").arg(i).toUtf8().constData(), png(doc.image(i)), MZ_DEFAULT_COMPRESSION)
+          && (!doc.vector(i) || add(z, QString("data/layer%1.svg").arg(i).toUtf8().constData(), svg(doc, i), MZ_DEFAULT_COMPRESSION));
     QImage merged = doc.render();
     ok = ok && add(z, "mergedimage.png", png(merged), MZ_DEFAULT_COMPRESSION)
             && add(z, "Thumbnails/thumbnail.png", png(merged.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation)), MZ_DEFAULT_COMPRESSION);
@@ -73,7 +142,7 @@ std::optional<Document> readOra(const QString& path) {
         mz_free(p);
         return out;
     };
-    struct L { QString name, src; bool visible; double opacity; };
+    struct L { QString name, src, svg; bool visible; double opacity; };
     std::vector<L> layers;  // top first, as in stack.xml
     QSize size;
     QXmlStreamReader r(entry("stack.xml"));
@@ -82,7 +151,7 @@ std::optional<Document> readOra(const QString& path) {
         if (!r.isStartElement()) continue;
         auto a = r.attributes();
         if (r.name() == u"image") size = QSize(a.value("w").toInt(), a.value("h").toInt());
-        else if (r.name() == u"layer") layers.push_back({a.value("name").toString(), a.value("src").toString(), a.value("visibility") != u"hidden", a.value("opacity").isEmpty() ? 1.0 : a.value("opacity").toDouble()});
+        else if (r.name() == u"layer") layers.push_back({a.value("name").toString(), a.value("src").toString(), a.value(kNs, "svg").toString(), a.value("visibility") != u"hidden", a.value("opacity").isEmpty() ? 1.0 : a.value("opacity").toDouble()});
     }
     std::optional<Document> doc;
     if (!r.hasError() && !layers.empty() && !size.isEmpty()) {
@@ -93,6 +162,7 @@ std::optional<Document> readOra(const QString& path) {
             if (!img.loadFromData(entry(l.src)) || img.size() != size) { doc.reset(); break; }
             if (i > 0) doc->addLayer();
             doc->restoreLayer(i, img, l.name, l.visible, l.opacity);
+            if (!l.svg.isEmpty()) doc->restorePaths(i, readSvg(entry(l.svg)));
         }
     }
     mz_zip_reader_end(&z);

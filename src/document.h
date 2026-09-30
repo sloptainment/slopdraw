@@ -1,6 +1,7 @@
 #pragma once
 #include <QColor>
 #include <QImage>
+#include <QPainterPath>
 #include <QPointF>
 #include <QString>
 #include <QSize>
@@ -13,6 +14,13 @@
 
 class Document {
 public:
+    struct VPath {
+        std::vector<SpiroNode> nodes;
+        bool closed;
+        QColor color;
+        double width;
+        std::vector<WidthKnot> knots;
+    };
     // undoBudget caps the bytes of pixels the undo history keeps (#27); the oldest steps drop first, never the newest.
     explicit Document(QSize size, qsizetype undoBudget = qsizetype(1) << 30);
     // The visible layers composited bottom to top, source-over, each scaled by its opacity.
@@ -61,6 +69,12 @@ public:
     // "Background" for layer 0, "Layer N" for the Nth added layer; setName is one undo step (a same-name call is none).
     QString name(int layer) const { return layers_[layer].name; }
     void setName(int layer, const QString& name);
+    bool vector(int layer) const { return layers_[layer].vector; }
+    // A Vector Layer's paths, bottom first; empty for a Raster Layer. outline is the filled shape a path draws (its expanded Power Stroke).
+    const std::vector<VPath>& paths(int layer) const { return layers_[layer].paths; }
+    static QPainterPath outline(const VPath& v);
+    // For loading: makes a layer (already restored) a Vector Layer with these paths and redraws it. Drops the undo history.
+    void restorePaths(int layer, const std::vector<VPath>& paths);
     const QImage& image(int layer) const { return layers_[layer].image; }
     // For loading a file into a fresh Document: replaces a layer's contents outright and drops the undo history.
     void restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity);
@@ -81,13 +95,6 @@ private:
     // Visible and Opacity the old and new value in a and b, Name the old and new in na and nb.
     // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path, Knots the old and new Width Knots of one path, Nodes the old and new path in paths[0] and paths[1] (index in to).
     enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, PathAdd, Knots, Nodes };
-    struct VPath {
-        std::vector<SpiroNode> nodes;
-        bool closed;
-        QColor color;
-        double width;
-        std::vector<WidthKnot> knots;
-    };
     struct Step {
         Kind kind = Pixels;
         int layer = 0;

@@ -500,6 +500,43 @@ static bool oraRoundTripsThreeLayers() {
     return back->render() == doc.render() && !back->undo() && !readOra(dir.filePath("missing.ora"));
 }
 
+// A Raster and a Vector Layer (two paths: open with every Spiro Node type and edited knots, closed with a translucent color) saved to .ora
+// and read back hold the same nodes, types, closed flags, colors, widths and knots, and render the same; the layer's SVG is in the zip.
+static bool oraRoundTripsVectorLayer() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addLayer(); doc.fill(Qt::red, {{0, 0}, {30, 0}, {30, 30}, {0, 30}});
+    doc.addVectorLayer();
+    doc.addPath({{8, 50, T::Corner}, {20, 40, T::G2}, {32, 50, T::G4}, {44, 40, T::Left}, {56, 50, T::Right}}, false, QColor(10, 20, 30), 6);
+    doc.setKnots(2, 0, {{0, 6}, {1.5, 2.25}, {4, 6}});
+    doc.addPath({{10, 10, T::G2}, {30, 10, T::G2}, {30, 25, T::G2}, {10, 25, T::G2}}, true, QColor(0, 128, 255, 100), 4);
+    doc.setOpacity(2, 0.5);
+    QTemporaryDir dir;
+    QString path = dir.filePath("t.ora");
+    if (!writeOra(doc, path)) return false;
+    auto back = readOra(path);
+    if (!back || back->layerCount() != 3 || back->vector(1) || !back->vector(2) || back->opacity(2) != 0.5) return false;
+    if (back->paths(2).size() != 2) return false;
+    for (int i = 0; i < 2; i++) {
+        const auto &a = doc.paths(2)[i], &b = back->paths(2)[i];
+        if (a.nodes.size() != b.nodes.size() || a.closed != b.closed || a.color != b.color || a.width != b.width || a.knots.size() != b.knots.size()) return false;
+        for (size_t j = 0; j < a.nodes.size(); j++)
+            if (a.nodes[j].x != b.nodes[j].x || a.nodes[j].y != b.nodes[j].y || a.nodes[j].type != b.nodes[j].type) return false;
+        for (size_t j = 0; j < a.knots.size(); j++)
+            if (a.knots[j].t != b.knots[j].t || a.knots[j].width != b.knots[j].width) return false;
+    }
+    mz_zip_archive z{};
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    QByteArray zip = f.readAll();
+    if (!mz_zip_reader_init_mem(&z, zip.constData(), size_t(zip.size()), 0)) return false;
+    size_t n = 0;
+    void* svg = mz_zip_reader_extract_file_to_heap(&z, "data/layer2.svg", &n, 0);
+    bool hasSvg = svg && QByteArray(static_cast<const char*>(svg), qsizetype(n)).contains("<path");
+    mz_free(svg); mz_zip_reader_end(&z);
+    return hasSvg && back->render() == doc.render() && back->image(2) == doc.image(2);
+}
+
 // Export PNG writes the visible composite: hidden layer left out, half-opacity layer blended, reloaded pixels equal render().
 static bool exportedPngEqualsRender() {
     Document doc(QSize(32, 32));
@@ -762,6 +799,7 @@ int main() {
     run("layerNamesAreStoredAndUndoable", layerNamesAreStoredAndUndoable);
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
+    run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("exportedPngEqualsRender", exportedPngEqualsRender);
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
     run("closedPathIsARing", closedPathIsARing);
