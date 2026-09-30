@@ -615,6 +615,20 @@ static bool draggingAKnotProjectsAndUndoesOnce() {
     return showing && restored && oneStep;
 }
 
+// Ctrl+click duplicates a knot in place after itself; Ctrl+Alt+click deletes it, but never the last one.
+static bool duplicatingAndDeletingKnots() {
+    std::vector<WidthKnot> k{{0, 4}, {1, 8}, {2, 6}};
+    auto same = [](const std::vector<WidthKnot>& a, const std::vector<WidthKnot>& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); i++) if (a[i].t != b[i].t || a[i].width != b[i].width) return false;
+        return true;
+    };
+    bool dup = same(duplicateKnot(k, 1), {{0, 4}, {1, 8}, {1, 8}, {2, 6}});
+    bool del = same(deleteKnot(k, 1), {{0, 4}, {2, 6}});
+    std::vector<WidthKnot> one{{1, 8}};
+    return dup && del && same(deleteKnot(one, 0), one);
+}
+
 // A closed 4-node square path (width 12) is a ring: the stroke is black at the node (8,8) and the hole at the centre stays white.
 static bool closedPathIsARing() {
     using T = SpiroType;
@@ -714,6 +728,7 @@ int main() {
     run("setKnotsRedrawsAndUndoes", setKnotsRedrawsAndUndoes);
     run("selectingAPathShowsItsKnotHandles", selectingAPathShowsItsKnotHandles);
     run("draggingAKnotProjectsAndUndoesOnce", draggingAKnotProjectsAndUndoesOnce);
+    run("duplicatingAndDeletingKnots", duplicatingAndDeletingKnots);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     return failed != 0;

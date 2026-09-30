@@ -21,3 +21,13 @@ std::vector<std::vector<Cubic>> powerStrokeBodies(const std::vector<Cubic>& skel
 // The filled outline of the whole stroke: bodies, round joins at every corner, zero caps (add nothing), united by QPainterPath::united.
 // Same inputs as powerStrokeBodies; an empty path without knots.
 QPainterPath expandPowerStroke(const std::vector<Cubic>& skeleton, bool closed, const std::vector<WidthKnot>& knots);
+// The knots with knot i copied in place right after itself (Inkscape's Ctrl+click).
+inline std::vector<WidthKnot> duplicateKnot(std::vector<WidthKnot> knots, int i) {
+    knots.insert(knots.begin() + i, knots[i]);
+    return knots;
+}
+// The knots without knot i; unchanged when it is the last one (Inkscape's Ctrl+Alt+click).
+inline std::vector<WidthKnot> deleteKnot(std::vector<WidthKnot> knots, int i) {
+    if (knots.size() > 1) knots.erase(knots.begin() + i);
+    return knots;
+}

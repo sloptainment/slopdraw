@@ -102,7 +102,8 @@ protected:
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
         resizing_ = e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ShiftModifier);
-        if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) pickAt(e->position());
+        if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier) && !editKnot(e->position(), e->modifiers())) pickAt(e->position());
+        else if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) return;
         else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && spiroTool_) spiroClick(e->position());
@@ -132,7 +133,7 @@ protected:
         else if (!resizing_ || e->type() == QEvent::TabletPress) { cursor_ = e->position(); update(); }
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
         if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); painting_ = resizing_ = false; }
-        else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) pickAt(e->position());
+        else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); }
@@ -186,16 +187,27 @@ private:
     }
     // Select tool press: on a Width Knot handle of the selected path (within 6 screen px) it starts a drag, anywhere else it selects.
     void selectPress(QPointF pos) {
-        if (selected_ >= 0) {
-            auto handles = doc_.knotHandles(doc_.current(), selected_);
-            for (int i = 0; i < int(handles.size()); i++)
-                if (QLineF(handles[i], view_.toDoc(pos)).length() * view_.screenRadius(1) <= 6) {
-                    knotDrag_ = i;
-                    knotsBefore_ = doc_.knots(doc_.current(), selected_);
-                    return;
-                }
-        }
-        selectAt(pos);
+        int i = knotAt(pos);
+        if (i < 0) return selectAt(pos);
+        knotDrag_ = i;
+        knotsBefore_ = doc_.knots(doc_.current(), selected_);
+    }
+    // Index of the selected path's Width Knot handle within 6 screen px of pos, -1 for none.
+    int knotAt(QPointF pos) {
+        if (!selectTool_ || selected_ < 0) return -1;
+        auto handles = doc_.knotHandles(doc_.current(), selected_);
+        for (int i = 0; i < int(handles.size()); i++)
+            if (QLineF(handles[i], view_.toDoc(pos)).length() * view_.screenRadius(1) <= 6) return i;
+        return -1;
+    }
+    // Ctrl+click on a Width Knot handle duplicates the knot, Ctrl+Alt+click deletes it (one undo step each); false when no handle is there.
+    bool editKnot(QPointF pos, Qt::KeyboardModifiers mods) {
+        int i = knotAt(pos);
+        if (i < 0) return false;
+        auto k = doc_.knots(doc_.current(), selected_);
+        doc_.setKnots(doc_.current(), selected_, (mods & Qt::AltModifier) ? deleteKnot(k, i) : duplicateKnot(k, i));
+        update();
+        return true;
     }
     // The dragged knot follows the pointer live (no undo step yet).
     void dragKnotTo(QPointF pos) {
