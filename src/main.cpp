@@ -23,6 +23,7 @@
 
 // Krita Default navigation (/r/5): middle drag or Space+left drag pans; +Ctrl zooms, +Shift rotates; wheel zooms; M mirrors; Ctrl+Z undoes, Ctrl+Shift+Z redoes.
 // Shift+left drag (mouse or pen) resizes the brush instead of painting: 100 px right = x e.
+// Ctrl+left click (mouse or pen) picks the visible color at that point instead of painting.
 // Painting: the pen tip, or plain left button at pressure 0.5, feeds pen samples to the Document.
 class Canvas : public QWidget {
 public:
@@ -30,6 +31,7 @@ public:
     void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); update(); }
     void setColor(const QColor& c) { if (brush_) setBrushColor(brush_.get(), c); }
     std::function<void()> onRadiusChange;  // fired after a drag resize so the Size slider can follow
+    std::function<void(const QColor&)> onColorPick;  // fired after Ctrl+click so the Color dock can follow
     void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); }
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
@@ -54,7 +56,8 @@ protected:
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
         resizing_ = e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ShiftModifier);
-        if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
+        if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) pickAt(e->position());
+        else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
     }
     void mouseMoveEvent(QMouseEvent* e) override {
         if (resizing_) return resizeTo(e->position());
@@ -72,6 +75,7 @@ protected:
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
         if (e->type() == QEvent::TabletRelease) painting_ = resizing_ = false;
+        else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) pickAt(e->position());
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
         else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
@@ -101,6 +105,13 @@ private:
         setRadius(dragRadius(radius(), pos.x() - last_.x()));
         last_ = pos;
         if (onRadiusChange) onRadiusChange();
+    }
+    void pickAt(QPointF pos) {
+        QPointF d = view_.toDoc(pos);
+        QColor c = doc_.colorAt({int(std::floor(d.x())), int(std::floor(d.y()))});  // the pixel under the point, not the nearest corner
+        if (!c.isValid() || !brush_) return;
+        setColor(c);
+        if (onColorPick) onColorPick(c);
     }
     void paintAt(QPointF pos, float pressure, float xtilt, float ytilt, ulong ms, bool eraser = false) {
         if (!brush_) return;
@@ -190,7 +201,8 @@ int main(int argc, char** argv) {
 
     auto* picker = new ColorPicker;
     picker->onChange = [canvas](const QColor& c) { canvas->setColor(c); };
-    auto* colorDock = new QDockWidget("Color", &window);
+    canvas->onColorPick = [picker](const QColor& c) { picker->setColor(c); };
+    auto* colorDock =new QDockWidget("Color", &window);
     colorDock->setWidget(picker);
     window.addDockWidget(Qt::RightDockWidgetArea, colorDock);
 
