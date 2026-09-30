@@ -123,6 +123,15 @@ protected:
                 p.setBrush(Qt::NoBrush);
                 p.drawPath(*path);
             }
+            QPen pen(Qt::blue, 1);
+            pen.setCosmetic(true);
+            p.setPen(pen);
+            double r = 4 / view_.screenRadius(1);
+            bool closing = cursor_ && pen_.nodes.size() > 2 && pen_.onFirst(view_.toDoc(*cursor_), 6 / view_.screenRadius(1));
+            for (size_t i = 0; i < pen_.nodes.size(); i++) {  // a square per placed node; the first is filled when a click would close (#180)
+                p.setBrush(i == 0 && closing ? Qt::blue : Qt::white);
+                p.drawRect(QRectF(pen_.nodes[i].x - r, pen_.nodes[i].y - r, 2 * r, 2 * r));
+            }
         }
         if (selectTool_ && selected_ >= 0) {  // a square per Spiro Node of the selected path, filled when selected, then a circle per Width Knot
             QPen pen(Qt::blue, 1);
@@ -194,7 +203,7 @@ protected:
         else if (e->type() == QEvent::TabletPress && !selectTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); }
-        else if (spiroTool_) { if (e->type() == QEvent::TabletPress) spiroClick(e->position()); }
+        else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position()); } }  // the barrel button arrives as right (#178)
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), eraseMode_ || eraser);
         else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
