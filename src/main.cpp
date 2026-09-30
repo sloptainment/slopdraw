@@ -127,6 +127,7 @@ protected:
         update();
         if (resizing_) return resizeTo(e->position());
         if (knotDrag_ >= 0) return dragKnotTo(e->position());
+        if (nodeDrag_) return dragNodesTo(e->position());
         if (lassoing_) return lassoAt(e->position(), eraseMode_);
         if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
         if (!dragging_) return;
@@ -137,18 +138,18 @@ protected:
         else view_.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); dragging_ = painting_ = resizing_ = false; }
+    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); dragging_ = painting_ = resizing_ = false; }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
         if (e->type() == QEvent::TabletLeaveProximity) { cursor_.reset(); update(); }
         else if (!resizing_ || e->type() == QEvent::TabletPress) { cursor_ = e->position(); update(); }
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
-        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); painting_ = resizing_ = false; }
+        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); painting_ = resizing_ = false; }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
         else if (e->type() == QEvent::TabletPress && !selectTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
-        else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); }
+        else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); }
         else if (spiroTool_) { if (e->type() == QEvent::TabletPress) spiroClick(e->position()); }
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), eraseMode_ || eraser);
         else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
@@ -211,8 +212,30 @@ private:
         int n = selected_ < 0 ? -1 : doc_.nodeAt(doc_.current(), selected_, view_.toDoc(pos), 6 / view_.screenRadius(1));
         if (n < 0 && (mods & Qt::ShiftModifier)) return;
         if (n < 0) return selectAt(pos);
-        if (!(mods & Qt::ShiftModifier)) nodeSel_ = {n};
-        else if (!nodeSel_.erase(n)) nodeSel_.insert(n);
+        if (mods & Qt::ShiftModifier) {
+            if (!nodeSel_.erase(n)) nodeSel_.insert(n);
+        } else {  // a press on a selected node keeps the selection, so all selected nodes drag together
+            if (!nodeSel_.count(n)) nodeSel_ = {n};
+            nodeDrag_ = true;
+            nodeStart_ = view_.toDoc(pos);
+            pathBefore_ = doc_.paths(doc_.current())[selected_];
+        }
+        update();
+    }
+    // The selected nodes follow the pointer live (no undo step yet).
+    void dragNodesTo(QPointF pos) {
+        doc_.previewNodes(doc_.current(), selected_, moveNodes(pathBefore_.nodes, nodeSel_, view_.toDoc(pos) - nodeStart_), pathBefore_.closed);
+        update();
+    }
+    // Release: one undo step for the whole drag, from the nodes it started with.
+    void endNodeDrag() {
+        if (!nodeDrag_) return;
+        auto after = doc_.nodes(doc_.current(), selected_);
+        doc_.previewNodes(doc_.current(), selected_, pathBefore_.nodes, pathBefore_.closed);
+        auto& was = pathBefore_.nodes;
+        if (!std::equal(after.begin(), after.end(), was.begin(), [](auto& a, auto& b) { return a.x == b.x && a.y == b.y; }))
+            doc_.setNodes(doc_.current(), selected_, after, pathBefore_.closed);
+        nodeDrag_ = false;
         update();
     }
     // Index of the selected path's Width Knot handle within 6 screen px of pos, -1 for none.
@@ -302,6 +325,9 @@ private:
     SpiroPen pen_;
     int knotDrag_ = -1;  // index of the Width Knot being dragged on the selected path, -1 for none
     std::vector<WidthKnot> knotsBefore_;  // the selected path's knots when the drag began
+    bool nodeDrag_ = false;  // a Spiro Node drag is under way
+    QPointF nodeStart_;  // where it began, in document coordinates
+    Document::VPath pathBefore_;  // the selected path when it began
     std::set<int> nodeSel_;  // selected Spiro Node indexes of the selected path
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false;

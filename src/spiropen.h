@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <set>
 #include <vector>
 #include "document.h"
 
@@ -25,3 +26,10 @@ struct SpiroPen {
         return true;
     }
 };
+
+// The nodes with those at the selected indexes moved by d (Node tool drag, #140).
+inline std::vector<SpiroNode> moveNodes(std::vector<SpiroNode> nodes, const std::set<int>& selected, QPointF d) {
+    for (int i : selected)
+        if (i >= 0 && i < int(nodes.size())) { nodes[i].x += d.x(); nodes[i].y += d.y(); }
+    return nodes;
+}

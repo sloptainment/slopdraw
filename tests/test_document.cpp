@@ -715,6 +715,29 @@ static bool closedPathIsARing() {
     return added && doc.colorAt({8, 8}) == Qt::black && doc.colorAt({32, 32}) == Qt::white;
 }
 
+// Moving selected nodes {0, 2} of a 3-node path by (+4, -2) gives the expected node list (types and the unselected node unchanged);
+// previewNodes shows it live with no history step, and ending the drag (restore, then one setNodes) undoes in one step.
+static bool draggingNodesMovesThemTogetherAndUndoesOnce() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 32, T::G2}, {32, 8, T::Corner}, {56, 32, T::G2}}, false, Qt::black, 8);
+    QImage original = doc.render();
+    auto n0 = doc.nodes(1, 0);
+    auto moved = moveNodes(n0, {0, 2}, {4, -2});
+    bool listOk = moved.size() == 3 && moved[0].x == 12 && moved[0].y == 30 && moved[0].type == T::G2 && moved[1].x == 32 && moved[1].y == 8
+        && moved[1].type == T::Corner && moved[2].x == 60 && moved[2].y == 30;
+    if (!listOk) return false;
+    doc.previewNodes(1, 0, moved, false);
+    QImage live = doc.render();
+    bool showing = live != original && doc.nodes(1, 0)[0].x == 12;
+    doc.previewNodes(1, 0, n0, false);
+    bool restored = doc.render() == original;
+    doc.setNodes(1, 0, moved, false);
+    bool oneStep = doc.render() == live && doc.undo() && doc.render() == original && doc.redo() && doc.render() == live;
+    return showing && restored && oneStep;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -809,6 +832,7 @@ int main() {
     run("nodeAtFindsTheNodeUnderAPoint", nodeAtFindsTheNodeUnderAPoint);
     run("draggingAKnotProjectsAndUndoesOnce", draggingAKnotProjectsAndUndoesOnce);
     run("duplicatingAndDeletingKnots", duplicatingAndDeletingKnots);
+    run("draggingNodesMovesThemTogetherAndUndoesOnce", draggingNodesMovesThemTogetherAndUndoesOnce);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     return failed != 0;

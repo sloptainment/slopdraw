@@ -62,6 +62,8 @@ public:
     std::optional<WidthKnot> projectKnot(int layer, int path, QPointF p) const;
     // Like setKnots but only redraws: no undo step, no checks beyond the indexes. For live dragging; finish with setKnots.
     void previewKnots(int layer, int path, const std::vector<WidthKnot>& knots);
+    // Like setNodes but only redraws: no undo step; a node set with no curve leaves the path as it was. For live dragging; finish with setNodes.
+    void previewNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed);
     int layerCount() const { return int(layers_.size()); }
     int current() const { return current_; }
     bool visible(int layer) const { return layers_[layer].visible; }

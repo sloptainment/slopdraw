@@ -221,6 +221,13 @@ void Document::previewKnots(int layer, int path, const std::vector<WidthKnot>& k
     rasterize(layers_[layer]);
 }
 
+void Document::previewNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed) {
+    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size()) || !spiroToPath(nodes, closed)) return;
+    layers_[layer].paths[path].nodes = nodes;
+    layers_[layer].paths[path].closed = closed;
+    rasterize(layers_[layer]);
+}
+
 void Document::rasterize(Layer& l) {
     l.image.fill(Qt::transparent);
     QPainter p(&l.image);
