@@ -9,6 +9,7 @@
 #include <QTemporaryDir>
 #include "powerstroke.h"
 #include "spiro.h"
+#include "spiropen.h"
 #include "powerstroke_fixtures.h"
 #include "powerstroke_body_fixtures.h"
 #include "spiro_fixtures.h"
@@ -544,6 +545,36 @@ static bool vectorPathRendersAsPowerStroke() {
     return added && onPath && same && undone && redone && layerGone && notVector && bad;
 }
 
+// The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
+// asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
+static bool spiroPenPlacesNodesAndFinishes() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    SpiroPen pen;
+    pen.click({8, 32});
+    pen.type = T::Corner;
+    pen.click({32, 32});
+    pen.type = T::G2;
+    pen.click({56, 32});
+    bool nodes = pen.nodes.size() == 3 && pen.nodes[0].type == T::G2 && pen.nodes[1].type == T::Corner && pen.nodes[2].x == 56;
+    bool near = pen.onFirst({10, 33}, 4) && !pen.onFirst({20, 32}, 4);
+    bool open = pen.finish(doc, false, Qt::black, 8) && pen.nodes.empty() && doc.colorAt({32, 31}) == Qt::black;
+    bool oneStep = doc.undo() && doc.colorAt({32, 31}) == Qt::white && doc.layerCount() == 2;  // the path, not the layer
+    pen.click({8, 8});
+    pen.click({56, 8});
+    pen.click({56, 56});
+    pen.click({8, 56});
+    bool closed = pen.finish(doc, true, Qt::black, 12) && doc.colorAt({8, 8}) != Qt::white && doc.undo() && doc.colorAt({8, 8}) == Qt::white;  // one undo step (how a closed path fills is #119's, see board)
+    pen.click({1, 1});
+    pen.click({9, 9});
+    pen.backspace();
+    bool back = pen.nodes.size() == 1 && pen.nodes[0].x == 1;
+    bool tooFew = !pen.finish(doc, false, Qt::black, 4) && pen.nodes.size() == 1;
+    pen.cancel();
+    return nodes && near && open && oneStep && closed && back && tooFew && pen.nodes.empty();
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -585,5 +616,6 @@ int main() {
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("exportedPngEqualsRender", exportedPngEqualsRender);
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
+    run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     return failed != 0;
 }

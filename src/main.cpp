@@ -1,4 +1,5 @@
 #include "document.h"
+#include "spiropen.h"
 #include "view.h"
 #include "ora.h"
 
@@ -44,6 +45,7 @@ public:
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
+    void setNodeType(SpiroType t) { pen_.type = t; }
     // Swaps the brush; color, size and opacity carry over (the dock's sliders are global, not per brush).
     void setBrush(const QString& mybPath) {
         auto b = loadBrush(mybPath);
@@ -65,7 +67,18 @@ protected:
             p.setPen(pen);
             p.drawPolyline(lasso_.data(), lasso_.size());  // the layer is untouched until pen-up
         }
-        if (cursor_ && brush_ && !fillTool_) {  // brush outline: dark with a light line beside it, readable on any color
+        if (spiroTool_ && !pen_.nodes.empty()) {  // the path so far, plus a node under the pointer that a click would place
+            auto nodes = pen_.nodes;
+            if (cursor_) nodes.push_back({view_.toDoc(*cursor_).x(), view_.toDoc(*cursor_).y(), pen_.type});
+            if (auto path = spiroToPath(nodes, false)) {
+                QPen pen(Qt::gray, 1);
+                pen.setCosmetic(true);
+                p.setPen(pen);
+                p.setBrush(Qt::NoBrush);
+                p.drawPath(*path);
+            }
+        }
+        if (cursor_ && brush_ && !fillTool_ && !spiroTool_) {  // brush outline: dark with a light line beside it, readable on any color
             p.resetTransform();
             p.setRenderHint(QPainter::Antialiasing);
             double r = view_.screenRadius(radius());
@@ -81,6 +94,8 @@ protected:
         last_ = e->position();
         resizing_ = e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ShiftModifier);
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) pickAt(e->position());
+        else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
+        else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && spiroTool_) spiroClick(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), eraseMode_);
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
     }
@@ -109,6 +124,7 @@ protected:
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) pickAt(e->position());
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
+        else if (spiroTool_) { if (e->type() == QEvent::TabletPress) spiroClick(e->position()); }
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), eraseMode_ || eraser);
         else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
@@ -122,8 +138,12 @@ protected:
     void keyPressEvent(QKeyEvent* e) override {
         if (e->isAutoRepeat()) return;
         if (e->key() == Qt::Key_Space) space_ = true;
-        else if (e->key() == Qt::Key_F) fillTool_ = true;
-        else if (e->key() == Qt::Key_B) fillTool_ = false;
+        else if (e->key() == Qt::Key_F) { fillTool_ = true; spiroTool_ = false; }
+        else if (e->key() == Qt::Key_B) fillTool_ = spiroTool_ = false;
+        else if (e->key() == Qt::Key_P) { spiroTool_ = true; fillTool_ = false; }
+        else if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) finishPath(e->modifiers() & Qt::ShiftModifier);
+        else if (e->key() == Qt::Key_Backspace) { pen_.backspace(); update(); }
+        else if (e->key() == Qt::Key_Escape) { pen_.cancel(); update(); }
         else if (e->key() == Qt::Key_E) eraseMode_ = !eraseMode_;
         else if (e->key() == Qt::Key_M) { view_.mirrorAt(rect().center()); update(); }
         else if (e->key() == Qt::Key_Z && (e->modifiers() & Qt::ControlModifier)) {
@@ -137,6 +157,17 @@ protected:
     }
 
 private:
+    // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node.
+    void spiroClick(QPointF pos) {
+        QPointF d = view_.toDoc(pos);
+        if (pen_.nodes.size() > 2 && pen_.onFirst(d, 6 / view_.screenRadius(1))) finishPath(true);
+        else pen_.click(d);
+        update();
+    }
+    void finishPath(bool closed) {
+        if (spiroTool_) pen_.finish(doc_, closed, color_, 2 * radius());  // width follows the brush size; refused on a Raster Layer
+        update();
+    }
     void resizeTo(QPointF pos) {
         if (!brush_) return;
         setRadius(dragRadius(radius(), pos.x() - last_.x()));
@@ -181,6 +212,8 @@ private:
     bool dragging_ = false, space_ = false, painting_ = false, resizing_ = false;
     QColor color_ = Qt::black;  // matches pencil.myb and the Color dock's start
     QPolygonF lasso_;
+    SpiroPen pen_;
+    bool spiroTool_ = false;
     bool fillTool_ = false, eraseMode_ = false, lassoing_ = false, lassoErase_ = false;
 };
 
@@ -321,6 +354,7 @@ int main(int argc, char** argv) {
     auto* layerButtons = new QHBoxLayout;
     for (auto [text, op] : std::initializer_list<std::pair<const char*, std::function<void(Document&)>>>{
              {"Add", [](Document& d) { d.addLayer(); }},
+             {"Add Vector", [](Document& d) { d.addVectorLayer(); }},
              {"Delete", [](Document& d) { d.deleteLayer(d.current()); }},
              {"Up", [](Document& d) { if (d.moveLayer(d.current(), d.current() + 1)) d.setCurrent(d.current() + 1); }},
              {"Down", [](Document& d) { if (d.moveLayer(d.current(), d.current() - 1)) d.setCurrent(d.current() - 1); }}}) {
