@@ -40,7 +40,7 @@ public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
     void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); selected_ = -1; nodeSel_.clear(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return doc_; }
-    std::function<void()> onLayersChange;  // fired when the layer stack may have changed outside the Layers dock (undo, redo, new document)
+    std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
     void setColor(const QColor& c) { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
     std::function<void()> onRadiusChange;  // fired after a drag resize so the Size slider can follow
     std::function<void(const QColor&)> onColorPick;  // fired after Ctrl+click so the Color dock can follow
@@ -74,6 +74,7 @@ public:
     void finishPath(bool closed) {
         if (spiroTool_) pen_.finish(doc_, closed, color_, 2 * radius());  // width follows the brush size; refused on a Raster Layer
         update();
+        if (onLayersChange) onLayersChange();
     }
     // Swaps the brush; color, size and opacity carry over (the dock's sliders are global, not per brush).
     void setBrush(const QString& mybPath) {
@@ -165,14 +166,14 @@ protected:
         else view_.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); dragging_ = painting_ = resizing_ = false; }
+    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); dragging_ = painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
         if (e->type() == QEvent::TabletLeaveProximity) { cursor_.reset(); update(); }
         else if (!resizing_ || e->type() == QEvent::TabletPress) { cursor_ = e->position(); update(); }
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
-        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); painting_ = resizing_ = false; }
+        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
         else if (e->type() == QEvent::TabletPress && !selectTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
@@ -489,10 +490,34 @@ int main(int argc, char** argv) {
         Document& d = canvas->doc();
         QSignalBlocker b1(layerList), b2(layerOpacity);
         layerList->clear();
-        for (int i = d.layerCount() - 1; i >= 0; i--) {
-            auto* it = new QListWidgetItem(i == 0 ? "Background" : QString("Layer %1").arg(i), layerList);
-            it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
-            it->setCheckState(d.visible(i) ? Qt::Checked : Qt::Unchecked);
+        for (int i = d.layerCount() - 1; i >= 0; i--) {  // a row: eye, kind icon, thumbnail, name (#169)
+            auto* row = new QWidget;
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(2, 2, 2, 2);
+            auto* eye = new QToolButton;
+            eye->setAutoRaise(true);
+            eye->setCheckable(true);
+            eye->setChecked(d.visible(i));
+            eye->setText(d.visible(i) ? "👁" : "–");
+            QObject::connect(eye, &QToolButton::toggled, [canvas, eye, i](bool on) {
+                eye->setText(on ? "👁" : "–");
+                canvas->doc().setVisible(i, on);
+                canvas->update();
+            });
+            auto* thumb = new QLabel;
+            QPixmap tp(40, 30);
+            tp.fill(QColor(200, 200, 200));  // so a transparent layer's thumbnail still shows
+            QPainter tpp(&tp);
+            tpp.setRenderHint(QPainter::SmoothPixmapTransform);
+            tpp.drawImage(tp.rect(), d.image(i));
+            thumb->setPixmap(tp);
+            h->addWidget(eye);
+            h->addWidget(new QLabel(d.vector(i) ? "✒" : "🖌"));
+            h->addWidget(thumb);
+            h->addWidget(new QLabel(d.name(i)), 1);
+            auto* it = new QListWidgetItem(layerList);
+            it->setSizeHint(row->sizeHint());
+            layerList->setItemWidget(it, row);
         }
         layerList->setCurrentRow(d.layerCount() - 1 - d.current());
         layerOpacity->setValue(std::lround(d.opacity(d.current()) * 100));
@@ -505,11 +530,6 @@ int main(int argc, char** argv) {
         canvas->doc().setCurrent(canvas->doc().layerCount() - 1 - row);
         refresh();
     });
-    QObject::connect(layerList, &QListWidget::itemChanged, [canvas](QListWidgetItem* it) {
-        Document& d = canvas->doc();
-        d.setVisible(d.layerCount() - 1 - it->listWidget()->row(it), it->checkState() == Qt::Checked);
-        canvas->update();
-    });
     QObject::connect(layerOpacity, &QSlider::valueChanged, [canvas](int v) {
         canvas->doc().setOpacity(canvas->doc().current(), v / 100.0);
         canvas->update();
@@ -517,11 +537,11 @@ int main(int argc, char** argv) {
     auto* layerButtons = new QHBoxLayout;
     struct LayerOp { const char* button; const char* menu; std::function<void(Document&)> op; };
     const std::initializer_list<LayerOp> layerOps{
-        {"Add", "Add &Raster", [](Document& d) { d.addLayer(); }},
-        {"Add Vector", "Add &Vector", [](Document& d) { d.addVectorLayer(); }},
-        {"Delete", "&Delete", [](Document& d) { d.deleteLayer(d.current()); }},
-        {"Up", "&Up", [](Document& d) { if (d.moveLayer(d.current(), d.current() + 1)) d.setCurrent(d.current() + 1); }},
-        {"Down", "Dow&n", [](Document& d) { if (d.moveLayer(d.current(), d.current() - 1)) d.setCurrent(d.current() - 1); }}};
+        {"+ Raster", "Add &Raster", [](Document& d) { d.addLayer(); }},
+        {"+ Vector", "Add &Vector", [](Document& d) { d.addVectorLayer(); }},
+        {"↑", "&Up", [](Document& d) { if (d.moveLayer(d.current(), d.current() + 1)) d.setCurrent(d.current() + 1); }},
+        {"↓", "Dow&n", [](Document& d) { if (d.moveLayer(d.current(), d.current() - 1)) d.setCurrent(d.current() - 1); }},
+        {"🗑", "&Delete", [](Document& d) { d.deleteLayer(d.current()); }}};
     for (const auto& l : layerOps) {
         auto* btn = new QPushButton(l.button);
         QObject::connect(btn, &QPushButton::clicked, [canvas, refresh, op = l.op] { op(canvas->doc()); refresh(); });
