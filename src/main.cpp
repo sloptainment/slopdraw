@@ -44,6 +44,7 @@ public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
     void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); selected_ = -1; nodeSel_.clear(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return doc_; }
+    bool hasDoc() const { return !doc_.image(0).isNull(); }  // the app starts on Document(QSize()), which has no pixels (#157)
     std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
     void setColor(const QColor& c) { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
     std::function<void()> onRadiusChange;  // fired after a drag resize so the Size slider can follow
@@ -93,6 +94,12 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
+        if (!hasDoc()) {
+            p.fillRect(rect(), QColor(90, 90, 90));
+            p.setPen(Qt::white);
+            p.drawText(rect(), Qt::AlignCenter, "File > New or Open");
+            return;
+        }
         p.setRenderHint(QPainter::SmoothPixmapTransform);
         p.setTransform(view_.matrix());
         p.drawImage(0, 0, doc_.render());
@@ -500,6 +507,7 @@ int main(int argc, char** argv) {
     auto* layerOpacityValue = new QLabel;
     QObject::connect(layerOpacity, &QSlider::valueChanged, [layerOpacityValue](int v) { layerOpacityValue->setText(QString("%1 %").arg(v)); });
     std::function<void()> kindChanged;  // set with the Tools dock below; refresh() runs on every current-layer change
+    std::vector<QAction*> docActions;  // enabled only while a document is open (#173); filled as the menus are built
     auto refresh = [canvas, layerList, layerOpacity, layerOpacityValue, &kindChanged] {
         Document& d = canvas->doc();
         QSignalBlocker b1(layerList), b2(layerOpacity);
@@ -631,10 +639,13 @@ int main(int argc, char** argv) {
     toolCol->addStretch();
     // Only the tools that fit the current layer's kind are enabled, so their keys do nothing on the other kind (#170); a switch that disables the tool picks the last one used on the new kind.
     kindChanged = [&] {
-        bool vec = canvas->doc().vector(canvas->doc().current());
+        bool has = canvas->hasDoc(), vec = canvas->doc().vector(canvas->doc().current());
+        canvas->setEnabled(has);  // a disabled widget gets no pointer or key events
+        for (auto* w : {colorDock->widget(), layerPanel, optionsPanel}) w->setEnabled(has);
+        for (auto* a : docActions) a->setEnabled(has);
         auto tools = toolGroup->actions();
-        for (int i = 0; i < 4; i++) tools[i]->setEnabled((i >= SpiroPenTool) == vec);
-        brushPanel->setEnabled(!vec);
+        for (int i = 0; i < 4; i++) tools[i]->setEnabled(has && (i >= SpiroPenTool) == vec);
+        brushPanel->setEnabled(has && !vec);
         int now = toolForLayer(vec, tools.indexOf(toolGroup->checkedAction()), lastTool[0], lastTool[1]);
         if (!tools[now]->isChecked()) tools[now]->trigger();
     };
@@ -666,6 +677,7 @@ int main(int argc, char** argv) {
         canvas->setDocument(std::move(*doc));
     });
     auto* fileSave = fileMenu->addAction("&Save...");
+    docActions.push_back(fileSave);
     fileSave->setShortcut(QKeySequence::Save);
     QObject::connect(fileSave, &QAction::triggered, [&] {
         QString path = QFileDialog::getSaveFileName(&window, "Save", {}, "OpenRaster (*.ora)");
@@ -674,6 +686,7 @@ int main(int argc, char** argv) {
         if (!writeOra(canvas->doc(), path)) QMessageBox::warning(&window, "Save", "Could not write " + path);
     });
     auto* fileExport = fileMenu->addAction("&Export PNG...");
+    docActions.push_back(fileExport);
     QObject::connect(fileExport, &QAction::triggered, [&] {
         QString path = QFileDialog::getSaveFileName(&window, "Export PNG", {}, "PNG (*.png)");
         if (path.isEmpty()) return;
@@ -685,7 +698,7 @@ int main(int argc, char** argv) {
     fileQuit->setShortcut(QKeySequence::Quit);
     QObject::connect(fileQuit, &QAction::triggered, &window, &QWidget::close);
 
-    auto key = [&window](QAction* a, QList<QKeySequence> keys) { a->setShortcuts(keys); window.addAction(a); return a; };  // window-wide, so it works whichever dock has focus
+    auto key = [&window, &docActions](QAction* a, QList<QKeySequence> keys) { a->setShortcuts(keys); window.addAction(a); docActions.push_back(a); return a; };  // window-wide, so it works whichever dock has focus
 
     auto* editMenu = window.menuBar()->addMenu("&Edit");
     QObject::connect(key(editMenu->addAction("&Undo"), {QKeySequence("Ctrl+Z")}), &QAction::triggered, [canvas] { canvas->undo(false); });
@@ -715,8 +728,11 @@ int main(int argc, char** argv) {
     };
 
     auto* layerMenu = window.menuBar()->addMenu("&Layer");
-    for (const auto& l : layerOps)
-        QObject::connect(layerMenu->addAction(l.menu), &QAction::triggered, [canvas, refresh, op = l.op] { op(canvas->doc()); refresh(); });
+    for (const auto& l : layerOps) {
+        auto* a = layerMenu->addAction(l.menu);
+        docActions.push_back(a);
+        QObject::connect(a, &QAction::triggered, [canvas, refresh, op = l.op] { op(canvas->doc()); refresh(); });
+    }
 
     auto* toolsMenu = window.menuBar()->addMenu("&Tools");
     toolsMenu->addActions(toolGroup->actions());
@@ -728,6 +744,8 @@ int main(int argc, char** argv) {
     QObject::connect(key(toolsMenu->addAction("Finish path &open"), {QKeySequence("Return"), QKeySequence("Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(false); });
     QObject::connect(key(toolsMenu->addAction("Finish path &closed"), {QKeySequence("Shift+Return"), QKeySequence("Shift+Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(true); });
 
+    for (auto* m : {editMenu, layerMenu, toolsMenu}) docActions.push_back(m->menuAction());
+    kindChanged();  // the menus exist now: the no-document state applies to them too
     window.resize(1024, 768);
     window.show();
     return app.exec();
