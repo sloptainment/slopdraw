@@ -587,6 +587,17 @@ static bool selectingAPathShowsItsKnotHandles() {
     return hit && handles;
 }
 
+// On a 3-node path at y=32: nodeAt returns the index of the node within tol of a point (the nearest when two qualify), -1 for none,
+// for a bad path and on a Raster Layer.
+static bool nodeAtFindsTheNodeUnderAPoint() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 32, T::G2}, {32, 32, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
+    return doc.nodeAt(1, 0, {33, 31}, 3) == 1 && doc.nodeAt(1, 0, {9, 32}, 3) == 0 && doc.nodeAt(1, 0, {20, 32}, 3) == -1
+        && doc.nodeAt(1, 0, {10, 32}, 30) == 0 && doc.nodeAt(1, 5, {32, 32}, 3) == -1 && doc.nodeAt(0, 0, {32, 32}, 3) == -1;
+}
+
 // On a straight 3-node path at y=32 (width 8): projectKnot maps a pointer to the nearest path time and twice its signed offset
 // along the left normal (below the path is +); previewKnots redraws without a history step, so a drag that ends by restoring the
 // start knots and calling setKnots once undoes in one step.
@@ -757,6 +768,7 @@ int main() {
     run("setKnotsRedrawsAndUndoes", setKnotsRedrawsAndUndoes);
     run("setNodesRedrawsAndUndoes", setNodesRedrawsAndUndoes);
     run("selectingAPathShowsItsKnotHandles", selectingAPathShowsItsKnotHandles);
+    run("nodeAtFindsTheNodeUnderAPoint", nodeAtFindsTheNodeUnderAPoint);
     run("draggingAKnotProjectsAndUndoesOnce", draggingAKnotProjectsAndUndoesOnce);
     run("duplicatingAndDeletingKnots", duplicatingAndDeletingKnots);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);

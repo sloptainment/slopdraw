@@ -149,6 +149,22 @@ int Document::pathAt(int layer, QPointF p, double tol) const {
     return -1;
 }
 
+std::vector<SpiroNode> Document::nodes(int layer, int path) const {
+    if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return {};
+    return layers_[layer].paths[path].nodes;
+}
+
+int Document::nodeAt(int layer, int path, QPointF p, double tol) const {
+    int best = -1;
+    double bestD = tol;
+    auto ns = nodes(layer, path);
+    for (int i = 0; i < int(ns.size()); i++) {
+        double d = QLineF(p, QPointF(ns[i].x, ns[i].y)).length();
+        if (d <= bestD) best = i, bestD = d;
+    }
+    return best;
+}
+
 // The skeleton point at path time t.
 static QPointF skeletonAt(const std::vector<Cubic>& skeleton, double t) {
     int i = std::clamp(int(t), 0, int(skeleton.size()) - 1);

@@ -23,6 +23,7 @@
 #include <QMouseEvent>
 #include <algorithm>
 #include <functional>
+#include <set>
 #include <optional>
 #include <QTabletEvent>
 #include <QWheelEvent>
@@ -35,7 +36,7 @@
 class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
-    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); selected_ = -1; update(); if (onLayersChange) onLayersChange(); }
+    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); selected_ = -1; nodeSel_.clear(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return doc_; }
     std::function<void()> onLayersChange;  // fired when the layer stack may have changed outside the Layers dock (undo, redo, new document)
     void setColor(const QColor& c) { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
@@ -79,6 +80,17 @@ protected:
                 p.drawPath(*path);
             }
         }
+        if (selectTool_ && selected_ >= 0) {  // a square per Spiro Node of the selected path, filled when selected, then a circle per Width Knot
+            QPen pen(Qt::blue, 1);
+            pen.setCosmetic(true);
+            p.setPen(pen);
+            double r = 4 / view_.screenRadius(1);
+            auto nodes = doc_.nodes(doc_.current(), selected_);
+            for (int i = 0; i < int(nodes.size()); i++) {
+                p.setBrush(nodeSel_.count(i) ? Qt::blue : Qt::white);
+                p.drawRect(QRectF(nodes[i].x - r, nodes[i].y - r, 2 * r, 2 * r));
+            }
+        }
         if (selectTool_ && selected_ >= 0) {  // a handle per Width Knot of the selected path
             QPen pen(Qt::blue, 1);
             pen.setCosmetic(true);
@@ -101,11 +113,11 @@ protected:
     void mousePressEvent(QMouseEvent* e) override {
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
-        resizing_ = e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ShiftModifier);
+        resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && (e->modifiers() & Qt::ShiftModifier);
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier) && !editKnot(e->position(), e->modifiers())) pickAt(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) return;
         else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
-        else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position());
+        else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && spiroTool_) spiroClick(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), eraseMode_);
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
@@ -134,9 +146,9 @@ protected:
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
         if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); painting_ = resizing_ = false; }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
-        else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
+        else if (e->type() == QEvent::TabletPress && !selectTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
-        else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); }
+        else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); }
         else if (spiroTool_) { if (e->type() == QEvent::TabletPress) spiroClick(e->position()); }
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), eraseMode_ || eraser);
         else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
@@ -154,7 +166,7 @@ protected:
         else if (e->key() == Qt::Key_F) { fillTool_ = true; spiroTool_ = selectTool_ = false; }
         else if (e->key() == Qt::Key_B) fillTool_ = spiroTool_ = selectTool_ = false;
         else if (e->key() == Qt::Key_P) { spiroTool_ = true; fillTool_ = selectTool_ = false; }
-        else if (e->key() == Qt::Key_V) { selectTool_ = true; selected_ = -1; fillTool_ = spiroTool_ = false; update(); }
+        else if (e->key() == Qt::Key_V) { selectTool_ = true; selected_ = -1; nodeSel_.clear(); fillTool_ = spiroTool_ = false; update(); }
         else if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) finishPath(e->modifiers() & Qt::ShiftModifier);
         else if (e->key() == Qt::Key_Backspace) { pen_.backspace(); update(); }
         else if (e->key() == Qt::Key_Escape) { pen_.cancel(); update(); }
@@ -163,6 +175,7 @@ protected:
         else if (e->key() == Qt::Key_Z && (e->modifiers() & Qt::ControlModifier)) {
             (e->modifiers() & Qt::ShiftModifier ? doc_.redo() : doc_.undo());
             selected_ = -1;
+            nodeSel_.clear();
             update();
             if (onLayersChange) onLayersChange();
         }
@@ -183,14 +196,24 @@ private:
     // Select tool: a click within 6 screen px of a path of the current Vector Layer selects it; any other click deselects.
     void selectAt(QPointF pos) {
         selected_ = doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1));
+        nodeSel_.clear();
         update();
     }
-    // Select tool press: on a Width Knot handle of the selected path (within 6 screen px) it starts a drag, anywhere else it selects.
-    void selectPress(QPointF pos) {
+    // Select tool press: on a Width Knot handle of the selected path (within 6 screen px) it starts a drag; on a Spiro Node it selects
+    // only that node (Shift toggles it); anywhere else it selects a path and clears the node selection (Shift+click there changes nothing).
+    void selectPress(QPointF pos, Qt::KeyboardModifiers mods) {
         int i = knotAt(pos);
-        if (i < 0) return selectAt(pos);
-        knotDrag_ = i;
-        knotsBefore_ = doc_.knots(doc_.current(), selected_);
+        if (i >= 0) {
+            knotDrag_ = i;
+            knotsBefore_ = doc_.knots(doc_.current(), selected_);
+            return;
+        }
+        int n = selected_ < 0 ? -1 : doc_.nodeAt(doc_.current(), selected_, view_.toDoc(pos), 6 / view_.screenRadius(1));
+        if (n < 0 && (mods & Qt::ShiftModifier)) return;
+        if (n < 0) return selectAt(pos);
+        if (!(mods & Qt::ShiftModifier)) nodeSel_ = {n};
+        else if (!nodeSel_.erase(n)) nodeSel_.insert(n);
+        update();
     }
     // Index of the selected path's Width Knot handle within 6 screen px of pos, -1 for none.
     int knotAt(QPointF pos) {
@@ -279,6 +302,7 @@ private:
     SpiroPen pen_;
     int knotDrag_ = -1;  // index of the Width Knot being dragged on the selected path, -1 for none
     std::vector<WidthKnot> knotsBefore_;  // the selected path's knots when the drag began
+    std::set<int> nodeSel_;  // selected Spiro Node indexes of the selected path
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false;
     bool fillTool_ = false, eraseMode_ = false, lassoing_ = false, lassoErase_ = false;

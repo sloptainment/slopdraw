@@ -41,6 +41,10 @@ public:
     bool setNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed);
     // The topmost path of Vector Layer `layer` whose Spiro curve passes within tol of p, or -1 (also for a Raster Layer).
     int pathAt(int layer, QPointF p, double tol) const;
+    // The Spiro Node of path `path` nearest to p within tol, as its index, or -1 (also for a bad layer or path index).
+    int nodeAt(int layer, int path, QPointF p, double tol) const;
+    // The path's Spiro Nodes; empty for a bad layer or path index.
+    std::vector<SpiroNode> nodes(int layer, int path) const;
     // Where each Width Knot of a path is drawn: its point on the curve moved half the knot's width along the left normal (-ty, tx); empty for a bad layer or path index.
     std::vector<QPointF> knotHandles(int layer, int path) const;
     // The path's current Width Knots; empty for a bad layer or path index.
