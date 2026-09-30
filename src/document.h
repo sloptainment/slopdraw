@@ -24,6 +24,10 @@ public:
     QColor colorAt(QPoint p) const;
     // Adds a transparent Raster Layer on top and makes it current; returns its index (0 is the white background).
     int addLayer();
+    int layerCount() const { return int(layers_.size()); }
+    int current() const { return current_; }
+    bool visible(int layer) const { return layers_[layer].visible; }
+    double opacity(int layer) const { return layers_[layer].opacity; }
     void setCurrent(int layer);
     void setVisible(int layer, bool visible);
     void setOpacity(int layer, double opacity);

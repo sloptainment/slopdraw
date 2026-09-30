@@ -7,6 +7,8 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
+#include <QHBoxLayout>
+#include <QPushButton>
 #include <QSlider>
 #include <QVBoxLayout>
 #include <QMainWindow>
@@ -28,7 +30,9 @@
 class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); }
-    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); update(); }
+    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); update(); if (onLayersChange) onLayersChange(); }
+    Document& doc() { return doc_; }
+    std::function<void()> onLayersChange;  // fired when the layer stack may have changed outside the Layers dock (undo, redo, new document)
     void setColor(const QColor& c) { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
     std::function<void()> onRadiusChange;  // fired after a drag resize so the Size slider can follow
     std::function<void(const QColor&)> onColorPick;  // fired after Ctrl+click so the Color dock can follow
@@ -106,6 +110,7 @@ protected:
         else if (e->key() == Qt::Key_Z && (e->modifiers() & Qt::ControlModifier)) {
             (e->modifiers() & Qt::ShiftModifier ? doc_.redo() : doc_.undo());
             update();
+            if (onLayersChange) onLayersChange();
         }
     }
     void keyReleaseEvent(QKeyEvent* e) override {
@@ -260,6 +265,59 @@ int main(int argc, char** argv) {
     auto* brushDock = new QDockWidget("Brushes", &window);
     brushDock->setWidget(brushPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, brushDock);
+
+    // Layers dock: the list runs top layer first, so row = layerCount - 1 - index. refresh() rebuilds it from the Document.
+    auto* layerList = new QListWidget;
+    auto* layerOpacity = new QSlider(Qt::Horizontal);  // percent, of the current layer
+    layerOpacity->setRange(0, 100);
+    auto refresh = [canvas, layerList, layerOpacity] {
+        Document& d = canvas->doc();
+        QSignalBlocker b1(layerList), b2(layerOpacity);
+        layerList->clear();
+        for (int i = d.layerCount() - 1; i >= 0; i--) {
+            auto* it = new QListWidgetItem(i == 0 ? "Background" : QString("Layer %1").arg(i), layerList);
+            it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+            it->setCheckState(d.visible(i) ? Qt::Checked : Qt::Unchecked);
+        }
+        layerList->setCurrentRow(d.layerCount() - 1 - d.current());
+        layerOpacity->setValue(std::lround(d.opacity(d.current()) * 100));
+        canvas->update();
+    };
+    canvas->onLayersChange = refresh;
+    QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
+        if (row < 0) return;
+        canvas->doc().setCurrent(canvas->doc().layerCount() - 1 - row);
+        refresh();
+    });
+    QObject::connect(layerList, &QListWidget::itemChanged, [canvas](QListWidgetItem* it) {
+        Document& d = canvas->doc();
+        d.setVisible(d.layerCount() - 1 - it->listWidget()->row(it), it->checkState() == Qt::Checked);
+        canvas->update();
+    });
+    QObject::connect(layerOpacity, &QSlider::valueChanged, [canvas](int v) {
+        canvas->doc().setOpacity(canvas->doc().current(), v / 100.0);
+        canvas->update();
+    });
+    auto* layerButtons = new QHBoxLayout;
+    for (auto [text, op] : std::initializer_list<std::pair<const char*, std::function<void(Document&)>>>{
+             {"Add", [](Document& d) { d.addLayer(); }},
+             {"Delete", [](Document& d) { d.deleteLayer(d.current()); }},
+             {"Up", [](Document& d) { if (d.moveLayer(d.current(), d.current() + 1)) d.setCurrent(d.current() + 1); }},
+             {"Down", [](Document& d) { if (d.moveLayer(d.current(), d.current() - 1)) d.setCurrent(d.current() - 1); }}}) {
+        auto* btn = new QPushButton(text);
+        QObject::connect(btn, &QPushButton::clicked, [canvas, refresh, op = op] { op(canvas->doc()); refresh(); });
+        layerButtons->addWidget(btn);
+    }
+    auto* layerPanel = new QWidget;
+    auto* layerCol = new QVBoxLayout(layerPanel);
+    layerCol->addWidget(layerList);
+    layerCol->addLayout(layerButtons);
+    layerCol->addWidget(new QLabel("Opacity"));
+    layerCol->addWidget(layerOpacity);
+    auto* layerDock = new QDockWidget("Layers", &window);
+    layerDock->setWidget(layerPanel);
+    window.addDockWidget(Qt::RightDockWidgetArea, layerDock);
+    refresh();
 
     auto* fileNew = window.menuBar()->addMenu("&File")->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);
