@@ -29,7 +29,7 @@ class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); }
     void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); update(); }
-    void setColor(const QColor& c) { if (brush_) setBrushColor(brush_.get(), c); }
+    void setColor(const QColor& c) { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
     std::function<void()> onRadiusChange;  // fired after a drag resize so the Size slider can follow
     std::function<void(const QColor&)> onColorPick;  // fired after Ctrl+click so the Color dock can follow
     void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); }
@@ -51,16 +51,24 @@ protected:
         p.setRenderHint(QPainter::SmoothPixmapTransform);
         p.setTransform(view_.matrix());
         p.drawImage(0, 0, doc_.render());
+        if (lasso_.size() > 1) {
+            QPen pen(Qt::gray, 1);
+            pen.setCosmetic(true);
+            p.setPen(pen);
+            p.drawPolyline(lasso_.data(), lasso_.size());  // the layer is untouched until pen-up
+        }
     }
     void mousePressEvent(QMouseEvent* e) override {
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
         resizing_ = e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ShiftModifier);
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) pickAt(e->position());
+        else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), eraseMode_);
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
     }
     void mouseMoveEvent(QMouseEvent* e) override {
         if (resizing_) return resizeTo(e->position());
+        if (lassoing_) return lassoAt(e->position(), eraseMode_);
         if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
         if (!dragging_) return;
         QPointF d = e->position() - last_;
@@ -70,17 +78,19 @@ protected:
         else view_.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { dragging_ = painting_ = resizing_ = false; }
+    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); dragging_ = painting_ = resizing_ = false; }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
-        if (e->type() == QEvent::TabletRelease) painting_ = resizing_ = false;
+        bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
+        if (e->type() == QEvent::TabletRelease) { endLasso(); painting_ = resizing_ = false; }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) pickAt(e->position());
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
+        else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), eraseMode_ || eraser);
         else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
-                    e->pointerType() == QPointingDevice::PointerType::Eraser);  // the flag is per call (b20)
+                    eraser);  // the flag is per call (b20)
     }
     void wheelEvent(QWheelEvent* e) override {
         view_.zoomAt(e->position(), std::pow(1.1, e->angleDelta().y() / 120.0));
@@ -89,6 +99,9 @@ protected:
     void keyPressEvent(QKeyEvent* e) override {
         if (e->isAutoRepeat()) return;
         if (e->key() == Qt::Key_Space) space_ = true;
+        else if (e->key() == Qt::Key_F) fillTool_ = true;
+        else if (e->key() == Qt::Key_B) fillTool_ = false;
+        else if (e->key() == Qt::Key_E) eraseMode_ = !eraseMode_;
         else if (e->key() == Qt::Key_M) { view_.mirrorAt(rect().center()); update(); }
         else if (e->key() == Qt::Key_Z && (e->modifiers() & Qt::ControlModifier)) {
             (e->modifiers() & Qt::ShiftModifier ? doc_.redo() : doc_.undo());
@@ -113,6 +126,20 @@ private:
         setColor(c);
         if (onColorPick) onColorPick(c);
     }
+    // Lasso Fill: collect the outline in document coordinates; the fill lands in endLasso. The eraser end is per stroke: its press decides.
+    void lassoAt(QPointF pos, bool eraser) {
+        if (!lassoing_) lassoErase_ = eraser;
+        lassoing_ = true;
+        lasso_.push_back(view_.toDoc(pos));
+        update();
+    }
+    void endLasso() {
+        if (!lassoing_) return;
+        lassoing_ = false;
+        if (lasso_.size() > 2) doc_.fill(color_, {lasso_.begin(), lasso_.end()}, lassoErase_);
+        lasso_.clear();
+        update();
+    }
     void paintAt(QPointF pos, float pressure, float xtilt, float ytilt, ulong ms, bool eraser = false) {
         if (!brush_) return;
         QPointF d = view_.toDoc(pos);
@@ -127,6 +154,9 @@ private:
     View view_;
     QPointF last_;
     bool dragging_ = false, space_ = false, painting_ = false, resizing_ = false;
+    QColor color_ = Qt::black;  // matches pencil.myb and the Color dock's start
+    QPolygonF lasso_;
+    bool fillTool_ = false, eraseMode_ = false, lassoing_ = false, lassoErase_ = false;
 };
 
 // Hue ring around a saturation/value square. Dragging either calls onChange with the new color; setColor moves it from outside.
