@@ -629,6 +629,35 @@ static bool duplicatingAndDeletingKnots() {
     return dup && del && same(deleteKnot(one, 0), one);
 }
 
+// On the vector-path fixture, setNodes retyping the middle node from G2 to corner changes the render (golden); undo restores the original,
+// redo the retyped one; a Raster Layer, a bad path index or a node set with no curve changes nothing.
+static bool setNodesRedrawsAndUndoes() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 32, T::G2}, {32, 8, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
+    QImage before = doc.render();
+    bool set = doc.setNodes(1, 0, {{8, 32, T::G2}, {32, 8, T::Corner}, {56, 32, T::G2}}, false);
+    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage golden(GOLDEN_DIR "/vector_nodes_64x64.pgm");
+    bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
+    if (!same) {  // write plain-text PGM to eyeball and copy into golden/
+        if (FILE* f = std::fopen("actual_vector_nodes.pgm", "w")) {
+            std::fprintf(f, "P2\n%d %d\n255\n", got.width(), got.height());
+            for (int y = 0; y < got.height(); y++)
+                for (int x = 0; x < got.width(); x++) std::fprintf(f, "%d%c", got.constScanLine(y)[x], x + 1 < got.width() ? ' ' : '\n');
+            std::fclose(f);
+        }
+    }
+    QImage changed = doc.render();
+    bool differs = changed != before;
+    bool undone = doc.undo() && doc.render() == before;
+    bool redone = doc.redo() && doc.render() == changed;
+    bool refused = !doc.setNodes(0, 0, {{8, 32, T::G2}, {32, 8, T::G2}}, false) && !doc.setNodes(1, 1, {{8, 32, T::G2}, {32, 8, T::G2}}, false)
+        && !doc.setNodes(1, 0, {{8, 32, T::G2}, {8, 32, T::G2}}, false) && doc.render() == changed;
+    return set && same && differs && undone && redone && refused;
+}
+
 // A closed 4-node square path (width 12) is a ring: the stroke is black at the node (8,8) and the hole at the centre stays white.
 static bool closedPathIsARing() {
     using T = SpiroType;
@@ -726,6 +755,7 @@ int main() {
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
     run("closedPathIsARing", closedPathIsARing);
     run("setKnotsRedrawsAndUndoes", setKnotsRedrawsAndUndoes);
+    run("setNodesRedrawsAndUndoes", setNodesRedrawsAndUndoes);
     run("selectingAPathShowsItsKnotHandles", selectingAPathShowsItsKnotHandles);
     run("draggingAKnotProjectsAndUndoesOnce", draggingAKnotProjectsAndUndoesOnce);
     run("duplicatingAndDeletingKnots", duplicatingAndDeletingKnots);

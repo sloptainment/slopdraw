@@ -36,6 +36,9 @@ public:
     // Replaces path `path` of Vector Layer `layer` with these Width Knots (t = cubic index + fraction, full width) and redraws it; one undo step.
     // Returns false, changing nothing, for a Raster Layer, a bad path index or an empty knot list.
     bool setKnots(int layer, int path, const std::vector<WidthKnot>& knots);
+    // Replaces the Spiro Nodes (and closed flag) of path `path` of Vector Layer `layer` and redraws it; one undo step. Knots stay as stored.
+    // Returns false, changing nothing, for a Raster Layer, a bad path index or nodes that give no curve (see spiroToPath).
+    bool setNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed);
     // The topmost path of Vector Layer `layer` whose Spiro curve passes within tol of p, or -1 (also for a Raster Layer).
     int pathAt(int layer, QPointF p, double tol) const;
     // Where each Width Knot of a path is drawn: its point on the curve moved half the knot's width along the left normal (-ty, tx); empty for a bad layer or path index.
@@ -72,8 +75,8 @@ private:
     // Pixels: before/after pixels of the rect a stroke changed. The layer ops keep what undo needs: Add nothing (its layer is blank
     // once later steps are undone), Delete the layer's image in before plus its visible/opacity in a/b, Move the target index in to,
     // Visible and Opacity the old and new value in a and b, Name the old and new in na and nb.
-    // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path, Knots the old and new Width Knots of one path.
-    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, PathAdd, Knots };
+    // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path, Knots the old and new Width Knots of one path, Nodes the old and new path in paths[0] and paths[1] (index in to).
+    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, PathAdd, Knots, Nodes };
     struct VPath {
         std::vector<SpiroNode> nodes;
         bool closed;

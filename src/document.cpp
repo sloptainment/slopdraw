@@ -122,6 +122,21 @@ bool Document::setKnots(int layer, int path, const std::vector<WidthKnot>& knots
     return true;
 }
 
+bool Document::setNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed) {
+    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size()) || !spiroToPath(nodes, closed)) return false;
+    seal();
+    Step s;
+    s.kind = Nodes;
+    s.layer = layer;
+    s.to = path;
+    s.paths = {layers_[layer].paths[path], layers_[layer].paths[path]};
+    s.paths[1].nodes = nodes;
+    s.paths[1].closed = closed;
+    push(s);
+    apply(s, false);
+    return true;
+}
+
 int Document::pathAt(int layer, QPointF p, double tol) const {
     if (!layers_[layer].vector) return -1;
     for (int i = int(layers_[layer].paths.size()); i-- > 0;) {
@@ -319,6 +334,10 @@ void Document::apply(const Step& s, bool reverse) {
         break;
     case Knots:
         layers_[s.layer].paths[s.to].knots = reverse ? s.ka : s.kb;
+        rasterize(layers_[s.layer]);
+        break;
+    case Nodes:
+        layers_[s.layer].paths[s.to] = s.paths[reverse ? 0 : 1];
         rasterize(layers_[s.layer]);
         break;
     }
