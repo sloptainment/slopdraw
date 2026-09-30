@@ -1,5 +1,7 @@
 #include "document.h"
 #include <algorithm>
+#include <QPainter>
+#include <QPainterPath>
 #include <cstring>
 
 namespace {
@@ -44,6 +46,22 @@ void Document::stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vec
         strokeStart_ = layer_;
     }
     paintStroke(brush.get(), layer_, samples, continuing, eraser);
+}
+
+void Document::fill(const QColor& color, const std::vector<QPointF>& points, bool eraser) {
+    seal();
+    history_.resize(applied_);  // a new edit discards the redo branch
+    strokeStart_ = layer_;
+    QPainterPath path;
+    path.setFillRule(Qt::WindingFill);
+    path.addPolygon(QPolygonF(QVector<QPointF>(points.begin(), points.end())));
+    path.closeSubpath();
+    QPainter p(&layer_);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.fillPath(path, eraser ? Qt::white : color);
+    p.end();
+    seal();  // its own step, so a live stroke after it starts fresh
 }
 
 void Document::seal() {

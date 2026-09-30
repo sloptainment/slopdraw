@@ -327,6 +327,40 @@ static bool dragResizesRadiusWithinRange() {
         && dragRadius(10, 1000) == 200 && dragRadius(10, -1000) == 1;
 }
 
+// A figure-eight point list fills both loops solid black, antialiased, matching a golden; erase mode cuts a square out of it
+// (golden); undo restores each; a pentagram's doubly-wound center is filled (non-zero, not even-odd).
+static bool fillsFigureEightAndErases() {
+    auto grayGolden = [](const Document& doc, const char* name, const char* actual) {
+        QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+        QImage golden(QString(GOLDEN_DIR "/") + name);
+        bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
+        if (!same) {  // write plain-text PGM to eyeball and copy into golden/
+            if (FILE* f = std::fopen(actual, "w")) {
+                std::fprintf(f, "P2\n%d %d\n255\n", got.width(), got.height());
+                for (int y = 0; y < got.height(); y++)
+                    for (int x = 0; x < got.width(); x++) std::fprintf(f, "%d%c", got.constScanLine(y)[x], x + 1 < got.width() ? ' ' : '\n');
+                std::fclose(f);
+            }
+        }
+        return same;
+    };
+    const std::vector<QPointF> eight = {{8, 8}, {56, 56}, {56, 8}, {8, 56}};
+    Document doc(QSize(64, 64));
+    QImage blank = doc.render().copy();
+    doc.fill(Qt::black, eight);
+    QImage filled = doc.render().copy();
+    bool loops = doc.colorAt({50, 32}) == Qt::black && doc.colorAt({14, 32}) == Qt::black && doc.colorAt({32, 8}) == Qt::white;
+    int edge = doc.colorAt({20, 20}).red();  // on the 45-degree edge: partial coverage
+    bool same = grayGolden(doc, "fill_figure_eight_64x64.pgm", "actual_fill_figure_eight.pgm");
+    doc.fill(Qt::black, {{24, 24}, {40, 24}, {40, 40}, {24, 40}}, true);  // cuts a square out
+    QImage cut = doc.render().copy();
+    bool erased = doc.colorAt({32, 30}) == Qt::white && doc.colorAt({50, 32}) == Qt::black && grayGolden(doc, "fill_figure_eight_erased_64x64.pgm", "actual_fill_figure_eight_erased.pgm");
+    bool undone = doc.undo() && doc.render() == filled && doc.redo() && doc.render() == cut && doc.undo() && doc.undo() && doc.render() == blank;
+    Document star(QSize(64, 64));
+    star.fill(Qt::black, {{32, 4}, {46, 58}, {6, 22}, {58, 22}, {18, 58}});
+    return loops && edge > 0 && edge < 255 && same && erased && undone && star.colorAt({32, 32}) == Qt::black;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -358,5 +392,6 @@ int main() {
     run("cornerGetsRoundJoin", cornerGetsRoundJoin);
     run("closedSkeletonJoinsWrapAround", closedSkeletonJoinsWrapAround);
     run("dragResizesRadiusWithinRange", dragResizesRadiusWithinRange);
+    run("fillsFigureEightAndErases", fillsFigureEightAndErases);
     return failed != 0;
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include <QColor>
 #include <QImage>
+#include <QPointF>
 #include <QSize>
 #include <memory>
 #include <vector>
@@ -15,6 +16,9 @@ public:
     // continuing = true carries on the current stroke (live pen input); otherwise a new stroke starts.
     // One stroke (a non-continuing call plus the continuing ones after it) is one undo step.
     void stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples, bool continuing = false, bool eraser = false);
+    // Fills the closed polygon through points on the Raster Layer: antialiased, non-zero winding, solid color.
+    // eraser = true cuts the shape out instead (to white). One call is one undo step.
+    void fill(const QColor& color, const std::vector<QPointF>& points, bool eraser = false);
     // The visible (composite) color at a document pixel; an invalid QColor when p is off the canvas.
     QColor colorAt(QPoint p) const;
     // Each returns false when there is nothing to undo / redo.
