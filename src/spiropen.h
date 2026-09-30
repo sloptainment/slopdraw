@@ -3,6 +3,10 @@
 #include <vector>
 #include "document.h"
 
+// The Tool Options picker's rows (#53), in display order.
+inline constexpr struct { const char* name; SpiroType type; } kNodeTypes[] = {
+    {"Corner", SpiroType::Corner}, {"G4", SpiroType::G4}, {"G2", SpiroType::G2}, {"Left", SpiroType::Left}, {"Right", SpiroType::Right}};
+
 // The Spiro Pen's path in progress (#28, /r/6): clicks place nodes of the current type, finish turns them into one path on the
 // current Vector Layer. The Canvas decides what counts as a click and which key finishes.
 struct SpiroPen {

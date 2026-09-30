@@ -46,6 +46,7 @@ public:
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
     void setNodeType(SpiroType t) { pen_.type = t; }
+    std::function<void(bool)> onToolChange;  // fired with whether the Spiro Pen is now the tool, so the Tool Options dock can follow
     // Swaps the brush; color, size and opacity carry over (the dock's sliders are global, not per brush).
     void setBrush(const QString& mybPath) {
         auto b = loadBrush(mybPath);
@@ -151,6 +152,7 @@ protected:
             update();
             if (onLayersChange) onLayersChange();
         }
+        if (onToolChange) onToolChange(spiroTool_);
     }
     void keyReleaseEvent(QKeyEvent* e) override {
         if (!e->isAutoRepeat() && e->key() == Qt::Key_Space) space_ = false;
@@ -372,6 +374,19 @@ int main(int argc, char** argv) {
     layerDock->setWidget(layerPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, layerDock);
     refresh();
+
+    // Tool Options dock (#58): shows the Spiro Node type picker while the Spiro Pen is the tool, empty otherwise.
+    auto* nodeTypes = new QListWidget;
+    for (const auto& t : kNodeTypes) nodeTypes->addItem(t.name);
+    nodeTypes->setCurrentRow(2);  // G2, SpiroPen's starting type
+    QObject::connect(nodeTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->setNodeType(kNodeTypes[row].type); });
+    nodeTypes->hide();
+    canvas->onToolChange = [nodeTypes](bool spiro) { nodeTypes->setVisible(spiro); };
+    auto* optionsPanel = new QWidget;
+    (new QVBoxLayout(optionsPanel))->addWidget(nodeTypes);
+    auto* optionsDock = new QDockWidget("Tool Options", &window);
+    optionsDock->setWidget(optionsPanel);
+    window.addDockWidget(Qt::RightDockWidgetArea, optionsDock);
 
     auto* fileMenu = window.menuBar()->addMenu("&File");
     auto* fileNew = fileMenu->addAction("&New...");

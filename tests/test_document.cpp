@@ -575,6 +575,21 @@ static bool spiroPenPlacesNodesAndFinishes() {
     return nodes && near && open && oneStep && closed && back && tooFew && pen.nodes.empty();
 }
 
+// The Tool Options picker lists the five Spiro Node types in Inkscape-ish order (#53); picking row i makes the next placed node that type.
+static bool pickerRowsSetTheNextNodeType() {
+    using T = SpiroType;
+    const T want[] = {T::Corner, T::G4, T::G2, T::Left, T::Right};
+    const char* names[] = {"Corner", "G4", "G2", "Left", "Right"};
+    if (std::size(kNodeTypes) != 5) return false;
+    SpiroPen pen;
+    for (int i = 0; i < 5; i++) {
+        pen.type = kNodeTypes[i].type;
+        pen.click({double(i), 0});
+        if (pen.nodes.back().type != want[i] || std::string(kNodeTypes[i].name) != names[i]) return false;
+    }
+    return true;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -617,5 +632,6 @@ int main() {
     run("exportedPngEqualsRender", exportedPngEqualsRender);
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
+    run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     return failed != 0;
 }
