@@ -93,10 +93,9 @@ void Document::rasterize(Layer& l) {
     p.setPen(Qt::NoPen);
     for (const VPath& v : l.paths) {
         QPainterPath curve = *spiroToPath(v.nodes, v.closed);  // addPath only keeps paths that have a curve
-        int nseg = int(v.nodes.size()) - (v.closed ? 0 : 1);
-        std::vector<Cubic> skeleton;  // a QPainterPath from spiroToPath is lines and cubics; lines get p1=p0, p2=p3
+        std::vector<Cubic> skeleton;  // a QPainterPath from spiroToPath is lines and cubics (several per Spiro segment); lines get p1=p0, p2=p3
         QPointF at = curve.elementAt(0);
-        for (int i = 1; i < curve.elementCount() && int(skeleton.size()) < nseg;) {
+        for (int i = 1; i < curve.elementCount();) {
             if (curve.elementAt(i).type == QPainterPath::CurveToElement) {
                 skeleton.push_back({at, curve.elementAt(i), curve.elementAt(i + 1), curve.elementAt(i + 2)});
                 i += 3;
@@ -107,7 +106,7 @@ void Document::rasterize(Layer& l) {
             at = skeleton.back()[3];
         }
         std::vector<WidthKnot> knots{{0, v.width}};
-        if (!v.closed) knots.push_back({double(nseg), v.width});
+        if (!v.closed) knots.push_back({double(skeleton.size()), v.width});
         p.fillPath(expandPowerStroke(skeleton, v.closed, knots), v.color);
     }
 }

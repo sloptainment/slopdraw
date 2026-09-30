@@ -545,6 +545,15 @@ static bool vectorPathRendersAsPowerStroke() {
     return added && onPath && same && undone && redone && layerGone && notVector && bad;
 }
 
+// A closed 4-node square path (width 12) is a ring: the stroke is black at the node (8,8) and the hole at the centre stays white.
+static bool closedPathIsARing() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    bool added = doc.addPath({{8, 8, T::G2}, {56, 8, T::G2}, {56, 56, T::G2}, {8, 56, T::G2}}, true, Qt::black, 12);
+    return added && doc.colorAt({8, 8}) == Qt::black && doc.colorAt({32, 32}) == Qt::white;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -631,6 +640,7 @@ int main() {
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("exportedPngEqualsRender", exportedPngEqualsRender);
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
+    run("closedPathIsARing", closedPathIsARing);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     return failed != 0;
