@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QInputDialog>
@@ -15,6 +16,7 @@
 #include <QListWidget>
 #include <QHBoxLayout>
 #include <QPushButton>
+#include <QSettings>
 #include <QToolButton>
 #include <QActionGroup>
 #include <QSlider>
@@ -429,10 +431,18 @@ private:
     double h_ = 0, s_ = 0, v_ = 0;
 };
 
+// The window saves its dock state in closeEvent: by aboutToQuit the floating docks are already hidden and would be saved closed.
+struct Window : QMainWindow {
+    std::function<void()> onClose;
+    void closeEvent(QCloseEvent* e) override { if (onClose) onClose(); QMainWindow::closeEvent(e); }
+};
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+    app.setOrganizationName("mydraw");  // QSettings keys the saved window state on these
+    app.setApplicationName("mydraw");
 
-    QMainWindow window;
+    Window window;
     auto* canvas = new Canvas;
     window.setCentralWidget(canvas);
 
@@ -482,7 +492,6 @@ int main(int argc, char** argv) {
     col->addLayout(opacityRow);
     auto* brushDock = new QDockWidget("Brushes", &window);
     brushDock->setWidget(brushPanel);
-    window.addDockWidget(Qt::RightDockWidgetArea, brushDock);
 
     // Layers dock: the list runs top layer first, so row = layerCount - 1 - index. refresh() rebuilds it from the Document.
     auto* layerList = new QListWidget;
@@ -633,6 +642,7 @@ int main(int argc, char** argv) {
     auto* toolDock = new QDockWidget("Tools", &window);
     toolDock->setWidget(toolPanel);
     window.addDockWidget(Qt::LeftDockWidgetArea, toolDock);
+    window.addDockWidget(Qt::LeftDockWidgetArea, brushDock);  // layout B: Brushes below Tools, bottom-left
 
     auto* fileMenu = window.menuBar()->addMenu("&File");
     auto* fileNew = fileMenu->addAction("&New...");
@@ -684,7 +694,25 @@ int main(int argc, char** argv) {
     auto* viewMenu = window.menuBar()->addMenu("&View");
     QObject::connect(key(viewMenu->addAction("&Mirror"), {QKeySequence("M")}), &QAction::triggered, [canvas] { canvas->mirror(); });
     viewMenu->addSeparator();
-    for (auto* dock : {toolDock, colorDock, brushDock, layerDock, optionsDock}) viewMenu->addAction(dock->toggleViewAction());
+    const QList<QDockWidget*> docks = {toolDock, colorDock, brushDock, layerDock, optionsDock};
+    for (auto* dock : docks) viewMenu->addAction(dock->toggleViewAction());
+
+    // Tab hides every visible dock and remembers them; the next Tab shows those again (#52).
+    QList<QDockWidget*> tabHidden;
+    auto tabDocks = [&] {
+        if (tabHidden.isEmpty()) { for (auto* d : docks) if (d->isVisible()) { tabHidden << d; d->hide(); } }
+        else { for (auto* d : tabHidden) d->show(); tabHidden.clear(); }
+    };
+    viewMenu->addSeparator();
+    QObject::connect(key(viewMenu->addAction("&Hide/show docks"), {QKeySequence("Tab")}), &QAction::triggered, tabDocks);
+
+    // The dock arrangement is saved on quit and restored on launch; with nothing saved the layout above stands (#56).
+    for (auto* d : docks) d->setObjectName(d->windowTitle());  // QMainWindow::saveState needs each dock named
+    window.restoreState(QSettings().value("windowState").toByteArray());
+    window.onClose = [&] {
+        if (!tabHidden.isEmpty()) tabDocks();  // quit from a Tab-hidden state must not save every dock as closed
+        QSettings().setValue("windowState", window.saveState());
+    };
 
     auto* layerMenu = window.menuBar()->addMenu("&Layer");
     for (const auto& l : layerOps)

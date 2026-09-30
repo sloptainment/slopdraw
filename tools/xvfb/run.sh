@@ -7,6 +7,7 @@ n=$(mktemp); Xvfb -displayfd 3 -screen 0 1280x800x24 -nolisten tcp 3>"$n" >/dev/
 trap 'kill $pid $xpid 2>/dev/null; rm -f "$n"' EXIT
 until [ -s "$n" ]; do sleep 0.1; done
 export DISPLAY=:$(head -n1 "$n")
+export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$(mktemp -d)}  # QSettings: a throwaway config, never the real saved layout
 "$R/build/mydraw" -geometry 1200x760+0+0 >/dev/null 2>&1 & pid=$!
 sleep 2
 for d in "$@"; do case $d in key:*) "$S/xkey.py" "${d#key:}";; *) "$S/xdrag.py" $d;; esac; sleep 0.5; done
