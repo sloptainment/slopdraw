@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <QPainter>
 #include <QPainterPath>
+#include "powerstroke.h"
 #include <cstring>
 
 namespace {
@@ -59,6 +60,56 @@ int Document::addLayer() {
     push(s);
     apply(s, false);
     return current_;
+}
+
+int Document::addVectorLayer() {
+    seal();
+    Step s;
+    s.kind = Add;
+    s.layer = int(layers_.size());
+    s.na = "Layer " + QString::number(s.layer);
+    s.vector = true;
+    push(s);
+    apply(s, false);
+    return current_;
+}
+
+bool Document::addPath(const std::vector<SpiroNode>& nodes, bool closed, const QColor& color, double width) {
+    if (!layers_[current_].vector || !spiroToPath(nodes, closed)) return false;
+    seal();
+    Step s;
+    s.kind = PathAdd;
+    s.layer = current_;
+    s.paths = {{nodes, closed, color, width}};
+    push(s);
+    apply(s, false);
+    return true;
+}
+
+void Document::rasterize(Layer& l) {
+    l.image.fill(Qt::transparent);
+    QPainter p(&l.image);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    for (const VPath& v : l.paths) {
+        QPainterPath curve = *spiroToPath(v.nodes, v.closed);  // addPath only keeps paths that have a curve
+        int nseg = int(v.nodes.size()) - (v.closed ? 0 : 1);
+        std::vector<Cubic> skeleton;  // a QPainterPath from spiroToPath is lines and cubics; lines get p1=p0, p2=p3
+        QPointF at = curve.elementAt(0);
+        for (int i = 1; i < curve.elementCount() && int(skeleton.size()) < nseg;) {
+            if (curve.elementAt(i).type == QPainterPath::CurveToElement) {
+                skeleton.push_back({at, curve.elementAt(i), curve.elementAt(i + 1), curve.elementAt(i + 2)});
+                i += 3;
+            } else {
+                skeleton.push_back({at, at, curve.elementAt(i), curve.elementAt(i)});
+                i++;
+            }
+            at = skeleton.back()[3];
+        }
+        std::vector<WidthKnot> knots{{0, v.width}};
+        if (!v.closed) knots.push_back({double(nseg), v.width});
+        p.fillPath(expandPowerStroke(skeleton, v.closed, knots), v.color);
+    }
 }
 
 void Document::restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity) {
@@ -119,6 +170,8 @@ bool Document::deleteLayer(int layer) {
     s.a = layers_[layer].opacity;
     s.b = layers_[layer].visible;
     s.na = layers_[layer].name;
+    s.vector = layers_[layer].vector;
+    s.paths = layers_[layer].paths;
     push(s);
     apply(s, false);
     return true;
@@ -161,15 +214,20 @@ void Document::apply(const Step& s, bool reverse) {
         if (reverse) { remove(); break; }
         insert({true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), s.na});
         layers_[s.layer].image.fill(Qt::transparent);
+        layers_[s.layer].vector = s.vector;
         break;
     case Delete:
-        if (reverse) insert({bool(s.b), s.a, s.before, s.na});
+        if (reverse) insert({bool(s.b), s.a, s.before, s.na, s.vector, s.paths});
         else remove();
         break;
     case Move: reverse ? applyMove(s.to, s.layer) : applyMove(s.layer, s.to); break;
     case Visible: layers_[s.layer].visible = reverse ? s.a : s.b; break;
     case Opacity: layers_[s.layer].opacity = reverse ? s.a : s.b; break;
     case Name: layers_[s.layer].name = reverse ? s.na : s.nb; break;
+    case PathAdd:
+        reverse ? layers_[s.layer].paths.pop_back() : layers_[s.layer].paths.push_back(s.paths[0]);
+        rasterize(layers_[s.layer]);
+        break;
     }
 }
 

@@ -511,6 +511,39 @@ static bool exportedPngEqualsRender() {
     return !back.isNull() && back.convertToFormat(QImage::Format_ARGB32) == doc.render().convertToFormat(QImage::Format_ARGB32);
 }
 
+// A Vector Layer over a red Raster Layer, holding one straight 3-node Spiro path (black, 8 wide, flat ends at x=8 and x=56): the path
+// is solid black across its width and red beyond it or its ends, the render matches a golden, and undo removes the path (redo restores it).
+static bool vectorPathRendersAsPowerStroke() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.fill(Qt::red, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+    int v = doc.addVectorLayer();
+    bool added = v == 2 && doc.current() == 2 && doc.addPath({{8, 32, T::G2}, {32, 32, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
+    auto painted = [&] { return doc.colorAt({32, 31}) == Qt::black && doc.colorAt({32, 35}) == Qt::black; };
+    auto bare = [&] { return doc.colorAt({32, 31}) == Qt::red && doc.colorAt({32, 35}) == Qt::red; };
+    bool onPath = painted() && doc.colorAt({32, 27}) == Qt::red && doc.colorAt({32, 37}) == Qt::red && doc.colorAt({4, 31}) == Qt::red;
+    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage golden(GOLDEN_DIR "/vector_path_64x64.pgm");
+    bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
+    if (!same) {  // write plain-text PGM to eyeball and copy into golden/
+        if (FILE* f = std::fopen("actual_vector_path.pgm", "w")) {
+            std::fprintf(f, "P2\n%d %d\n255\n", got.width(), got.height());
+            for (int y = 0; y < got.height(); y++)
+                for (int x = 0; x < got.width(); x++) std::fprintf(f, "%d%c", got.constScanLine(y)[x], x + 1 < got.width() ? ' ' : '\n');
+            std::fclose(f);
+        }
+    }
+    bool undone = doc.undo() && bare() && doc.layerCount() == 3;
+    bool redone = doc.redo() && painted();
+    bool layerGone = doc.undo() && doc.undo() && doc.layerCount() == 2 && doc.redo() && doc.redo() && painted();
+    doc.addLayer();
+    bool notVector = !doc.addPath({{8, 8, T::G2}, {30, 8, T::G2}}, false, Qt::black, 8);  // a Raster Layer takes no paths
+    doc.addVectorLayer();
+    bool bad = !doc.addPath({{8, 8, T::G2}, {8, 8, T::G2}}, false, Qt::black, 8);  // no curve: refused
+    return added && onPath && same && undone && redone && layerGone && notVector && bad;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -551,5 +584,6 @@ int main() {
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("exportedPngEqualsRender", exportedPngEqualsRender);
+    run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
     return failed != 0;
 }

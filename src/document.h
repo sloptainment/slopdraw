@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include "brush.h"
+#include "spiro.h"
 
 class Document {
 public:
@@ -25,6 +26,11 @@ public:
     QColor colorAt(QPoint p) const;
     // Adds a transparent Raster Layer on top and makes it current; returns its index (0 is the white background).
     int addLayer();
+    // Adds a transparent Vector Layer on top and makes it current; returns its index. Same undo as addLayer.
+    int addVectorLayer();
+    // Appends a Spiro path to the current Vector Layer, drawn as a Power Stroke `width` wide (flat ends), antialiased, in color.
+    // One undo step. Returns false, changing nothing, when the current layer is a Raster Layer or the nodes give no curve (see spiroToPath).
+    bool addPath(const std::vector<SpiroNode>& nodes, bool closed, const QColor& color, double width);
     int layerCount() const { return int(layers_.size()); }
     int current() const { return current_; }
     bool visible(int layer) const { return layers_[layer].visible; }
@@ -50,7 +56,14 @@ private:
     // Pixels: before/after pixels of the rect a stroke changed. The layer ops keep what undo needs: Add nothing (its layer is blank
     // once later steps are undone), Delete the layer's image in before plus its visible/opacity in a/b, Move the target index in to,
     // Visible and Opacity the old and new value in a and b, Name the old and new in na and nb.
-    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name };
+    // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path.
+    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, PathAdd };
+    struct VPath {
+        std::vector<SpiroNode> nodes;
+        bool closed;
+        QColor color;
+        double width;
+    };
     struct Step {
         Kind kind = Pixels;
         int layer = 0;
@@ -58,6 +71,8 @@ private:
         QImage before, after;
         int to = 0;
         double a = 0, b = 0;
+        bool vector = false;
+        std::vector<VPath> paths;
         QString na, nb;  // Add: the new layer's name (nb unused); Delete: the deleted name in na; Name: old and new
     };
     // Discards the redo branch, appends s as applied, and drops the oldest steps past the budget.
@@ -73,7 +88,11 @@ private:
         double opacity = 1;
         QImage image;
         QString name;
+        bool vector = false;
+        std::vector<VPath> paths;
     };
+    // Redraws a Vector Layer's image from its paths.
+    static void rasterize(Layer& l);
     std::vector<Layer> layers_;  // bottom to top, never empty
     int current_ = 0;
     qsizetype budget_;
