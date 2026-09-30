@@ -1,5 +1,6 @@
 #include "document.h"
 #include "spiropen.h"
+#include "tools.h"
 #include "view.h"
 #include "ora.h"
 
@@ -486,7 +487,8 @@ int main(int argc, char** argv) {
     layerOpacity->setRange(0, 100);
     auto* layerOpacityValue = new QLabel;
     QObject::connect(layerOpacity, &QSlider::valueChanged, [layerOpacityValue](int v) { layerOpacityValue->setText(QString("%1 %").arg(v)); });
-    auto refresh = [canvas, layerList, layerOpacity, layerOpacityValue] {
+    std::function<void()> kindChanged;  // set with the Tools dock below; refresh() runs on every current-layer change
+    auto refresh = [canvas, layerList, layerOpacity, layerOpacityValue, &kindChanged] {
         Document& d = canvas->doc();
         QSignalBlocker b1(layerList), b2(layerOpacity);
         layerList->clear();
@@ -523,6 +525,7 @@ int main(int argc, char** argv) {
         layerOpacity->setValue(std::lround(d.opacity(d.current()) * 100));
         layerOpacityValue->setText(QString("%1 %").arg(layerOpacity->value()));
         canvas->update();
+        if (kindChanged) kindChanged();
     };
     canvas->onLayersChange = refresh;
     QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
@@ -579,13 +582,14 @@ int main(int argc, char** argv) {
     auto* toolCol = new QVBoxLayout(toolPanel);
     auto* toolGroup = new QActionGroup(&window);
     const struct { const char* text; const char* key; } kTools[] = {{"\U0001F58C Brush (B)", "B"}, {"\u2B2E Lasso Fill (F)", "F"}, {"\u2712 Spiro Pen (P)", "P"}, {"\u2316 Node/Knot edit (N)", "N"}};
+    int lastTool[2] = {BrushTool, SpiroPenTool};  // last tool used on a Raster, a Vector Layer (#161)
     for (int i = 0; i < 4; i++) {
         auto* a = toolGroup->addAction(kTools[i].text);
         a->setCheckable(true);
         a->setChecked(i == 0);
         a->setShortcut(QKeySequence(kTools[i].key));
         window.addAction(a);
-        QObject::connect(a, &QAction::triggered, [canvas, i] { canvas->setTool(i); });
+        QObject::connect(a, &QAction::triggered, [canvas, i, &lastTool] { canvas->setTool(i); lastTool[i >= SpiroPenTool] = i; });
         auto* b = new QToolButton;
         b->setDefaultAction(a);
         b->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -593,6 +597,16 @@ int main(int argc, char** argv) {
         toolCol->addWidget(b);
     }
     toolCol->addStretch();
+    // Only the tools that fit the current layer's kind are enabled, so their keys do nothing on the other kind (#170); a switch that disables the tool picks the last one used on the new kind.
+    kindChanged = [&] {
+        bool vec = canvas->doc().vector(canvas->doc().current());
+        auto tools = toolGroup->actions();
+        for (int i = 0; i < 4; i++) tools[i]->setEnabled((i >= SpiroPenTool) == vec);
+        brushPanel->setEnabled(!vec);
+        int now = toolForLayer(vec, tools.indexOf(toolGroup->checkedAction()), lastTool[0], lastTool[1]);
+        if (!tools[now]->isChecked()) tools[now]->trigger();
+    };
+    kindChanged();
     auto* toolDock = new QDockWidget("Tools", &window);
     toolDock->setWidget(toolPanel);
     window.addDockWidget(Qt::LeftDockWidgetArea, toolDock);

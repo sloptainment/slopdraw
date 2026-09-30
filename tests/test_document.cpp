@@ -10,6 +10,7 @@
 #include "powerstroke.h"
 #include "spiro.h"
 #include "spiropen.h"
+#include "tools.h"
 #include "powerstroke_fixtures.h"
 #include "powerstroke_body_fixtures.h"
 #include "spiro_fixtures.h"
@@ -801,6 +802,14 @@ static bool pickerRowsSetTheNextNodeType() {
     return true;
 }
 
+// A layer switch keeps a tool that fits the new layer's kind, else picks the last tool used on that kind (#161), Brush and Spiro Pen the first time.
+static bool toolFollowsLayerKind() {
+    return toolForLayer(false, SpiroPenTool) == BrushTool && toolForLayer(true, BrushTool) == SpiroPenTool
+        && toolForLayer(false, NodeKnotEditTool, LassoFillTool, NodeKnotEditTool) == LassoFillTool
+        && toolForLayer(true, LassoFillTool, LassoFillTool, NodeKnotEditTool) == NodeKnotEditTool
+        && toolForLayer(false, LassoFillTool) == LassoFillTool && toolForLayer(true, NodeKnotEditTool) == NodeKnotEditTool;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -854,5 +863,6 @@ int main() {
     run("deletingAndRetypingNodes", deletingAndRetypingNodes);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
+    run("toolFollowsLayerKind", toolFollowsLayerKind);
     return failed != 0;
 }
