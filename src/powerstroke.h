@@ -14,3 +14,6 @@ std::vector<Cubic> widthSpans(std::vector<WidthKnot> knots, int n, bool closed);
 double offsetAt(const std::vector<Cubic>& spans, double t);
 // Full width at path time t.
 double widthAt(const std::vector<WidthKnot>& knots, double t, int n, bool closed);
+// One closed body contour per skeleton segment (lines as p1=p0, p2=p3; n = skeleton.size(), path time t = segment index + fraction):
+// left offsets forward, a line across, right offsets back, a line across. Joins, caps and the union are not here. Empty without knots.
+std::vector<std::vector<Cubic>> powerStrokeBodies(const std::vector<Cubic>& skeleton, bool closed, const std::vector<WidthKnot>& knots);

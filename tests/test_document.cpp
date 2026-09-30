@@ -6,6 +6,7 @@
 #include "powerstroke.h"
 #include "spiro.h"
 #include "powerstroke_fixtures.h"
+#include "powerstroke_body_fixtures.h"
 #include "spiro_fixtures.h"
 #include "view.h"
 
@@ -285,6 +286,21 @@ static bool widthAtMatchesSlopfont() {
     return true;
 }
 
+// Pre-union body contours per skeleton segment match slopfont's (straight, corner, curved, closed), edge control points within 1e-6.
+static bool powerStrokeBodiesMatchSlopfont() {
+    for (const auto& f : kBodyFixtures) {
+        auto got = powerStrokeBodies(f.skeleton, f.closed, f.knots);
+        if (got.size() != f.bodies.size()) return false;
+        for (size_t i = 0; i < got.size(); i++) {
+            if (got[i].size() != f.bodies[i].size()) return false;
+            for (size_t j = 0; j < got[i].size(); j++)
+                for (int k = 0; k < 4; k++)
+                    if (std::hypot(got[i][j][k].x() - f.bodies[i][j][k].x(), got[i][j][k].y() - f.bodies[i][j][k].y()) > 1e-6) return false;
+        }
+    }
+    return true;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -311,5 +327,6 @@ int main() {
     run("brushRadiusAndOpacityChangeTheStroke", brushRadiusAndOpacityChangeTheStroke);
     run("secondStrokeDoesNotJoinFirst", secondStrokeDoesNotJoinFirst);
     run("widthAtMatchesSlopfont", widthAtMatchesSlopfont);
+    run("powerStrokeBodiesMatchSlopfont", powerStrokeBodiesMatchSlopfont);
     return failed != 0;
 }
