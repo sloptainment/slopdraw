@@ -359,7 +359,7 @@ private:
 class ColorPicker : public QWidget {
 public:
     std::function<void(const QColor&)> onChange;
-    ColorPicker() { setFixedSize(180, 180); }
+    ColorPicker() { setMinimumSize(180, 180); }
     void setColor(const QColor& c) {
         if (c.hsvHueF() >= 0) h_ = c.hsvHueF();  // grays have no hue: keep the last one
         s_ = c.hsvSaturationF();
@@ -373,13 +373,13 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
         QConicalGradient g(center(), 0);
         for (int i = 0; i <= 6; i++) g.setColorAt(i / 6.0, QColor::fromHsvF(i % 6 / 6.0, 1, 1));  // conical angles run counter-clockwise, like the hue math below
-        p.setPen(QPen(QBrush(g), kRing));
-        p.drawEllipse(center(), kOuter - kRing / 2, kOuter - kRing / 2);
+        p.setPen(QPen(QBrush(g), ring()));
+        p.drawEllipse(center(), outer() - ring() / 2, outer() - ring() / 2);
         QImage sq(kN, kN, QImage::Format_RGB32);
         for (int y = 0; y < kN; y++)
             for (int x = 0; x < kN; x++) sq.setPixelColor(x, y, QColor::fromHsvF(h_, x / double(kN - 1), 1 - y / double(kN - 1)));
         p.drawImage(square(), sq);
-        QPointF hue = center() + (kOuter - kRing / 2) * QPointF(std::cos(h_ * 2 * M_PI), -std::sin(h_ * 2 * M_PI));
+        QPointF hue = center() + (outer() - ring() / 2) * QPointF(std::cos(h_ * 2 * M_PI), -std::sin(h_ * 2 * M_PI));
         QPointF sv = square().topLeft() + QPointF(s_ * square().width(), (1 - v_) * square().height());
         for (QPointF m : {hue, sv}) {  // white ring on black, visible on any color
             p.setPen(QPen(Qt::black, 3));
@@ -392,7 +392,7 @@ protected:
     void mousePressEvent(QMouseEvent* e) override {
         QPointF d = e->position() - center();
         double r = std::hypot(d.x(), d.y());
-        mode_ = r >= kOuter - kRing && r <= kOuter ? Ring : square().contains(e->position()) ? Square : None;
+        mode_ = r >= outer() - ring() && r <= outer() ? Ring : square().contains(e->position()) ? Square : None;
         mouseMoveEvent(e);
     }
     void mouseMoveEvent(QMouseEvent* e) override {
@@ -408,11 +408,13 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override { mode_ = None; }
 
 private:
-    static constexpr int kOuter = 88, kRing = 16, kN = 64;  // kN: resolution of the square's image, scaled up to fit
+    static constexpr int kN = 64;  // resolution of the square's image, scaled up to fit
     enum Mode { None, Ring, Square } mode_ = None;
+    double outer() const { return std::min(width(), height()) / 2.0 - 2; }  // the wheel fills the widget, whatever its size
+    double ring() const { return outer() * 16 / 88; }
     QPointF center() const { return {width() / 2.0, height() / 2.0}; }
     QRectF square() const {  // the square inscribed in the ring's inner circle
-        double half = (kOuter - kRing - 4) / std::sqrt(2.0);
+        double half = (outer() - ring() - 4) / std::sqrt(2.0);
         return {center().x() - half, center().y() - half, 2 * half, 2 * half};
     }
     double h_ = 0, s_ = 0, v_ = 0;
@@ -441,18 +443,34 @@ int main(int argc, char** argv) {
     size->setRange(kMinRadius, kMaxRadius);
     size->setValue(std::lround(canvas->radius()));
     QObject::connect(size, &QSlider::valueChanged, [canvas](int v) { canvas->setRadius(v); });
-    canvas->onRadiusChange = [canvas, size] { QSignalBlocker b(size); size->setValue(std::lround(canvas->radius())); };  // blocked so the slider's int doesn't round the radius back
+    auto* sizeValue = new QLabel;
+    canvas->onRadiusChange = [canvas, size, sizeValue] {
+        QSignalBlocker b(size);  // blocked so the slider's int doesn't round the radius back
+        size->setValue(std::lround(canvas->radius()));
+        sizeValue->setText(QString("%1 px").arg(size->value()));
+    };
+    QObject::connect(size, &QSlider::valueChanged, [sizeValue](int v) { sizeValue->setText(QString("%1 px").arg(v)); });
+    sizeValue->setText(QString("%1 px").arg(size->value()));
     auto* opacity = new QSlider(Qt::Horizontal);  // percent
     opacity->setRange(1, 100);
     opacity->setValue(std::lround(canvas->opacity() * 100));
     QObject::connect(opacity, &QSlider::valueChanged, [canvas](int v) { canvas->setOpacity(v / 100.f); });
+    auto* opacityValue = new QLabel;
+    QObject::connect(opacity, &QSlider::valueChanged, [opacityValue](int v) { opacityValue->setText(QString("%1 %").arg(v)); });
+    opacityValue->setText(QString("%1 %").arg(opacity->value()));
     auto* brushPanel = new QWidget;
     auto* col = new QVBoxLayout(brushPanel);
     col->addWidget(brushList);
     col->addWidget(new QLabel("Size"));
-    col->addWidget(size);
+    auto* sizeRow = new QHBoxLayout;
+    sizeRow->addWidget(size);
+    sizeRow->addWidget(sizeValue);
+    col->addLayout(sizeRow);
     col->addWidget(new QLabel("Opacity"));
-    col->addWidget(opacity);
+    auto* opacityRow = new QHBoxLayout;
+    opacityRow->addWidget(opacity);
+    opacityRow->addWidget(opacityValue);
+    col->addLayout(opacityRow);
     auto* brushDock = new QDockWidget("Brushes", &window);
     brushDock->setWidget(brushPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, brushDock);
@@ -461,7 +479,9 @@ int main(int argc, char** argv) {
     auto* layerList = new QListWidget;
     auto* layerOpacity = new QSlider(Qt::Horizontal);  // percent, of the current layer
     layerOpacity->setRange(0, 100);
-    auto refresh = [canvas, layerList, layerOpacity] {
+    auto* layerOpacityValue = new QLabel;
+    QObject::connect(layerOpacity, &QSlider::valueChanged, [layerOpacityValue](int v) { layerOpacityValue->setText(QString("%1 %").arg(v)); });
+    auto refresh = [canvas, layerList, layerOpacity, layerOpacityValue] {
         Document& d = canvas->doc();
         QSignalBlocker b1(layerList), b2(layerOpacity);
         layerList->clear();
@@ -472,6 +492,7 @@ int main(int argc, char** argv) {
         }
         layerList->setCurrentRow(d.layerCount() - 1 - d.current());
         layerOpacity->setValue(std::lround(d.opacity(d.current()) * 100));
+        layerOpacityValue->setText(QString("%1 %").arg(layerOpacity->value()));
         canvas->update();
     };
     canvas->onLayersChange = refresh;
@@ -505,7 +526,10 @@ int main(int argc, char** argv) {
     layerCol->addWidget(layerList);
     layerCol->addLayout(layerButtons);
     layerCol->addWidget(new QLabel("Opacity"));
-    layerCol->addWidget(layerOpacity);
+    auto* layerOpacityRow = new QHBoxLayout;
+    layerOpacityRow->addWidget(layerOpacity);
+    layerOpacityRow->addWidget(layerOpacityValue);
+    layerCol->addLayout(layerOpacityRow);
     auto* layerDock = new QDockWidget("Layers", &window);
     layerDock->setWidget(layerPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, layerDock);
