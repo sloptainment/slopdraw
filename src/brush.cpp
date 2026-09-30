@@ -56,7 +56,10 @@ int drawDab(MyPaintSurface* s, float x, float y, float radius, float r, float g,
     const float rgb[3] = {eraser ? 1 : r, eraser ? 1 : g, eraser ? 1 : b};
     forEachDabPixel(*static_cast<ImageSurface*>(s)->img, x, y, radius, hardness, aspect, angle, [&](uchar* p, float opa) {
         const float a = opa * opaque;
-        for (int c = 0; c < 3; c++) p[c] = uchar(std::lround(a * rgb[c] * 255 + (1 - a) * p[c]));
+        const float dstA = p[3] / 255.f, outA = a + (1 - a) * dstA;  // non-premultiplied source-over, so a transparent layer takes paint
+        if (outA <= 0) return;
+        for (int c = 0; c < 3; c++) p[c] = uchar(std::lround((a * rgb[c] * 255 + (1 - a) * dstA * p[c]) / outA));
+        p[3] = uchar(std::lround(outA * 255));
     });
     return 1;
 }

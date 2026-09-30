@@ -361,6 +361,49 @@ static bool fillsFigureEightAndErases() {
     return loops && edge > 0 && edge < 255 && same && erased && undone && star.colorAt({32, 32}) == Qt::black;
 }
 
+// A stroke on an added layer lands on it alone: hiding it leaves the blank white render, showing it reads the single-layer golden's gray at (53,34).
+static bool strokeLandsOnCurrentLayerOnly() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    QImage blank = doc.render().copy();
+    doc.addLayer();
+    for (int i = 0; i < 16; i++)  // the golden's samples, as in colorAtReadsCompositePixel
+        doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
+    int shown = doc.colorAt({53, 34}).red();
+    doc.setVisible(1, false);
+    bool hidden = doc.render() == blank;
+    doc.setVisible(1, true);
+    doc.setCurrent(0);
+    doc.fill(Qt::black, {{0, 0}, {8, 0}, {8, 8}, {0, 8}});  // lands on the background: still there with layer 1 hidden
+    doc.setVisible(1, false);
+    return std::abs(shown - 137) <= 2 && hidden && doc.colorAt({4, 4}) == Qt::black;
+}
+
+// Background, then a 50% layer with a black square (8,8)-(40,40), a hidden layer with a black square, and a full layer with a black square
+// (24,24)-(56,56): 50% gray where only the first shows, black in the overlap, white elsewhere (golden).
+static bool compositeOfThreeLayersMatchesGolden() {
+    Document doc(QSize(64, 64));
+    auto square = [&](double lo, double hi) { doc.fill(Qt::black, {{lo, lo}, {hi, lo}, {hi, hi}, {lo, hi}}); };
+    doc.addLayer(); square(8, 40); doc.setOpacity(1, 0.5);
+    doc.addLayer(); square(0, 64); doc.setVisible(2, false);
+    doc.addLayer(); square(24, 56);
+    bool pixels = std::abs(doc.colorAt({12, 12}).red() - 128) <= 1 && doc.colorAt({30, 30}) == Qt::black &&
+                  doc.colorAt({60, 60}) == Qt::white && doc.colorAt({50, 50}) == Qt::black;
+    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage golden(GOLDEN_DIR "/layers_composite_64x64.pgm");
+    bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
+    if (!same) {  // write plain-text PGM to eyeball and copy into golden/
+        if (FILE* f = std::fopen("actual_layers_composite.pgm", "w")) {
+            std::fprintf(f, "P2\n%d %d\n255\n", got.width(), got.height());
+            for (int y = 0; y < got.height(); y++)
+                for (int x = 0; x < got.width(); x++) std::fprintf(f, "%d%c", got.constScanLine(y)[x], x + 1 < got.width() ? ' ' : '\n');
+            std::fclose(f);
+        }
+    }
+    return pixels && same;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -393,5 +436,7 @@ int main() {
     run("closedSkeletonJoinsWrapAround", closedSkeletonJoinsWrapAround);
     run("dragResizesRadiusWithinRange", dragResizesRadiusWithinRange);
     run("fillsFigureEightAndErases", fillsFigureEightAndErases);
+    run("strokeLandsOnCurrentLayerOnly", strokeLandsOnCurrentLayerOnly);
+    run("compositeOfThreeLayersMatchesGolden", compositeOfThreeLayersMatchesGolden);
     return failed != 0;
 }

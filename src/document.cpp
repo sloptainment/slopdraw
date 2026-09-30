@@ -30,33 +30,63 @@ void paste(QImage& dst, const QImage& src, QPoint at) {
 
 }  // namespace
 
-Document::Document(QSize size, qsizetype undoBudget) : layer_(size, QImage::Format_RGBA8888), budget_(undoBudget) {
-    layer_.fill(Qt::white);
+Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget) {
+    layers_.push_back({true, 1, QImage(size, QImage::Format_RGBA8888)});
+    layers_[0].image.fill(Qt::white);
 }
 
-QImage Document::render() const { return layer_; }
+QImage Document::render() const {
+    QImage out(layers_[0].image.size(), QImage::Format_RGBA8888);
+    out.fill(Qt::transparent);
+    QPainter p(&out);
+    for (const Layer& l : layers_) {
+        if (!l.visible) continue;
+        p.setOpacity(l.opacity);
+        p.drawImage(0, 0, l.image);
+    }
+    return out;
+}
 
-// ponytail: one layer, so composite == layer_; composite the stack here when #44 lands
-QColor Document::colorAt(QPoint p) const { return layer_.rect().contains(p) ? layer_.pixelColor(p) : QColor(); }
+// ponytail: composites the whole canvas per call; fine per click, cache if it ever runs per mouse move
+QColor Document::colorAt(QPoint p) const { return layers_[0].image.rect().contains(p) ? render().pixelColor(p) : QColor(); }
+
+int Document::addLayer() {
+    Layer l;
+    l.image = QImage(layers_[0].image.size(), QImage::Format_RGBA8888);
+    l.image.fill(Qt::transparent);
+    seal();
+    layers_.push_back(std::move(l));
+    current_ = int(layers_.size()) - 1;
+    return current_;
+}
+
+void Document::setCurrent(int layer) {
+    seal();
+    current_ = layer;
+}
+
+void Document::setVisible(int layer, bool visible) { layers_[layer].visible = visible; }
+
+void Document::setOpacity(int layer, double opacity) { layers_[layer].opacity = opacity; }
 
 void Document::stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples, bool continuing, bool eraser) {
     if (!continuing || strokeStart_.isNull()) {
         seal();
         history_.resize(applied_);  // a new edit discards the redo branch
-        strokeStart_ = layer_;
+        strokeStart_ = layers_[current_].image;
     }
-    paintStroke(brush.get(), layer_, samples, continuing, eraser);
+    paintStroke(brush.get(), layers_[current_].image, samples, continuing, eraser);
 }
 
 void Document::fill(const QColor& color, const std::vector<QPointF>& points, bool eraser) {
     seal();
     history_.resize(applied_);  // a new edit discards the redo branch
-    strokeStart_ = layer_;
+    strokeStart_ = layers_[current_].image;
     QPainterPath path;
     path.setFillRule(Qt::WindingFill);
     path.addPolygon(QPolygonF(QVector<QPointF>(points.begin(), points.end())));
     path.closeSubpath();
-    QPainter p(&layer_);
+    QPainter p(&layers_[current_].image);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
     p.fillPath(path, eraser ? Qt::white : color);
@@ -67,9 +97,9 @@ void Document::fill(const QColor& color, const std::vector<QPointF>& points, boo
 void Document::seal() {
     if (strokeStart_.isNull()) return;
     // ponytail: full-layer diff once per stroke; upgrade to dirty rects from the dab callback if it shows up in a profile
-    QRect rect = diffRect(strokeStart_, layer_);
+    QRect rect = diffRect(strokeStart_, layers_[current_].image);
     if (!rect.isNull()) {
-        history_.push_back({rect, strokeStart_.copy(rect), layer_.copy(rect)});
+        history_.push_back({current_, rect, strokeStart_.copy(rect), layers_[current_].image.copy(rect)});
         applied_++;
     }
     strokeStart_ = QImage();
@@ -88,7 +118,7 @@ bool Document::undo() {
     seal();
     if (applied_ == 0) return false;
     const Step& s = history_[--applied_];
-    paste(layer_, s.before, s.rect.topLeft());
+    paste(layers_[s.layer].image, s.before,s.rect.topLeft());
     return true;
 }
 
@@ -96,6 +126,6 @@ bool Document::redo() {
     seal();
     if (applied_ == history_.size()) return false;
     const Step& s = history_[applied_++];
-    paste(layer_, s.after, s.rect.topLeft());
+    paste(layers_[s.layer].image, s.after,s.rect.topLeft());
     return true;
 }
