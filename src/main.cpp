@@ -61,6 +61,20 @@ public:
         update();
         if (onToolChange) onToolChange(spiroTool_ || selectTool_);
     }
+    // The Edit, View and Tools menu actions call these; their keys are window-wide shortcuts.
+    void undo(bool redo) {
+        redo ? doc_.redo() : doc_.undo();
+        selected_ = -1;
+        nodeSel_.clear();
+        update();
+        if (onLayersChange) onLayersChange();
+    }
+    void mirror() { view_.mirrorAt(rect().center()); update(); }
+    void setErase(bool on) { eraseMode_ = on; }
+    void finishPath(bool closed) {
+        if (spiroTool_) pen_.finish(doc_, closed, color_, 2 * radius());  // width follows the brush size; refused on a Raster Layer
+        update();
+    }
     // Swaps the brush; color, size and opacity carry over (the dock's sliders are global, not per brush).
     void setBrush(const QString& mybPath) {
         auto b = loadBrush(mybPath);
@@ -177,22 +191,12 @@ protected:
     void keyPressEvent(QKeyEvent* e) override {
         if (e->isAutoRepeat()) return;
         if (e->key() == Qt::Key_Space) space_ = true;
-        else if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) finishPath(e->modifiers() & Qt::ShiftModifier);
         else if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
             if (selectTool_) deleteSelectedNodes();
             else pen_.backspace();
             update();
         }
         else if (e->key() == Qt::Key_Escape) { pen_.cancel(); update(); }
-        else if (e->key() == Qt::Key_E) eraseMode_ = !eraseMode_;
-        else if (e->key() == Qt::Key_M) { view_.mirrorAt(rect().center()); update(); }
-        else if (e->key() == Qt::Key_Z && (e->modifiers() & Qt::ControlModifier)) {
-            (e->modifiers() & Qt::ShiftModifier ? doc_.redo() : doc_.undo());
-            selected_ = -1;
-            nodeSel_.clear();
-            update();
-            if (onLayersChange) onLayersChange();
-        }
     }
     void keyReleaseEvent(QKeyEvent* e) override {
         if (!e->isAutoRepeat() && e->key() == Qt::Key_Space) space_ = false;
@@ -297,10 +301,6 @@ private:
         if (after.size() == knotsBefore_.size() && !std::equal(after.begin(), after.end(), knotsBefore_.begin(), [](auto& a, auto& b) { return a.t == b.t && a.width == b.width; }))
             doc_.setKnots(doc_.current(), selected_, after);
         knotDrag_ = -1;
-        update();
-    }
-    void finishPath(bool closed) {
-        if (spiroTool_) pen_.finish(doc_, closed, color_, 2 * radius());  // width follows the brush size; refused on a Raster Layer
         update();
     }
     void resizeTo(QPointF pos) {
@@ -515,14 +515,16 @@ int main(int argc, char** argv) {
         canvas->update();
     });
     auto* layerButtons = new QHBoxLayout;
-    for (auto [text, op] : std::initializer_list<std::pair<const char*, std::function<void(Document&)>>>{
-             {"Add", [](Document& d) { d.addLayer(); }},
-             {"Add Vector", [](Document& d) { d.addVectorLayer(); }},
-             {"Delete", [](Document& d) { d.deleteLayer(d.current()); }},
-             {"Up", [](Document& d) { if (d.moveLayer(d.current(), d.current() + 1)) d.setCurrent(d.current() + 1); }},
-             {"Down", [](Document& d) { if (d.moveLayer(d.current(), d.current() - 1)) d.setCurrent(d.current() - 1); }}}) {
-        auto* btn = new QPushButton(text);
-        QObject::connect(btn, &QPushButton::clicked, [canvas, refresh, op = op] { op(canvas->doc()); refresh(); });
+    struct LayerOp { const char* button; const char* menu; std::function<void(Document&)> op; };
+    const std::initializer_list<LayerOp> layerOps{
+        {"Add", "Add &Raster", [](Document& d) { d.addLayer(); }},
+        {"Add Vector", "Add &Vector", [](Document& d) { d.addVectorLayer(); }},
+        {"Delete", "&Delete", [](Document& d) { d.deleteLayer(d.current()); }},
+        {"Up", "&Up", [](Document& d) { if (d.moveLayer(d.current(), d.current() + 1)) d.setCurrent(d.current() + 1); }},
+        {"Down", "Dow&n", [](Document& d) { if (d.moveLayer(d.current(), d.current() - 1)) d.setCurrent(d.current() - 1); }}};
+    for (const auto& l : layerOps) {
+        auto* btn = new QPushButton(l.button);
+        QObject::connect(btn, &QPushButton::clicked, [canvas, refresh, op = l.op] { op(canvas->doc()); refresh(); });
         layerButtons->addWidget(btn);
     }
     auto* layerPanel = new QWidget;
@@ -611,6 +613,34 @@ int main(int argc, char** argv) {
         if (!path.endsWith(".png")) path += ".png";
         if (!exportPng(canvas->doc(), path)) QMessageBox::warning(&window, "Export PNG", "Could not write " + path);
     });
+
+    auto* fileQuit = fileMenu->addAction("&Quit");
+    fileQuit->setShortcut(QKeySequence::Quit);
+    QObject::connect(fileQuit, &QAction::triggered, &window, &QWidget::close);
+
+    auto key = [&window](QAction* a, QList<QKeySequence> keys) { a->setShortcuts(keys); window.addAction(a); return a; };  // window-wide, so it works whichever dock has focus
+
+    auto* editMenu = window.menuBar()->addMenu("&Edit");
+    QObject::connect(key(editMenu->addAction("&Undo"), {QKeySequence("Ctrl+Z")}), &QAction::triggered, [canvas] { canvas->undo(false); });
+    QObject::connect(key(editMenu->addAction("&Redo"), {QKeySequence("Ctrl+Shift+Z")}), &QAction::triggered, [canvas] { canvas->undo(true); });
+
+    auto* viewMenu = window.menuBar()->addMenu("&View");
+    QObject::connect(key(viewMenu->addAction("&Mirror"), {QKeySequence("M")}), &QAction::triggered, [canvas] { canvas->mirror(); });
+    viewMenu->addSeparator();
+    for (auto* dock : {toolDock, colorDock, brushDock, layerDock, optionsDock}) viewMenu->addAction(dock->toggleViewAction());
+
+    auto* layerMenu = window.menuBar()->addMenu("&Layer");
+    for (const auto& l : layerOps)
+        QObject::connect(layerMenu->addAction(l.menu), &QAction::triggered, [canvas, refresh, op = l.op] { op(canvas->doc()); refresh(); });
+
+    auto* toolsMenu = window.menuBar()->addMenu("&Tools");
+    toolsMenu->addActions(toolGroup->actions());
+    toolsMenu->addSeparator();
+    auto* erase = key(toolsMenu->addAction("&Erase mode"), {QKeySequence("E")});
+    erase->setCheckable(true);
+    QObject::connect(erase, &QAction::toggled, [canvas](bool on) { canvas->setErase(on); });
+    QObject::connect(key(toolsMenu->addAction("Finish path &open"), {QKeySequence("Return"), QKeySequence("Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(false); });
+    QObject::connect(key(toolsMenu->addAction("Finish path &closed"), {QKeySequence("Shift+Return"), QKeySequence("Shift+Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(true); });
 
     window.resize(1024, 768);
     window.show();
