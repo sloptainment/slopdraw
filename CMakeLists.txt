@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(mydraw LANGUAGES CXX)
+project(mydraw LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,8 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Gui)
 
 # Headless core: QtGui only, never QtWidgets (#35).
-add_library(mydraw_core src/document.cpp src/spiro.cpp src/brush.cpp src/powerstroke.cpp)
-target_include_directories(mydraw_core PUBLIC src)
+add_library(mydraw_core src/document.cpp src/spiro.cpp src/brush.cpp src/powerstroke.cpp vendor/miniz.c)
+target_include_directories(mydraw_core PUBLIC src vendor)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MYPAINT REQUIRED IMPORTED_TARGET libmypaint)
 target_link_libraries(mydraw_core PUBLIC Qt6::Gui PkgConfig::MYPAINT)

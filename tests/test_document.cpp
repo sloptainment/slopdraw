@@ -1,7 +1,9 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include "brush.h"
+#include "miniz.h"
 #include "document.h"
 #include "powerstroke.h"
 #include "spiro.h"
@@ -458,6 +460,26 @@ static bool layerNamesAreStoredAndUndoable() {
     return ok && doc.layerCount() == 2 && doc.redo() && doc.name(2) == "Layer 2";
 }
 
+// A zip written with two entries reads back with the same names and bytes, through the vendored miniz.
+static bool zipRoundTripsTwoEntries() {
+    mz_zip_archive w{};
+    void* buf = nullptr; size_t size = 0;
+    if (!mz_zip_writer_init_heap(&w, 0, 0)) return false;
+    bool ok = mz_zip_writer_add_mem(&w, "mimetype", "image/openraster", 16, MZ_NO_COMPRESSION)
+           && mz_zip_writer_add_mem(&w, "data/a.bin", "\x00\x01\xff\x00", 4, MZ_DEFAULT_COMPRESSION)
+           && mz_zip_writer_finalize_heap_archive(&w, &buf, &size);
+    mz_zip_writer_end(&w);
+    if (!ok) return false;
+    mz_zip_archive r{};
+    ok = mz_zip_reader_init_mem(&r, buf, size, 0) && mz_zip_reader_get_num_files(&r) == 2;
+    size_t n1 = 0, n2 = 0;
+    void* a = ok ? mz_zip_reader_extract_file_to_heap(&r, "mimetype", &n1, 0) : nullptr;
+    void* b = ok ? mz_zip_reader_extract_file_to_heap(&r, "data/a.bin", &n2, 0) : nullptr;
+    ok = ok && a && b && n1 == 16 && !std::memcmp(a, "image/openraster", 16) && n2 == 4 && !std::memcmp(b, "\x00\x01\xff\x00", 4);
+    mz_free(a); mz_free(b); mz_zip_reader_end(&r); mz_free(buf);
+    return ok;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -495,5 +517,6 @@ int main() {
     run("compositeOfThreeLayersMatchesGolden", compositeOfThreeLayersMatchesGolden);
     run("layerOpsUndoAndRedoInOneHistory", layerOpsUndoAndRedoInOneHistory);
     run("layerNamesAreStoredAndUndoable", layerNamesAreStoredAndUndoable);
+    run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     return failed != 0;
 }
