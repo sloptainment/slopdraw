@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QSettings>
+#include <QStatusBar>
 #include <QToolButton>
 #include <QActionGroup>
 #include <QSlider>
@@ -58,6 +59,7 @@ public:
         pen_.type = t;
         if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(doc_.nodes(doc_.current(), selected_), nodeSel_, t));
     }
+    std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
     std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
     // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (the Select tool).
     void setTool(int t) {
@@ -93,6 +95,8 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override {
+        QString h = hint();  // every tool or state change calls update(), so paint is where a change of hint is noticed
+        if (h != hint_) { hint_ = h; if (onHint) onHint(h); }
         QPainter p(this);
         if (!hasDoc()) {
             p.fillRect(rect(), QColor(90, 90, 90));
@@ -216,6 +220,15 @@ protected:
     }
 
 private:
+    // What the next click does for the current tool and state (#177).
+    QString hint() const {
+        if (!hasDoc()) return {};
+        if (spiroTool_ && pen_.nodes.empty()) return "Click places the first node";
+        if (spiroTool_) return "Click adds a node · Enter or right-click finishes open · click the first node or Shift+Enter closes · Backspace drops the last node · Esc cancels";
+        if (selectTool_ && selected_ < 0) return "Click a path to select it";
+        if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+Alt+click deletes";
+        return "Draw · Shift+drag sizes the brush · Ctrl+click picks a color · E toggles erase";
+    }
     // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node.
     void spiroClick(QPointF pos) {
         QPointF d = view_.toDoc(pos);
@@ -356,6 +369,7 @@ private:
     ulong lastMs_ = 0;
     View view_;
     QPointF last_;
+    QString hint_;
     std::optional<QPointF> cursor_;  // pointer position over the canvas, for the brush outline
     bool dragging_ = false, space_ = false, painting_ = false, resizing_ = false;
     QColor color_ = Qt::black;  // matches pencil.myb and the Color dock's start
@@ -452,6 +466,7 @@ int main(int argc, char** argv) {
     Window window;
     auto* canvas = new Canvas;
     window.setCentralWidget(canvas);
+    canvas->onHint = [&window](const QString& h) { window.statusBar()->showMessage(h); };
 
     auto* picker = new ColorPicker;
     picker->onChange = [canvas](const QColor& c) { canvas->setColor(c); };
