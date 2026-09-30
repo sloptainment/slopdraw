@@ -33,3 +33,7 @@ void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample
 // Sets the brush's base radius in document pixels (libmypaint stores its natural log) and opacity (0..1) for the strokes painted after.
 void setBrushRadius(MyPaintBrush* brush, float radius);
 void setBrushOpacity(MyPaintBrush* brush, float opacity);
+
+// Shift+drag sizing: the radius after dragging dx px (right grows, left shrinks, 100 px = x e), clamped to kMinRadius..kMaxRadius.
+constexpr float kMinRadius = 1, kMaxRadius = 200;
+float dragRadius(float radius, float dx);

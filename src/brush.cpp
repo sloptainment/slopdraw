@@ -108,3 +108,5 @@ void setBrushRadius(MyPaintBrush* brush, float radius) {
 void setBrushOpacity(MyPaintBrush* brush, float opacity) {
     mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_OPAQUE, opacity);
 }
+
+float dragRadius(float radius, float dx) { return std::clamp(radius * std::exp(dx * 0.01f), kMinRadius, kMaxRadius); }

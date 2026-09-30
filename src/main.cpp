@@ -22,12 +22,14 @@
 #include <cmath>
 
 // Krita Default navigation (/r/5): middle drag or Space+left drag pans; +Ctrl zooms, +Shift rotates; wheel zooms; M mirrors; Ctrl+Z undoes, Ctrl+Shift+Z redoes.
+// Shift+left drag (mouse or pen) resizes the brush instead of painting: 100 px right = x e.
 // Painting: the pen tip, or plain left button at pressure 0.5, feeds pen samples to the Document.
 class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); }
     void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); update(); }
     void setColor(const QColor& c) { if (brush_) setBrushColor(brush_.get(), c); }
+    std::function<void()> onRadiusChange;  // fired after a drag resize so the Size slider can follow
     void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); }
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
@@ -51,9 +53,11 @@ protected:
     void mousePressEvent(QMouseEvent* e) override {
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
-        if (e->button() == Qt::LeftButton && !space_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
+        resizing_ = e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ShiftModifier);
+        if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
     }
     void mouseMoveEvent(QMouseEvent* e) override {
+        if (resizing_) return resizeTo(e->position());
         if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
         if (!dragging_) return;
         QPointF d = e->position() - last_;
@@ -63,11 +67,13 @@ protected:
         else view_.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { dragging_ = painting_ = false; }
+    void mouseReleaseEvent(QMouseEvent*) override { dragging_ = painting_ = resizing_ = false; }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
-        if (e->type() == QEvent::TabletRelease) painting_ = false;
+        if (e->type() == QEvent::TabletRelease) painting_ = resizing_ = false;
+        else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
+        else if (resizing_) resizeTo(e->position());
         else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
                     e->pointerType() == QPointingDevice::PointerType::Eraser);  // the flag is per call (b20)
@@ -90,6 +96,12 @@ protected:
     }
 
 private:
+    void resizeTo(QPointF pos) {
+        if (!brush_) return;
+        setRadius(dragRadius(radius(), pos.x() - last_.x()));
+        last_ = pos;
+        if (onRadiusChange) onRadiusChange();
+    }
     void paintAt(QPointF pos, float pressure, float xtilt, float ytilt, ulong ms, bool eraser = false) {
         if (!brush_) return;
         QPointF d = view_.toDoc(pos);
@@ -103,7 +115,7 @@ private:
     ulong lastMs_ = 0;
     View view_;
     QPointF last_;
-    bool dragging_ = false, space_ = false, painting_ = false;
+    bool dragging_ = false, space_ = false, painting_ = false, resizing_ = false;
 };
 
 // Hue ring around a saturation/value square. Dragging either calls onChange with the new color; setColor moves it from outside.
@@ -188,9 +200,10 @@ int main(int argc, char** argv) {
     brushList->setCurrentRow(std::find_if(brushes.begin(), brushes.end(), [](const BrushEntry& b) { return b.name == "pencil"; }) - brushes.begin());  // matches Canvas's starting brush
     QObject::connect(brushList, &QListWidget::currentRowChanged, [canvas, brushes](int row) { if (row >= 0) canvas->setBrush(brushes[row].path); });
     auto* size = new QSlider(Qt::Horizontal);  // radius in px
-    size->setRange(1, 200);
+    size->setRange(kMinRadius, kMaxRadius);
     size->setValue(std::lround(canvas->radius()));
     QObject::connect(size, &QSlider::valueChanged, [canvas](int v) { canvas->setRadius(v); });
+    canvas->onRadiusChange = [canvas, size] { QSignalBlocker b(size); size->setValue(std::lround(canvas->radius())); };  // blocked so the slider's int doesn't round the radius back
     auto* opacity = new QSlider(Qt::Horizontal);  // percent
     opacity->setRange(1, 100);
     opacity->setValue(std::lround(canvas->opacity() * 100));

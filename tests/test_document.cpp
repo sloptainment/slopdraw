@@ -321,6 +321,12 @@ static bool closedSkeletonJoinsWrapAround() {
     return out.contains(QPointF(-3, -3)) && out.contains(QPointF(53, 53)) && !out.contains(QPointF(25, 25)) && !out.contains(QPointF(-4, -4));
 }
 
+// Dragging right grows the radius exponentially (100 px = x e), left shrinks it, and the result stays within the size slider's 1..200.
+static bool dragResizesRadiusWithinRange() {
+    return std::fabs(dragRadius(10, 100) - 27.1828f) < 1e-3 && std::fabs(dragRadius(10, -100) - 3.6788f) < 1e-3 && dragRadius(10, 0) == 10
+        && dragRadius(10, 1000) == 200 && dragRadius(10, -1000) == 1;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -351,5 +357,6 @@ int main() {
     run("endKnotsGiveUniformStrokeWithTaperedCaps", endKnotsGiveUniformStrokeWithTaperedCaps);
     run("cornerGetsRoundJoin", cornerGetsRoundJoin);
     run("closedSkeletonJoinsWrapAround", closedSkeletonJoinsWrapAround);
+    run("dragResizesRadiusWithinRange", dragResizesRadiusWithinRange);
     return failed != 0;
 }
