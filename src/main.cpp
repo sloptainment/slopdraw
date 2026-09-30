@@ -5,6 +5,7 @@
 #include "ora.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QInputDialog>
@@ -54,13 +55,13 @@ public:
         pen_.type = t;
         if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(doc_.nodes(doc_.current(), selected_), nodeSel_, t));
     }
-    std::function<void(bool)> onToolChange;  // fired with whether the Spiro Pen or Select tool is now the tool, so the Tool Options dock can follow
+    std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
     // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (the Select tool).
     void setTool(int t) {
         fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3;
         if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
         update();
-        if (onToolChange) onToolChange(spiroTool_ || selectTool_);
+        if (onToolChange) onToolChange(t);
     }
     // The Edit, View and Tools menu actions call these; their keys are window-wide shortcuts.
     void undo(bool redo) {
@@ -72,8 +73,9 @@ public:
     }
     void mirror() { view_.mirrorAt(rect().center()); update(); }
     void setErase(bool on) { eraseMode_ = on; }
+    void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
     void finishPath(bool closed) {
-        if (spiroTool_) pen_.finish(doc_, closed, color_, 2 * radius());  // width follows the brush size; refused on a Raster Layer
+        if (spiroTool_) pen_.finish(doc_, closed, color_, pathWidth_);  // refused on a Raster Layer
         update();
         if (onLayersChange) onLayersChange();
     }
@@ -149,7 +151,7 @@ protected:
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && spiroTool_) spiroClick(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), eraseMode_);
-        else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
+        else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), eraseMode_);
     }
     void mouseMoveEvent(QMouseEvent* e) override {
         if (!resizing_) cursor_ = e->position();  // the circle stays at the press point while Shift+drag resizes
@@ -158,7 +160,7 @@ protected:
         if (knotDrag_ >= 0) return dragKnotTo(e->position());
         if (nodeDrag_) return dragNodesTo(e->position());
         if (lassoing_) return lassoAt(e->position(), eraseMode_);
-        if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp());
+        if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), eraseMode_);
         if (!dragging_) return;
         QPointF d = e->position() - last_;
         last_ = e->position();
@@ -358,6 +360,7 @@ private:
     std::set<int> nodeSel_;  // selected Spiro Node indexes of the selected path
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false;
+    double pathWidth_ = 10;  // px
     bool fillTool_ = false, eraseMode_ = false, lassoing_ = false, lassoErase_ = false;
 };
 
@@ -564,15 +567,35 @@ int main(int argc, char** argv) {
     window.addDockWidget(Qt::RightDockWidgetArea, layerDock);
     refresh();
 
-    // Tool Options dock (#58): shows the Spiro Node type picker while the Spiro Pen or Select tool is the tool, empty otherwise.
+    // Tool Options dock (#58, #171): Erase for Brush and Lasso Fill, path width and node picker for the Spiro Pen, node picker for Node/Knot edit.
+    auto* eraseBox = new QCheckBox("Erase");
+    auto* widthBox = new QWidget;
+    auto* widthRow = new QHBoxLayout(widthBox);
+    widthRow->setContentsMargins(0, 0, 0, 0);
+    auto* pathWidth = new QSlider(Qt::Horizontal);  // px, of a new Vector Path
+    pathWidth->setRange(kMinRadius, kMaxRadius);
+    auto* pathWidthValue = new QLabel;
+    QObject::connect(pathWidth, &QSlider::valueChanged, [canvas, pathWidthValue](int v) { canvas->setPathWidth(v); pathWidthValue->setText(QString("%1 px").arg(v)); });
+    pathWidth->setValue(10);
+    widthRow->addWidget(new QLabel("Width"));
+    widthRow->addWidget(pathWidth);
+    widthRow->addWidget(pathWidthValue);
     auto* nodeTypes = new QListWidget;
     for (const auto& t : kNodeTypes) nodeTypes->addItem(t.name);
     nodeTypes->setCurrentRow(2);  // G2, SpiroPen's starting type
     QObject::connect(nodeTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->setNodeType(kNodeTypes[row].type); });
-    nodeTypes->hide();
-    canvas->onToolChange = [nodeTypes](bool spiro) { nodeTypes->setVisible(spiro); };
+    auto showOptions = [=](int tool) {
+        eraseBox->setVisible(tool <= LassoFillTool);
+        widthBox->setVisible(tool == SpiroPenTool);
+        nodeTypes->setVisible(tool >= SpiroPenTool);
+    };
+    canvas->onToolChange = showOptions;
+    showOptions(BrushTool);
     auto* optionsPanel = new QWidget;
-    (new QVBoxLayout(optionsPanel))->addWidget(nodeTypes);
+    auto* optionsCol = new QVBoxLayout(optionsPanel);
+    optionsCol->addWidget(eraseBox);
+    optionsCol->addWidget(widthBox);
+    optionsCol->addWidget(nodeTypes);
     auto* optionsDock = new QDockWidget("Tool Options", &window);
     optionsDock->setWidget(optionsPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, optionsDock);
@@ -672,7 +695,8 @@ int main(int argc, char** argv) {
     toolsMenu->addSeparator();
     auto* erase = key(toolsMenu->addAction("&Erase mode"), {QKeySequence("E")});
     erase->setCheckable(true);
-    QObject::connect(erase, &QAction::toggled, [canvas](bool on) { canvas->setErase(on); });
+    QObject::connect(erase, &QAction::toggled, [canvas, eraseBox](bool on) { canvas->setErase(on); eraseBox->setChecked(on); });
+    QObject::connect(eraseBox, &QCheckBox::toggled, erase, &QAction::setChecked);  // each side's setChecked with the same value emits nothing, so they settle
     QObject::connect(key(toolsMenu->addAction("Finish path &open"), {QKeySequence("Return"), QKeySequence("Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(false); });
     QObject::connect(key(toolsMenu->addAction("Finish path &closed"), {QKeySequence("Shift+Return"), QKeySequence("Shift+Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(true); });
 
