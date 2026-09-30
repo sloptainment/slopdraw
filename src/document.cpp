@@ -29,6 +29,25 @@ void paste(QImage& dst, const QImage& src, QPoint at) {
         std::memcpy(dst.scanLine(at.y() + y) + 4 * at.x(), src.constScanLine(y), 4 * size_t(src.width()));
 }
 
+// The cubics of the Spiro curve through nodes, which must give one (see spiroToPath). A QPainterPath from spiroToPath is lines and
+// cubics (several per Spiro segment); lines get p1=p0, p2=p3.
+std::vector<Cubic> skeletonOf(const std::vector<SpiroNode>& nodes, bool closed) {
+    QPainterPath curve = *spiroToPath(nodes, closed);
+    std::vector<Cubic> skeleton;
+    QPointF at = curve.elementAt(0);
+    for (int i = 1; i < curve.elementCount();) {
+        if (curve.elementAt(i).type == QPainterPath::CurveToElement) {
+            skeleton.push_back({at, curve.elementAt(i), curve.elementAt(i + 1), curve.elementAt(i + 2)});
+            i += 3;
+        } else {
+            skeleton.push_back({at, at, curve.elementAt(i), curve.elementAt(i)});
+            i++;
+        }
+        at = skeleton.back()[3];
+    }
+    return skeleton;
+}
+
 }  // namespace
 
 Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget) {
@@ -80,7 +99,23 @@ bool Document::addPath(const std::vector<SpiroNode>& nodes, bool closed, const Q
     Step s;
     s.kind = PathAdd;
     s.layer = current_;
-    s.paths = {{nodes, closed, color, width}};
+    std::vector<WidthKnot> knots{{0, width}};
+    if (!closed) knots.push_back({double(skeletonOf(nodes, closed).size()), width});
+    s.paths = {{nodes, closed, color, width, knots}};
+    push(s);
+    apply(s, false);
+    return true;
+}
+
+bool Document::setKnots(int layer, int path, const std::vector<WidthKnot>& knots) {
+    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size()) || knots.empty()) return false;
+    seal();
+    Step s;
+    s.kind = Knots;
+    s.layer = layer;
+    s.to = path;
+    s.ka = layers_[layer].paths[path].knots;
+    s.kb = knots;
     push(s);
     apply(s, false);
     return true;
@@ -92,22 +127,8 @@ void Document::rasterize(Layer& l) {
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
     for (const VPath& v : l.paths) {
-        QPainterPath curve = *spiroToPath(v.nodes, v.closed);  // addPath only keeps paths that have a curve
-        std::vector<Cubic> skeleton;  // a QPainterPath from spiroToPath is lines and cubics (several per Spiro segment); lines get p1=p0, p2=p3
-        QPointF at = curve.elementAt(0);
-        for (int i = 1; i < curve.elementCount();) {
-            if (curve.elementAt(i).type == QPainterPath::CurveToElement) {
-                skeleton.push_back({at, curve.elementAt(i), curve.elementAt(i + 1), curve.elementAt(i + 2)});
-                i += 3;
-            } else {
-                skeleton.push_back({at, at, curve.elementAt(i), curve.elementAt(i)});
-                i++;
-            }
-            at = skeleton.back()[3];
-        }
-        std::vector<WidthKnot> knots{{0, v.width}};
-        if (!v.closed) knots.push_back({double(skeleton.size()), v.width});
-        p.fillPath(expandPowerStroke(skeleton, v.closed, knots), v.color);
+        std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
+        p.fillPath(expandPowerStroke(skeleton, v.closed, v.knots), v.color);
     }
 }
 
@@ -225,6 +246,10 @@ void Document::apply(const Step& s, bool reverse) {
     case Name: layers_[s.layer].name = reverse ? s.na : s.nb; break;
     case PathAdd:
         reverse ? layers_[s.layer].paths.pop_back() : layers_[s.layer].paths.push_back(s.paths[0]);
+        rasterize(layers_[s.layer]);
+        break;
+    case Knots:
+        layers_[s.layer].paths[s.to].knots = reverse ? s.ka : s.kb;
         rasterize(layers_[s.layer]);
         break;
     }

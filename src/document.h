@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include "brush.h"
+#include "powerstroke.h"
 #include "spiro.h"
 
 class Document {
@@ -31,6 +32,9 @@ public:
     // Appends a Spiro path to the current Vector Layer, drawn as a Power Stroke `width` wide (flat ends), antialiased, in color.
     // One undo step. Returns false, changing nothing, when the current layer is a Raster Layer or the nodes give no curve (see spiroToPath).
     bool addPath(const std::vector<SpiroNode>& nodes, bool closed, const QColor& color, double width);
+    // Replaces path `path` of Vector Layer `layer` with these Width Knots (t = cubic index + fraction, full width) and redraws it; one undo step.
+    // Returns false, changing nothing, for a Raster Layer, a bad path index or an empty knot list.
+    bool setKnots(int layer, int path, const std::vector<WidthKnot>& knots);
     int layerCount() const { return int(layers_.size()); }
     int current() const { return current_; }
     bool visible(int layer) const { return layers_[layer].visible; }
@@ -56,13 +60,14 @@ private:
     // Pixels: before/after pixels of the rect a stroke changed. The layer ops keep what undo needs: Add nothing (its layer is blank
     // once later steps are undone), Delete the layer's image in before plus its visible/opacity in a/b, Move the target index in to,
     // Visible and Opacity the old and new value in a and b, Name the old and new in na and nb.
-    // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path.
-    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, PathAdd };
+    // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path, Knots the old and new Width Knots of one path.
+    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, PathAdd, Knots };
     struct VPath {
         std::vector<SpiroNode> nodes;
         bool closed;
         QColor color;
         double width;
+        std::vector<WidthKnot> knots;
     };
     struct Step {
         Kind kind = Pixels;
@@ -73,6 +78,7 @@ private:
         double a = 0, b = 0;
         bool vector = false;
         std::vector<VPath> paths;
+        std::vector<WidthKnot> ka, kb;  // Knots: path index in to, the old and new knots
         QString na, nb;  // Add: the new layer's name (nb unused); Delete: the deleted name in na; Name: old and new
     };
     // Discards the redo branch, appends s as applied, and drops the oldest steps past the budget.
