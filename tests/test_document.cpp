@@ -404,6 +404,36 @@ static bool compositeOfThreeLayersMatchesGolden() {
     return pixels && same;
 }
 
+// Add, reorder, opacity, visibility and delete each undo and redo, in one history with fills: a red layer under a blue one, every op
+// undone back to the white background and redone forward again; a new op after an undo discards the redo branch.
+static bool layerOpsUndoAndRedoInOneHistory() {
+    Document doc(QSize(64, 64));
+    auto full = [&](QColor c) { doc.fill(c, {{0, 0}, {64, 0}, {64, 64}, {0, 64}}); };
+    QImage white = doc.render().copy();
+    doc.addLayer(); full(Qt::red);
+    QImage red = doc.render().copy();
+    doc.addLayer(); full(Qt::blue);
+    QImage blue = doc.render().copy();
+    bool ok = red != blue;
+    auto roundTrip = [&](const QImage& after) {  // the op just done gives `after`; undo gives blue; redo gives `after` again
+        bool r = doc.render() == after && doc.undo() && doc.render() == blue && doc.redo() && doc.render() == after && doc.undo();
+        return r && doc.render() == blue;
+    };
+    ok = ok && doc.moveLayer(2, 1) && doc.colorAt({5, 5}) == Qt::red && roundTrip(red);  // reorder, then undo restores the order
+    doc.setOpacity(2, 0.5);
+    QImage half = doc.render().copy();
+    ok = ok && half != blue && roundTrip(half);
+    doc.setVisible(2, false);
+    ok = ok && roundTrip(red);
+    ok = ok && doc.deleteLayer(2) && roundTrip(red);
+    ok = ok && doc.undo() && doc.undo() && doc.render() == red && doc.undo() && doc.render() == white && doc.undo() && doc.render() == white;  // add 2 gone
+    ok = ok && !doc.undo();
+    ok = ok && doc.redo() && doc.redo() && doc.render() == red && doc.redo() && doc.redo() && doc.render() == blue && doc.redo() && doc.render() == red && !doc.redo();
+    doc.undo();
+    doc.setVisible(1, false);  // a new op discards the redo branch
+    return ok && !doc.redo();
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -438,5 +468,6 @@ int main() {
     run("fillsFigureEightAndErases", fillsFigureEightAndErases);
     run("strokeLandsOnCurrentLayerOnly", strokeLandsOnCurrentLayerOnly);
     run("compositeOfThreeLayersMatchesGolden", compositeOfThreeLayersMatchesGolden);
+    run("layerOpsUndoAndRedoInOneHistory", layerOpsUndoAndRedoInOneHistory);
     return failed != 0;
 }

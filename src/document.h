@@ -27,17 +27,32 @@ public:
     void setCurrent(int layer);
     void setVisible(int layer, bool visible);
     void setOpacity(int layer, double opacity);
+    // Both leave the background (layer 0) alone and return false when they do nothing. moveLayer puts layer `from` at index `to`.
+    // Every layer op (add, delete, move, visibility, opacity) is one undo step, in the same history as strokes.
+    bool deleteLayer(int layer);
+    bool moveLayer(int from, int to);
     // Each returns false when there is nothing to undo / redo.
     bool undo();
     bool redo();
 
 private:
-    // Before/after pixels of the rect a stroke changed.
+    // Pixels: before/after pixels of the rect a stroke changed. The layer ops keep what undo needs: Add nothing (its layer is blank
+    // once later steps are undone), Delete the layer's image in before plus its visible/opacity in a/b, Move the target index in to,
+    // Visible and Opacity the old and new value in a and b.
+    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity };
     struct Step {
-        int layer;
+        Kind kind = Pixels;
+        int layer = 0;
         QRect rect;
         QImage before, after;
+        int to = 0;
+        double a = 0, b = 0;
     };
+    // Discards the redo branch, appends s as applied, and drops the oldest steps past the budget.
+    void push(Step s);
+    // Applies s (undo: reverse = true) to layers_.
+    void apply(const Step& s, bool reverse);
+    void applyMove(int from, int to);
     // Turns the stroke in progress (if any) into a Step of history_, and drops the oldest past the budget.
     void seal();
 
