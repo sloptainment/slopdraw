@@ -499,6 +499,18 @@ static bool oraRoundTripsThreeLayers() {
     return back->render() == doc.render() && !back->undo() && !readOra(dir.filePath("missing.ora"));
 }
 
+// Export PNG writes the visible composite: hidden layer left out, half-opacity layer blended, reloaded pixels equal render().
+static bool exportedPngEqualsRender() {
+    Document doc(QSize(32, 32));
+    doc.addLayer(); doc.fill(Qt::black, {{4, 4}, {20, 4}, {20, 20}, {4, 20}}); doc.setOpacity(1, 0.5);
+    doc.addLayer(); doc.fill(Qt::red, {{10, 10}, {30, 10}, {30, 30}, {10, 30}}); doc.setVisible(2, false);
+    QTemporaryDir dir;
+    QString path = dir.filePath("t.png");
+    if (!exportPng(doc, path)) return false;
+    QImage back(path);
+    return !back.isNull() && back.convertToFormat(QImage::Format_ARGB32) == doc.render().convertToFormat(QImage::Format_ARGB32);
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -538,5 +550,6 @@ int main() {
     run("layerNamesAreStoredAndUndoable", layerNamesAreStoredAndUndoable);
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
+    run("exportedPngEqualsRender", exportedPngEqualsRender);
     return failed != 0;
 }

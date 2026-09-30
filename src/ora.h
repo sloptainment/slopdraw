@@ -7,3 +7,5 @@
 bool writeOra(const Document& doc, const QString& path);
 // A fresh Document (empty undo history) with the file's layers, order, names, visibility, opacity and pixels; nullopt if unreadable.
 std::optional<Document> readOra(const QString& path);
+// Writes doc's visible composite (render()) as a PNG.
+bool exportPng(const Document& doc, const QString& path);

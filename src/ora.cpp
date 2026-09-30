@@ -98,3 +98,5 @@ std::optional<Document> readOra(const QString& path) {
     mz_zip_reader_end(&z);
     return doc;
 }
+
+bool exportPng(const Document& doc, const QString& path) { return doc.render().save(path, "PNG"); }

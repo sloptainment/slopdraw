@@ -1,9 +1,12 @@
 #include "document.h"
 #include "view.h"
+#include "ora.h"
 
 #include <QApplication>
 #include <QDockWidget>
+#include <QFileDialog>
 #include <QInputDialog>
+#include <QMessageBox>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
@@ -336,7 +339,8 @@ int main(int argc, char** argv) {
     window.addDockWidget(Qt::RightDockWidgetArea, layerDock);
     refresh();
 
-    auto* fileNew = window.menuBar()->addMenu("&File")->addAction("&New...");
+    auto* fileMenu = window.menuBar()->addMenu("&File");
+    auto* fileNew = fileMenu->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);
     QObject::connect(fileNew, &QAction::triggered, [&] {
         bool ok = false;
@@ -345,6 +349,31 @@ int main(int argc, char** argv) {
         int h = QInputDialog::getInt(&window, "New", "Height (px):", 768, 1, 32768, 1, &ok);
         if (!ok) return;
         canvas->setDocument(Document(QSize(w, h)));
+    });
+
+    auto* fileOpen = fileMenu->addAction("&Open...");
+    fileOpen->setShortcut(QKeySequence::Open);
+    QObject::connect(fileOpen, &QAction::triggered, [&] {
+        QString path = QFileDialog::getOpenFileName(&window, "Open", {}, "OpenRaster (*.ora)");
+        if (path.isEmpty()) return;
+        auto doc = readOra(path);
+        if (!doc) { QMessageBox::warning(&window, "Open", "Could not read " + path); return; }
+        canvas->setDocument(std::move(*doc));
+    });
+    auto* fileSave = fileMenu->addAction("&Save...");
+    fileSave->setShortcut(QKeySequence::Save);
+    QObject::connect(fileSave, &QAction::triggered, [&] {
+        QString path = QFileDialog::getSaveFileName(&window, "Save", {}, "OpenRaster (*.ora)");
+        if (path.isEmpty()) return;
+        if (!path.endsWith(".ora")) path += ".ora";
+        if (!writeOra(canvas->doc(), path)) QMessageBox::warning(&window, "Save", "Could not write " + path);
+    });
+    auto* fileExport = fileMenu->addAction("&Export PNG...");
+    QObject::connect(fileExport, &QAction::triggered, [&] {
+        QString path = QFileDialog::getSaveFileName(&window, "Export PNG", {}, "PNG (*.png)");
+        if (path.isEmpty()) return;
+        if (!path.endsWith(".png")) path += ".png";
+        if (!exportPng(canvas->doc(), path)) QMessageBox::warning(&window, "Export PNG", "Could not write " + path);
     });
 
     window.resize(1024, 768);
