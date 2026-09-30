@@ -1,4 +1,5 @@
 #pragma once
+#include <QPainterPath>
 #include <QPointF>
 #include <array>
 #include <vector>
@@ -17,3 +18,6 @@ double widthAt(const std::vector<WidthKnot>& knots, double t, int n, bool closed
 // One closed body contour per skeleton segment (lines as p1=p0, p2=p3; n = skeleton.size(), path time t = segment index + fraction):
 // left offsets forward, a line across, right offsets back, a line across. Joins, caps and the union are not here. Empty without knots.
 std::vector<std::vector<Cubic>> powerStrokeBodies(const std::vector<Cubic>& skeleton, bool closed, const std::vector<WidthKnot>& knots);
+// The filled outline of the whole stroke: bodies, round joins at every corner, zero caps (add nothing), united by QPainterPath::united.
+// Same inputs as powerStrokeBodies; an empty path without knots.
+QPainterPath expandPowerStroke(const std::vector<Cubic>& skeleton, bool closed, const std::vector<WidthKnot>& knots);

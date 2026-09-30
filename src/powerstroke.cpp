@@ -215,3 +215,39 @@ std::vector<std::vector<Cubic>> powerStrokeBodies(const std::vector<Cubic>& skel
     }
     return out;
 }
+
+// A closed contour as a path, wound counter-clockwise (positive area) so overlapping pieces add under winding fill.
+static QPainterPath oriented(QPainterPath p) {
+    p.setFillRule(Qt::WindingFill);
+    QPolygonF poly = p.toFillPolygon();
+    double area = 0;
+    for (int i = 0; i < poly.size(); i++) area += cross(poly[i], poly[(i + 1) % poly.size()]);
+    return area < 0 ? p.toReversed() : p;
+}
+
+QPainterPath expandPowerStroke(const std::vector<Cubic>& skeleton, bool closed, const std::vector<WidthKnot>& knots) {
+    QPainterPath out;
+    out.setFillRule(Qt::WindingFill);
+    if (knots.empty()) return out;
+    for (auto& body : powerStrokeBodies(skeleton, closed, knots)) {
+        QPainterPath p(body[0][0]);
+        for (auto& c : body) p.cubicTo(c[1], c[2], c[3]);
+        p.closeSubpath();
+        out = out.united(oriented(p));
+    }
+    // Round joins between neighbouring segments (a point-like segment is skipped, as in the bodies). Zero caps add nothing.
+    std::vector<size_t> kept;
+    for (size_t i = 0; i < skeleton.size(); i++)
+        if (!std::all_of(skeleton[i].begin(), skeleton[i].end(), [&](QPointF p) { return len(p - skeleton[i][0]) < EPS; })) kept.push_back(i);
+    auto spans = widthSpans(knots, skeleton.size(), closed);
+    for (size_t k = 0; k + (closed ? 0 : 1) < kept.size(); k++) {
+        const Cubic &a = skeleton[kept[k]], &b = skeleton[kept[(k + 1) % kept.size()]];
+        QPointF ta = tangent(a, 1), tb = tangent(b, 0);
+        double r = offsetAt(spans, kept[k] + 1);
+        if (r <= EPS || (std::abs(cross(ta, tb)) < 1e-9 && QPointF::dotProduct(ta, tb) > 0)) continue;  // no width, or smooth
+        QPainterPath circle;
+        circle.addEllipse(a[3], r, r);
+        out = out.united(oriented(circle));
+    }
+    return out;
+}

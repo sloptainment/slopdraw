@@ -301,6 +301,26 @@ static bool powerStrokeBodiesMatchSlopfont() {
     return true;
 }
 
+// Knots only at the ends: a uniform 10-wide stroke; zero caps add nothing, so it ends flat at both ends (widthAt is 10 at t=0, per the fixtures).
+static bool endKnotsGiveUniformStrokeWithTaperedCaps() {
+    auto out = expandPowerStroke({Cubic{{{0, 0}, {0, 0}, {100, 0}, {100, 0}}}}, false, {{0, 10}, {1, 10}});
+    return out.contains(QPointF(50, 4.9)) && out.contains(QPointF(50, -4.9)) && !out.contains(QPointF(50, 5.1)) && !out.contains(QPointF(50, -5.1)) &&
+           out.contains(QPointF(0.5, 4)) && out.contains(QPointF(99.5, -4)) && !out.contains(QPointF(-0.5, 0)) && !out.contains(QPointF(100.5, 0));
+}
+
+// A corner gets a round join of the half-width there: (63,-3) lies only in the join, (65,-5) is past its radius 6.
+static bool cornerGetsRoundJoin() {
+    auto out = expandPowerStroke({Cubic{{{0, 0}, {0, 0}, {60, 0}, {60, 0}}}, Cubic{{{60, 0}, {60, 0}, {60, 50}, {60, 50}}}}, false, {{1, 12}});
+    return out.contains(QPointF(63, -3)) && !out.contains(QPointF(65, -5)) && out.contains(QPointF(30, 0)) && !out.contains(QPointF(30, -8));
+}
+
+// A closed skeleton has no caps and its wrap-around corner is joined too: the square's start corner is filled.
+static bool closedSkeletonJoinsWrapAround() {
+    Cubic a{{{0, 0}, {0, 0}, {50, 0}, {50, 0}}}, b{{{50, 0}, {50, 0}, {50, 50}, {50, 50}}}, c{{{50, 50}, {50, 50}, {0, 50}, {0, 50}}}, d{{{0, 50}, {0, 50}, {0, 0}, {0, 0}}};
+    auto out = expandPowerStroke({a, b, c, d}, true, {{0, 10}});
+    return out.contains(QPointF(-3, -3)) && out.contains(QPointF(53, 53)) && !out.contains(QPointF(25, 25)) && !out.contains(QPointF(-4, -4));
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -328,5 +348,8 @@ int main() {
     run("secondStrokeDoesNotJoinFirst", secondStrokeDoesNotJoinFirst);
     run("widthAtMatchesSlopfont", widthAtMatchesSlopfont);
     run("powerStrokeBodiesMatchSlopfont", powerStrokeBodiesMatchSlopfont);
+    run("endKnotsGiveUniformStrokeWithTaperedCaps", endKnotsGiveUniformStrokeWithTaperedCaps);
+    run("cornerGetsRoundJoin", cornerGetsRoundJoin);
+    run("closedSkeletonJoinsWrapAround", closedSkeletonJoinsWrapAround);
     return failed != 0;
 }
