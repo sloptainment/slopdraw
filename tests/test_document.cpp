@@ -5,6 +5,8 @@
 #include "brush.h"
 #include "miniz.h"
 #include "document.h"
+#include "ora.h"
+#include <QTemporaryDir>
 #include "powerstroke.h"
 #include "spiro.h"
 #include "powerstroke_fixtures.h"
@@ -480,6 +482,23 @@ static bool zipRoundTripsTwoEntries() {
     return ok;
 }
 
+// A 3-layer Document (names, hidden, half opacity, painted pixels) saved to .ora and read back matches layer by layer and in composite.
+static bool oraRoundTripsThreeLayers() {
+    Document doc(QSize(64, 64));
+    auto square = [&](double lo, double hi) { doc.fill(Qt::black, {{lo, lo}, {hi, lo}, {hi, hi}, {lo, hi}}); };
+    doc.addLayer(); square(8, 40); doc.setOpacity(1, 0.5); doc.setName(1, "Ink");
+    doc.addLayer(); square(24, 56); doc.setVisible(2, false);
+    QTemporaryDir dir;
+    QString path = dir.filePath("t.ora");
+    if (!writeOra(doc, path)) return false;
+    auto back = readOra(path);
+    if (!back || back->layerCount() != 3) return false;
+    for (int i = 0; i < 3; i++)
+        if (back->name(i) != doc.name(i) || back->visible(i) != doc.visible(i) || back->opacity(i) != doc.opacity(i) || back->image(i) != doc.image(i))
+            return false;
+    return back->render() == doc.render() && !back->undo() && !readOra(dir.filePath("missing.ora"));
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -518,5 +537,6 @@ int main() {
     run("layerOpsUndoAndRedoInOneHistory", layerOpsUndoAndRedoInOneHistory);
     run("layerNamesAreStoredAndUndoable", layerNamesAreStoredAndUndoable);
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
+    run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     return failed != 0;
 }

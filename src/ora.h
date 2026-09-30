@@ -1,0 +1,9 @@
+#pragma once
+#include <QString>
+#include <optional>
+#include "document.h"
+
+// Writes doc as an OpenRaster file: mimetype (stored, first), stack.xml, data/layerN.png per layer, mergedimage.png, Thumbnails/thumbnail.png.
+bool writeOra(const Document& doc, const QString& path);
+// A fresh Document (empty undo history) with the file's layers, order, names, visibility, opacity and pixels; nullopt if unreadable.
+std::optional<Document> readOra(const QString& path);

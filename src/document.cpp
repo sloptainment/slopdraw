@@ -61,6 +61,13 @@ int Document::addLayer() {
     return current_;
 }
 
+void Document::restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity) {
+    layers_[layer] = {visible, opacity, image.convertToFormat(QImage::Format_RGBA8888), name};
+    history_.clear();
+    applied_ = 0;
+    strokeStart_ = QImage();
+}
+
 void Document::setCurrent(int layer) {
     seal();
     current_ = layer;
