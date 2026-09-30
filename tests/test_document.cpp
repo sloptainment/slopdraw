@@ -738,6 +738,24 @@ static bool draggingNodesMovesThemTogetherAndUndoesOnce() {
     return showing && restored && oneStep;
 }
 
+// Removing selected nodes {0, 2} of a 4-node path leaves the other two; removing so that fewer than 2 remain is refused; retyping
+// selected nodes {1, 2} changes only their type. Committed through setNodes, each is one undo step.
+static bool deletingAndRetypingNodes() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 32, T::G2}, {24, 8, T::G2}, {40, 56, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
+    QImage original = doc.render();
+    auto n0 = doc.nodes(1, 0);
+    auto left = removeNodes(n0, {0, 2});
+    if (!left || left->size() != 2 || (*left)[0].x != 24 || (*left)[1].x != 56) return false;
+    if (removeNodes(n0, {0, 1, 2})) return false;
+    auto typed = retypeNodes(n0, {1, 2}, T::Corner);
+    if (typed[0].type != T::G2 || typed[1].type != T::Corner || typed[2].type != T::Corner || typed[3].type != T::G2 || typed[2].x != 40) return false;
+    if (!doc.setNodes(1, 0, *left, false) || doc.render() == original) return false;
+    return doc.undo() && doc.render() == original;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -833,6 +851,7 @@ int main() {
     run("draggingAKnotProjectsAndUndoesOnce", draggingAKnotProjectsAndUndoesOnce);
     run("duplicatingAndDeletingKnots", duplicatingAndDeletingKnots);
     run("draggingNodesMovesThemTogetherAndUndoesOnce", draggingNodesMovesThemTogetherAndUndoesOnce);
+    run("deletingAndRetypingNodes", deletingAndRetypingNodes);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     return failed != 0;

@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <optional>
 #include <set>
 #include <vector>
 #include "document.h"
@@ -31,5 +32,21 @@ struct SpiroPen {
 inline std::vector<SpiroNode> moveNodes(std::vector<SpiroNode> nodes, const std::set<int>& selected, QPointF d) {
     for (int i : selected)
         if (i >= 0 && i < int(nodes.size())) { nodes[i].x += d.x(); nodes[i].y += d.y(); }
+    return nodes;
+}
+
+// The nodes without those at the selected indexes (Node tool Delete, #141); nullopt if fewer than 2 would remain.
+inline std::optional<std::vector<SpiroNode>> removeNodes(const std::vector<SpiroNode>& nodes, const std::set<int>& selected) {
+    std::vector<SpiroNode> kept;
+    for (int i = 0; i < int(nodes.size()); i++)
+        if (!selected.count(i)) kept.push_back(nodes[i]);
+    if (kept.size() < 2) return std::nullopt;
+    return kept;
+}
+
+// The nodes with those at the selected indexes set to type t (Tool Options picker, #141).
+inline std::vector<SpiroNode> retypeNodes(std::vector<SpiroNode> nodes, const std::set<int>& selected, SpiroType t) {
+    for (int i : selected)
+        if (i >= 0 && i < int(nodes.size())) nodes[i].type = t;
     return nodes;
 }

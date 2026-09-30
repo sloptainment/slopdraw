@@ -46,8 +46,12 @@ public:
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
-    void setNodeType(SpiroType t) { pen_.type = t; }
-    std::function<void(bool)> onToolChange;  // fired with whether the Spiro Pen is now the tool, so the Tool Options dock can follow
+    // Sets the Spiro Pen's type; in the Select tool it also retypes the selected nodes (one undo step).
+    void setNodeType(SpiroType t) {
+        pen_.type = t;
+        if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(doc_.nodes(doc_.current(), selected_), nodeSel_, t));
+    }
+    std::function<void(bool)> onToolChange;  // fired with whether the Spiro Pen or Select tool is now the tool, so the Tool Options dock can follow
     // Swaps the brush; color, size and opacity carry over (the dock's sliders are global, not per brush).
     void setBrush(const QString& mybPath) {
         auto b = loadBrush(mybPath);
@@ -169,7 +173,11 @@ protected:
         else if (e->key() == Qt::Key_P) { spiroTool_ = true; fillTool_ = selectTool_ = false; }
         else if (e->key() == Qt::Key_V) { selectTool_ = true; selected_ = -1; nodeSel_.clear(); fillTool_ = spiroTool_ = false; update(); }
         else if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) finishPath(e->modifiers() & Qt::ShiftModifier);
-        else if (e->key() == Qt::Key_Backspace) { pen_.backspace(); update(); }
+        else if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
+            if (selectTool_) deleteSelectedNodes();
+            else pen_.backspace();
+            update();
+        }
         else if (e->key() == Qt::Key_Escape) { pen_.cancel(); update(); }
         else if (e->key() == Qt::Key_E) eraseMode_ = !eraseMode_;
         else if (e->key() == Qt::Key_M) { view_.mirrorAt(rect().center()); update(); }
@@ -180,7 +188,7 @@ protected:
             update();
             if (onLayersChange) onLayersChange();
         }
-        if (onToolChange) onToolChange(spiroTool_);
+        if (onToolChange) onToolChange(spiroTool_ || selectTool_);
     }
     void keyReleaseEvent(QKeyEvent* e) override {
         if (!e->isAutoRepeat() && e->key() == Qt::Key_Space) space_ = false;
@@ -221,6 +229,19 @@ private:
             pathBefore_ = doc_.paths(doc_.current())[selected_];
         }
         update();
+    }
+    // Replaces the selected path's nodes with one undo step; a set with no curve is refused and leaves the path as it was.
+    void editNodes(const std::vector<SpiroNode>& nodes) {
+        doc_.setNodes(doc_.current(), selected_, nodes, doc_.paths(doc_.current())[selected_].closed);
+        update();
+    }
+    // Delete: drops the selected nodes unless fewer than 2 would remain.
+    void deleteSelectedNodes() {
+        if (selected_ < 0 || nodeSel_.empty()) return;
+        if (auto kept = removeNodes(doc_.nodes(doc_.current(), selected_), nodeSel_)) {
+            editNodes(*kept);
+            nodeSel_.clear();
+        }
     }
     // The selected nodes follow the pointer live (no undo step yet).
     void dragNodesTo(QPointF pos) {
@@ -490,7 +511,7 @@ int main(int argc, char** argv) {
     window.addDockWidget(Qt::RightDockWidgetArea, layerDock);
     refresh();
 
-    // Tool Options dock (#58): shows the Spiro Node type picker while the Spiro Pen is the tool, empty otherwise.
+    // Tool Options dock (#58): shows the Spiro Node type picker while the Spiro Pen or Select tool is the tool, empty otherwise.
     auto* nodeTypes = new QListWidget;
     for (const auto& t : kNodeTypes) nodeTypes->addItem(t.name);
     nodeTypes->setCurrentRow(2);  // G2, SpiroPen's starting type
