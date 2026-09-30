@@ -35,6 +35,10 @@ public:
     // Replaces path `path` of Vector Layer `layer` with these Width Knots (t = cubic index + fraction, full width) and redraws it; one undo step.
     // Returns false, changing nothing, for a Raster Layer, a bad path index or an empty knot list.
     bool setKnots(int layer, int path, const std::vector<WidthKnot>& knots);
+    // The topmost path of Vector Layer `layer` whose Spiro curve passes within tol of p, or -1 (also for a Raster Layer).
+    int pathAt(int layer, QPointF p, double tol) const;
+    // Where each Width Knot of a path is drawn: its point on the curve moved half the knot's width along the left normal (-ty, tx); empty for a bad layer or path index.
+    std::vector<QPointF> knotHandles(int layer, int path) const;
     int layerCount() const { return int(layers_.size()); }
     int current() const { return current_; }
     bool visible(int layer) const { return layers_[layer].visible; }

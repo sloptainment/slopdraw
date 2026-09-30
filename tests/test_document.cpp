@@ -573,6 +573,20 @@ static bool setKnotsRedrawsAndUndoes() {
     return set && same && differs && undone && redone && refused;
 }
 
+// On a straight 3-node path at y=32 (width 8, knots at both ends): pathAt finds the path for a point on the curve and none off it or
+// on a Raster Layer; knotHandles puts each knot half a width to the side of its path point.
+static bool selectingAPathShowsItsKnotHandles() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 32, T::G2}, {32, 32, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
+    auto near = [](QPointF a, QPointF b) { return std::abs(a.x() - b.x()) < 1e-6 && std::abs(a.y() - b.y()) < 1e-6; };
+    auto h = doc.knotHandles(1, 0);
+    bool hit = doc.pathAt(1, {30, 33}, 3) == 0 && doc.pathAt(1, {30, 40}, 3) == -1 && doc.pathAt(0, {30, 32}, 3) == -1;
+    bool handles = h.size() == 2 && near(h[0], {8, 36}) && near(h[1], {56, 36});
+    return hit && handles;
+}
+
 // A closed 4-node square path (width 12) is a ring: the stroke is black at the node (8,8) and the hole at the centre stays white.
 static bool closedPathIsARing() {
     using T = SpiroType;
@@ -670,6 +684,7 @@ int main() {
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
     run("closedPathIsARing", closedPathIsARing);
     run("setKnotsRedrawsAndUndoes", setKnotsRedrawsAndUndoes);
+    run("selectingAPathShowsItsKnotHandles", selectingAPathShowsItsKnotHandles);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     return failed != 0;

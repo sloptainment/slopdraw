@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPainterPathStroker>
 #include "powerstroke.h"
 #include <cstring>
 
@@ -119,6 +120,39 @@ bool Document::setKnots(int layer, int path, const std::vector<WidthKnot>& knots
     push(s);
     apply(s, false);
     return true;
+}
+
+int Document::pathAt(int layer, QPointF p, double tol) const {
+    if (!layers_[layer].vector) return -1;
+    for (int i = int(layers_[layer].paths.size()); i-- > 0;) {
+        const VPath& v = layers_[layer].paths[i];
+        QPainterPath curve = *spiroToPath(v.nodes, v.closed);
+        QPainterPathStroker stroker;
+        stroker.setWidth(2 * tol);
+        if (stroker.createStroke(curve).contains(p)) return i;
+    }
+    return -1;
+}
+
+std::vector<QPointF> Document::knotHandles(int layer, int path) const {
+    if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return {};
+    const VPath& v = layers_[layer].paths[path];
+    std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
+    int n = int(skeleton.size());
+    auto at = [&](double t) {  // the skeleton point at path time t
+        int i = std::clamp(int(t), 0, n - 1);
+        double u = t - i, w = 1 - u;
+        const Cubic& c = skeleton[i];
+        return c[0] * (w * w * w) + c[1] * (3 * w * w * u) + c[2] * (3 * w * u * u) + c[3] * (u * u * u);
+    };
+    std::vector<QPointF> out;
+    for (const WidthKnot& k : v.knots) {
+        double e = 1e-3;  // the tangent from nearby points, since a line's end control points coincide with its ends
+        QPointF d = at(std::min<double>(k.t + e, n)) - at(std::max(k.t - e, 0.0));
+        double len = std::hypot(d.x(), d.y());
+        out.push_back(at(k.t) + QPointF(-d.y(), d.x()) * (k.width / 2 / len));
+    }
+    return out;
 }
 
 void Document::rasterize(Layer& l) {
