@@ -3,7 +3,9 @@
 #include <cstdio>
 #include "brush.h"
 #include "document.h"
+#include "powerstroke.h"
 #include "spiro.h"
+#include "powerstroke_fixtures.h"
 #include "spiro_fixtures.h"
 #include "view.h"
 
@@ -275,6 +277,14 @@ static bool secondStrokeDoesNotJoinFirst() {
     return doc.undo() && doc.render() == first;
 }
 
+// Width at sampled path times matches slopfont's widthAt, including knots only at the ends (uniform between tapered zero caps).
+static bool widthAtMatchesSlopfont() {
+    for (const auto& f : kWidthFixtures)
+        for (const auto& row : f.out)
+            if (std::abs(widthAt(f.knots, row[0], f.n, f.closed) - row[1]) > 1e-6) return false;
+    return true;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -300,5 +310,6 @@ int main() {
     run("brushColorPaintsInThatColor", brushColorPaintsInThatColor);
     run("brushRadiusAndOpacityChangeTheStroke", brushRadiusAndOpacityChangeTheStroke);
     run("secondStrokeDoesNotJoinFirst", secondStrokeDoesNotJoinFirst);
+    run("widthAtMatchesSlopfont", widthAtMatchesSlopfont);
     return failed != 0;
 }
