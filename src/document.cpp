@@ -455,6 +455,19 @@ void Document::fill(const QColor& color, const std::vector<QPointF>& points, boo
     seal();  // its own step, so a live stroke after it starts fresh
 }
 
+bool Document::clearRect(const QRect& rect) {
+    if (layers_[current_].vector) return false;
+    seal();
+    history_.resize(applied_);  // a new edit discards the redo branch
+    strokeStart_ = layers_[current_].image;
+    QPainter p(&layers_[current_].image);
+    p.setCompositionMode(QPainter::CompositionMode_Source);
+    p.fillRect(rect, current_ == 0 ? QColor(Qt::white) : QColor(Qt::transparent));
+    p.end();
+    seal();  // its own step; a rect that changed nothing pushes none
+    return true;
+}
+
 void Document::seal() {
     if (strokeStart_.isNull()) return;
     // ponytail: full-layer diff once per stroke; upgrade to dirty rects from the dab callback if it shows up in a profile

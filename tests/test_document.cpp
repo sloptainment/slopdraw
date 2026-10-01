@@ -861,7 +861,9 @@ static bool toolFollowsLayerKind() {
         && toolForLayer(false, NodeKnotEditTool, LassoFillTool, NodeKnotEditTool) == LassoFillTool
         && toolForLayer(true, LassoFillTool, LassoFillTool, NodeKnotEditTool) == NodeKnotEditTool
         && toolForLayer(false, LassoFillTool) == LassoFillTool && toolForLayer(true, NodeKnotEditTool) == NodeKnotEditTool
-        && toolForLayer(false, SelectTool) == SelectTool && toolForLayer(true, SelectTool) == SelectTool;  // Select fits both kinds (#221)
+        && toolForLayer(false, SelectTool) == SelectTool && toolForLayer(true, SelectTool) == SelectTool  // Select fits both kinds (#221)
+        && toolForLayer(false, BoxSelectTool) == BoxSelectTool && toolForLayer(true, BoxSelectTool) == SpiroPenTool  // Box Select fits Raster Layers only (#204)
+        && toolForLayer(true, BoxSelectTool, BrushTool, NodeKnotEditTool) == NodeKnotEditTool;
 }
 
 // rasterizeLayer turns a Vector Layer into a Raster Layer with the same pixels, name, visibility and opacity and no paths; one undo
@@ -914,6 +916,27 @@ static bool boxPicksThePathsItTouches() {
     rest.erase(rest.begin(), rest.begin() + 2);
     bool deleted = doc.setPaths(1, rest) && doc.paths(1).size() == 1 && doc.undo() && doc.paths(1).size() == 3 && doc.render() == all;
     return two && deleted;
+}
+
+// clearRect clears a rectangle of the current Raster Layer: transparent on an added layer, white on the background, outside pixels
+// untouched; one undo restores the exact pixels, redo clears again; a Vector Layer is refused and pushes no step.
+static bool clearingARectangleUndoesOnce() {
+    Document doc(QSize(64, 64));
+    doc.fill(Qt::red, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});  // paints the background
+    doc.addLayer();
+    doc.fill(Qt::blue, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+    QImage before = doc.image(1);
+    bool cleared = doc.clearRect(QRect(10, 20, 8, 6)) && doc.image(1).pixelColor(12, 22).alpha() == 0 && doc.image(1).pixelColor(9, 22) == QColor(Qt::blue)
+        && doc.image(1).pixelColor(18, 22) == QColor(Qt::blue) && doc.image(1).pixelColor(12, 26) == QColor(Qt::blue) && doc.image(1).pixelColor(12, 19) == QColor(Qt::blue);
+    QImage after = doc.image(1);
+    bool undone = doc.undo() && doc.image(1) == before;
+    bool redone = doc.redo() && doc.image(1) == after;
+    doc.setCurrent(0);
+    QImage bg = doc.image(0);
+    bool white = doc.clearRect(QRect(0, 0, 4, 4)) && doc.image(0).pixelColor(1, 1) == QColor(Qt::white) && doc.image(0).pixelColor(4, 1) == QColor(Qt::red) && doc.undo() && doc.image(0) == bg;
+    doc.addVectorLayer();
+    bool refused = !doc.clearRect(QRect(0, 0, 4, 4)) && doc.undo() && doc.layerCount() == 2;
+    return cleared && undone && redone && white && refused;
 }
 
 int main() {
@@ -977,5 +1000,6 @@ int main() {
     run("settingPathsUndoesOnce", settingPathsUndoesOnce);
     run("rasterizingAVectorLayerUndoesOnce", rasterizingAVectorLayerUndoesOnce);
     run("boxPicksThePathsItTouches", boxPicksThePathsItTouches);
+    run("clearingARectangleUndoesOnce", clearingARectangleUndoesOnce);
     return failed != 0;
 }

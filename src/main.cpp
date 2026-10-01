@@ -44,7 +44,7 @@
 class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
-    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); selected_ = -1; nodeSel_.clear(); picked_.clear(); update(); if (onLayersChange) onLayersChange(); }
+    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); selected_ = -1; nodeSel_.clear(); picked_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return doc_; }
     bool hasDoc() const { return !doc_.image(0).isNull(); }  // the app starts on Document(QSize()), which has no pixels (#157)
     std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
@@ -63,9 +63,9 @@ public:
     }
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
     std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
-    // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_: picks and deletes whole paths).
+    // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_: picks and deletes whole paths), 5 Box Select (boxTool_).
     void setTool(int t) {
-        fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4;
+        fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4; boxTool_ = t == 5;
         if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
         picked_.clear();
         boxing_ = false;
@@ -78,13 +78,14 @@ public:
         selected_ = -1;
         nodeSel_.clear();
         picked_.clear();
+        box_ = QRect();
         update();
         if (onLayersChange) onLayersChange();
     }
     void mirror() { view_.mirrorAt(rect().center()); update(); }
     // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
-    bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && !objectTool_ && eraseBrush_; }
-    void setErase(bool on) { if (!spiroTool_ && !selectTool_ && !objectTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
+    bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && eraseBrush_; }
+    void setErase(bool on) { if (!spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
     void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
     void finishPath(bool closed) {
         if (spiroTool_) pen_.finish(doc_, closed, color_, pathWidth_);  // refused on a Raster Layer
@@ -102,6 +103,7 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override {
+        if (boxLayer_ != doc_.current()) box_ = QRect();  // a layer switch clears the Box Select rectangle
         QString h = hint();  // every tool or state change calls update(), so paint is where a change of hint is noticed
         if (h != hint_) { hint_ = h; if (onHint) onHint(h); }
         QPainter p(this);
@@ -171,7 +173,15 @@ protected:
                 p.drawRect(QRectF(boxStart_, view_.toDoc(*cursor_)).normalized());
             }
         }
-        if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_) {  // brush outline: dark with a light line beside it, readable on any color
+        QRectF marked = boxTool_ && boxing_ && cursor_ ? QRectF(boxStart_, view_.toDoc(*cursor_)).normalized() : QRectF(box_);  // Box Select: the rectangle, or the one being dragged
+        if (!marked.isEmpty()) {
+            QPen pen(Qt::blue, 1, Qt::DashLine);
+            pen.setCosmetic(true);
+            p.setPen(pen);
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(marked);
+        }
+        if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) {  // brush outline: dark with a light line beside it, readable on any color
             p.resetTransform();
             p.setRenderHint(QPainter::Antialiasing);
             double r = view_.screenRadius(radius());
@@ -185,15 +195,16 @@ protected:
     void mousePressEvent(QMouseEvent* e) override {
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
-        resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && !objectTool_ && (e->modifiers() & Qt::ShiftModifier);
+        resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && !objectTool_ && !boxTool_ && (e->modifiers() & Qt::ShiftModifier);
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier) && !editKnot(e->position(), e->modifiers())) pickAt(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) return;
         else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
         else if (e->button() == Qt::LeftButton && !space_ && objectTool_) objectPress(e->position(), e->modifiers());
+        else if (e->button() == Qt::LeftButton && !space_ && boxTool_) boxPress(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && spiroTool_) spiroClick(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), erase());
-        else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && !objectTool_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
+        else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && !objectTool_ && !boxTool_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
     }
     void mouseMoveEvent(QMouseEvent* e) override {
         if (!resizing_) cursor_ = e->position();  // the circle stays at the press point while Shift+drag resizes
@@ -221,13 +232,14 @@ protected:
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
         if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); endBox(); painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
-        else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
+        else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); }
         else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); }
+        else if (boxTool_) { if (e->type() == QEvent::TabletPress) boxPress(e->position()); }
         else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position()); } }  // the barrel button arrives as right (#178)
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), erase() || eraser);
-        else if (!objectTool_ && (e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
+        else if (!objectTool_ && !boxTool_ && (e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
                     eraser);  // the flag is per call (b20)
     }
@@ -242,10 +254,11 @@ protected:
         else if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
             if (selectTool_) deleteSelectedNodes();
             else if (objectTool_) deletePicked();
+            else if (boxTool_) deleteBox();
             else pen_.backspace();
             update();
         }
-        else if (e->key() == Qt::Key_Escape) { pen_.cancel(); update(); }
+        else if (e->key() == Qt::Key_Escape) { pen_.cancel(); box_ = QRect(); update(); }
     }
     void keyReleaseEvent(QKeyEvent* e) override {
         if (!e->isAutoRepeat() && e->key() == Qt::Key_Space) space_ = false;
@@ -260,6 +273,8 @@ private:
         if (selectTool_ && selected_ < 0) return "Click a path to select it";
         if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Alt+click deletes";
         if (objectTool_ && !doc_.vector(doc_.current())) return "Select does nothing on a Raster Layer";
+        if (boxTool_ && box_.isEmpty()) return "Drag a rectangle to select pixels";
+        if (boxTool_) return "Delete clears the pixels · drag a new rectangle to replace it · click outside or Esc clears the selection";
         if (objectTool_ && picked().empty()) return "Click a path to pick it · Shift+click toggles · drag a box on empty canvas picks the paths it touches";
         if (objectTool_) return QString("%1 picked · Delete removes them · click or drag a box to pick again · Shift adds").arg(picked().size());
         return "Draw · Shift+drag sizes the brush · Ctrl+click picks a color · E toggles erase";
@@ -317,13 +332,29 @@ private:
         }
         update();
     }
+    // Box Select press: starts a drag; endBox makes it the rectangle, or a click outside the old one clears it.
+    void boxPress(QPointF pos) {
+        boxing_ = true;
+        boxStart_ = view_.toDoc(pos);
+        update();
+    }
+    // Delete in Box Select: clears the rectangle's pixels on its layer (transparent, white on the background) as one undo step.
+    void deleteBox() {
+        if (box_.isEmpty() || boxLayer_ != doc_.current() || !doc_.clearRect(box_)) return;
+        update();
+        if (onLayersChange) onLayersChange();
+    }
     // Release: a box dragged more than 3 screen px picks the paths it touches (added to the pick, which a press without Shift cleared).
     void endBox() {
         if (!boxing_) return;
         boxing_ = false;
         if (cursor_) {
             QRectF box = QRectF(boxStart_, view_.toDoc(*cursor_)).normalized();
-            if (std::max(box.width(), box.height()) * view_.screenRadius(1) > 3) {
+            bool dragged = std::max(box.width(), box.height()) * view_.screenRadius(1) > 3;
+            if (boxTool_) {
+                if (dragged) { box_ = box.toAlignedRect() & doc_.image(0).rect(); boxLayer_ = doc_.current(); }
+                else if (!box_.contains(box.topLeft().toPoint())) box_ = QRect();
+            } else if (dragged) {
                 auto in = doc_.pathsIn(doc_.current(), box);
                 picked_.insert(in.begin(), in.end());
             }
@@ -474,8 +505,10 @@ private:
     int pickedLayer_ = -1;
     bool boxing_ = false;  // a Select box drag is under way
     QPointF boxStart_;  // where it began, in document coordinates
+    QRect box_;  // Box Select's rectangle in document pixels, null for none; it belongs to layer boxLayer_
+    int boxLayer_ = -1;
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
-    bool spiroTool_ = false, selectTool_ = false, objectTool_ = false;
+    bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false;
     double pathWidth_ = 10;  // px
     float lassoOpacity_ = 1;
     bool fillTool_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
@@ -761,15 +794,15 @@ int main(int argc, char** argv) {
     auto* toolPanel = new QWidget;
     auto* toolCol = new QVBoxLayout(toolPanel);
     auto* toolGroup = new QActionGroup(&window);
-    const struct { const char* text; const char* key; } kTools[] = {{"\U0001F58C Brush (B)", "B"}, {"\u2B2E Lasso Fill (F)", "F"}, {"\u2712 Spiro Pen (P)", "P"}, {"\u2316 Node/Knot edit (N)", "N"}, {"\u25AD Select (S)", "S"}};
+    const struct { const char* text; const char* key; } kTools[] = {{"\U0001F58C Brush (B)", "B"}, {"\u2B2E Lasso Fill (F)", "F"}, {"\u2712 Spiro Pen (P)", "P"}, {"\u2316 Node/Knot edit (N)", "N"}, {"\u25AD Select (S)", "S"}, {"\u2B1A Box Select", ""}};
     int lastTool[2] = {BrushTool, SpiroPenTool};  // last tool used on a Raster, a Vector Layer (#161); Select fits both, so it is no one's last
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         auto* a = toolGroup->addAction(kTools[i].text);
         a->setCheckable(true);
         a->setChecked(i == 0);
         a->setShortcut(QKeySequence(kTools[i].key));
         window.addAction(a);
-        QObject::connect(a, &QAction::triggered, [canvas, i, &lastTool] { canvas->setTool(i); if (i != SelectTool) lastTool[i >= SpiroPenTool] = i; });
+        QObject::connect(a, &QAction::triggered, [canvas, i, &lastTool] { canvas->setTool(i); if (i != SelectTool) lastTool[toolFitsKind(true, i)] = i; });
         auto* b = new QToolButton;
         b->setDefaultAction(a);
         b->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -784,7 +817,7 @@ int main(int argc, char** argv) {
         for (auto* w : {colorDock->widget(), layerPanel, optionsPanel}) w->setEnabled(has);
         for (auto* a : docActions) a->setEnabled(has);
         auto tools = toolGroup->actions();
-        for (int i = 0; i < 5; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i));
+        for (int i = 0; i < 6; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i));
         brushPanel->setEnabled(has && !vec);
         int now = toolForLayer(vec, tools.indexOf(toolGroup->checkedAction()), lastTool[0], lastTool[1]);
         if (!tools[now]->isChecked()) tools[now]->trigger();
