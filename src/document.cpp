@@ -144,7 +144,7 @@ int Document::pathAt(int layer, QPointF p, double tol) const {
         QPainterPath curve = *spiroToPath(v.nodes, v.closed);
         QPainterPathStroker stroker;
         stroker.setWidth(2 * tol);
-        if (stroker.createStroke(curve).contains(p)) return i;
+        if (stroker.createStroke(curve).contains(p) || outline(v).contains(p) || (v.closed && curve.contains(p))) return i;
     }
     return -1;
 }

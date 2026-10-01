@@ -625,6 +625,26 @@ static bool selectingAPathShowsItsKnotHandles() {
     return hit && handles;
 }
 
+// On a straight 3-node path at y=32 drawn 40 wide: pathAt hits 15 px off the centre line, inside the drawn stroke, with the 3 px band alone missing it.
+static bool wideStrokeIsHitInsideItsBody() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 32, T::G2}, {32, 32, T::G2}, {56, 32, T::G2}}, false, Qt::black, 40);
+    return doc.pathAt(1, {30, 47}, 3) == 0 && doc.pathAt(1, {30, 60}, 3) == -1;
+}
+
+// A closed 4-node square (8 wide, the Spiro curve bulging round it) is hit deep inside it, where the ring is not drawn; a thin open path (width 2) is still hit
+// within 3 px of its centre line, and a point clear of both is not.
+static bool closedPathIsHitInsideAndThinPathStaysHittable() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{10, 10, T::G2}, {40, 10, T::G2}, {40, 40, T::G2}, {10, 40, T::G2}}, true, Qt::black, 8);
+    doc.addPath({{8, 60, T::G2}, {32, 60, T::G2}, {56, 60, T::G2}}, false, Qt::black, 2);
+    return doc.pathAt(1, {25, 25}, 3) == 0 && doc.pathAt(1, {30, 62}, 3) == 1 && doc.pathAt(1, {30, 54}, 3) == -1 && doc.pathAt(1, {2, 2}, 3) == -1;
+}
+
 // On a 3-node path at y=32: nodeAt returns the index of the node within tol of a point (the nearest when two qualify), -1 for none,
 // for a bad path and on a Raster Layer.
 static bool nodeAtFindsTheNodeUnderAPoint() {
@@ -856,6 +876,8 @@ int main() {
     run("setKnotsRedrawsAndUndoes", setKnotsRedrawsAndUndoes);
     run("setNodesRedrawsAndUndoes", setNodesRedrawsAndUndoes);
     run("selectingAPathShowsItsKnotHandles", selectingAPathShowsItsKnotHandles);
+    run("wideStrokeIsHitInsideItsBody", wideStrokeIsHitInsideItsBody);
+    run("closedPathIsHitInsideAndThinPathStaysHittable", closedPathIsHitInsideAndThinPathStaysHittable);
     run("nodeAtFindsTheNodeUnderAPoint", nodeAtFindsTheNodeUnderAPoint);
     run("draggingAKnotProjectsAndUndoesOnce", draggingAKnotProjectsAndUndoesOnce);
     run("duplicatingAndDeletingKnots", duplicatingAndDeletingKnots);
