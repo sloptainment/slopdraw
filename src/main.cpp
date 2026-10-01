@@ -517,16 +517,6 @@ int main(int argc, char** argv) {
     auto* brushPanel = new QWidget;
     auto* col = new QVBoxLayout(brushPanel);
     col->addWidget(brushList);
-    col->addWidget(new QLabel("Size"));
-    auto* sizeRow = new QHBoxLayout;
-    sizeRow->addWidget(size);
-    sizeRow->addWidget(sizeValue);
-    col->addLayout(sizeRow);
-    col->addWidget(new QLabel("Opacity"));
-    auto* opacityRow = new QHBoxLayout;
-    opacityRow->addWidget(opacity);
-    opacityRow->addWidget(opacityValue);
-    col->addLayout(opacityRow);
     auto* brushDock = new QDockWidget("Brushes", &window);
     brushDock->setWidget(brushPanel);
 
@@ -625,6 +615,19 @@ int main(int argc, char** argv) {
 
     // Tool Options dock (#58, #171): Erase for Brush and Lasso Fill, path width and node picker for the Spiro Pen, node picker for Node/Knot edit.
     auto* eraseBox = new QCheckBox("Erase");
+    auto* brushBox = new QWidget;  // the global Size and Opacity sliders (#209), for the Brush only
+    auto* brushBoxCol = new QVBoxLayout(brushBox);
+    brushBoxCol->setContentsMargins(0, 0, 0, 0);
+    brushBoxCol->addWidget(new QLabel("Size"));
+    auto* sizeRow = new QHBoxLayout;
+    sizeRow->addWidget(size);
+    sizeRow->addWidget(sizeValue);
+    brushBoxCol->addLayout(sizeRow);
+    brushBoxCol->addWidget(new QLabel("Opacity"));
+    auto* opacityRow = new QHBoxLayout;
+    opacityRow->addWidget(opacity);
+    opacityRow->addWidget(opacityValue);
+    brushBoxCol->addLayout(opacityRow);
     auto* widthBox = new QWidget;
     auto* widthRow = new QHBoxLayout(widthBox);
     widthRow->setContentsMargins(0, 0, 0, 0);
@@ -642,6 +645,7 @@ int main(int argc, char** argv) {
     QObject::connect(nodeTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->setNodeType(kNodeTypes[row].type); });
     auto showOptions = [=](int tool) {
         eraseBox->setVisible(tool <= LassoFillTool);
+        brushBox->setVisible(tool == BrushTool);
         widthBox->setVisible(tool == SpiroPenTool);
         nodeTypes->setVisible(tool >= SpiroPenTool);
     };
@@ -650,6 +654,7 @@ int main(int argc, char** argv) {
     auto* optionsPanel = new QWidget;
     auto* optionsCol = new QVBoxLayout(optionsPanel);
     optionsCol->addWidget(eraseBox);
+    optionsCol->addWidget(brushBox);
     optionsCol->addWidget(widthBox);
     optionsCol->addWidget(nodeTypes);
     auto* optionsDock = new QDockWidget("Tool Options", &window);
