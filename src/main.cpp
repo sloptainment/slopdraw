@@ -53,6 +53,7 @@ public:
     std::function<void(const QColor&)> onColorPick;  // fired after Ctrl+click so the Color dock can follow
     void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); update(); }
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
+    void setLassoOpacity(float o) { lassoOpacity_ = o; }  // Lasso Fill's own, apart from the Brush's (#213)
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
     // Sets the Spiro Pen's type; in the Select tool it also retypes the selected nodes (one undo step).
@@ -367,7 +368,9 @@ private:
     void endLasso() {
         if (!lassoing_) return;
         lassoing_ = false;
-        if (lasso_.size() > 2) doc_.fill(color_, {lasso_.begin(), lasso_.end()}, lassoErase_);
+        QColor c = color_;
+        c.setAlphaF(lassoOpacity_);
+        if (lasso_.size() > 2) doc_.fill(c, {lasso_.begin(), lasso_.end()}, lassoErase_);
         lasso_.clear();
         update();
     }
@@ -399,6 +402,7 @@ private:
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false;
     double pathWidth_ = 10;  // px
+    float lassoOpacity_ = 1;
     bool fillTool_ = false, eraseMode_ = false, lassoing_ = false, lassoErase_ = false;
 };
 
@@ -628,6 +632,17 @@ int main(int argc, char** argv) {
     opacityRow->addWidget(opacity);
     opacityRow->addWidget(opacityValue);
     brushBoxCol->addLayout(opacityRow);
+    auto* lassoBox = new QWidget;  // Lasso Fill's own Opacity (#212), starting solid
+    auto* lassoRow = new QHBoxLayout(lassoBox);
+    lassoRow->setContentsMargins(0, 0, 0, 0);
+    auto* lassoOpacity = new QSlider(Qt::Horizontal);  // percent
+    lassoOpacity->setRange(1, 100);
+    auto* lassoOpacityValue = new QLabel;
+    QObject::connect(lassoOpacity, &QSlider::valueChanged, [canvas, lassoOpacityValue](int v) { canvas->setLassoOpacity(v / 100.f); lassoOpacityValue->setText(QString("%1 %").arg(v)); });
+    lassoOpacity->setValue(100);
+    lassoRow->addWidget(new QLabel("Opacity"));
+    lassoRow->addWidget(lassoOpacity);
+    lassoRow->addWidget(lassoOpacityValue);
     auto* widthBox = new QWidget;
     auto* widthRow = new QHBoxLayout(widthBox);
     widthRow->setContentsMargins(0, 0, 0, 0);
@@ -646,6 +661,7 @@ int main(int argc, char** argv) {
     auto showOptions = [=](int tool) {
         eraseBox->setVisible(tool <= LassoFillTool);
         brushBox->setVisible(tool == BrushTool);
+        lassoBox->setVisible(tool == LassoFillTool);
         widthBox->setVisible(tool == SpiroPenTool);
         nodeTypes->setVisible(tool >= SpiroPenTool);
     };
@@ -655,6 +671,7 @@ int main(int argc, char** argv) {
     auto* optionsCol = new QVBoxLayout(optionsPanel);
     optionsCol->addWidget(eraseBox);
     optionsCol->addWidget(brushBox);
+    optionsCol->addWidget(lassoBox);
     optionsCol->addWidget(widthBox);
     optionsCol->addWidget(nodeTypes);
     auto* optionsDock = new QDockWidget("Tool Options", &window);

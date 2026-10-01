@@ -423,7 +423,7 @@ void Document::fill(const QColor& color, const std::vector<QPointF>& points, boo
     QPainter p(&layers_[current_].image);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
-    p.fillPath(path, eraser ? Qt::white : color);
+    p.fillPath(path, eraser ? QColor(255, 255, 255, color.alpha()) : color);
     p.end();
     seal();  // its own step, so a live stroke after it starts fresh
 }

@@ -378,6 +378,21 @@ static bool fillsFigureEightAndErases() {
     return loops && edge > 0 && edge < 255 && same && erased && undone && star.colorAt({32, 32}) == Qt::black;
 }
 
+// A fill at a colour's alpha lands that translucent, and erase mode at an alpha moves pixels part-way to white (#212).
+static bool fillHonoursAlpha() {
+    const std::vector<QPointF> square = {{8, 8}, {56, 8}, {56, 56}, {8, 56}};
+    Document doc(QSize(64, 64));
+    doc.fill(QColor(0, 0, 0, 128), square);
+    int half = doc.colorAt({32, 32}).red();  // black at 50% over white
+    Document black(QSize(64, 64));
+    black.addLayer();
+    black.fill(Qt::black, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+    black.fill(QColor(255, 255, 255, 128), square, true);
+    int grey = black.colorAt({32, 32}).red();  // moved halfway toward white
+    black.fill(QColor(255, 255, 255, 255), square, true);
+    return half > 100 && half < 156 && grey > 100 && grey < 156 && black.colorAt({32, 32}) == Qt::white && black.undo() && black.colorAt({32, 32}).red() == grey;
+}
+
 // A stroke on an added layer lands on it alone: hiding it leaves the blank white render, showing it reads the single-layer golden's gray at (53,34).
 static bool strokeLandsOnCurrentLayerOnly() {
     auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
@@ -899,6 +914,7 @@ int main() {
     run("closedSkeletonJoinsWrapAround", closedSkeletonJoinsWrapAround);
     run("dragResizesRadiusWithinRange", dragResizesRadiusWithinRange);
     run("fillsFigureEightAndErases", fillsFigureEightAndErases);
+    run("fillHonoursAlpha", fillHonoursAlpha);
     run("strokeLandsOnCurrentLayerOnly", strokeLandsOnCurrentLayerOnly);
     run("compositeOfThreeLayersMatchesGolden", compositeOfThreeLayersMatchesGolden);
     run("layerOpsUndoAndRedoInOneHistory", layerOpsUndoAndRedoInOneHistory);
