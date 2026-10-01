@@ -53,9 +53,10 @@ public:
     // Replaces path `path` of Vector Layer `layer` with these Width Knots (t = cubic index + fraction, full width) and redraws it; one undo step.
     // Returns false, changing nothing, for a Raster Layer, a bad path index or an empty knot list.
     bool setKnots(int layer, int path, const std::vector<WidthKnot>& knots);
-    // Replaces the Spiro Nodes (and closed flag) of path `path` of Vector Layer `layer` and redraws it; one undo step. Knots stay as stored.
+    // Replaces the Spiro Nodes (and closed flag) of path `path` of Vector Layer `layer` and redraws it; one undo step. Knots stay as stored
+    // unless a non-empty `knots` replaces them in the same step.
     // Returns false, changing nothing, for a Raster Layer, a bad path index or nodes that give no curve (see spiroToPath).
-    bool setNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed);
+    bool setNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed, const std::vector<WidthKnot>& knots = {});
     // Turns Vector Layer `layer` into a Raster Layer keeping its pixels, name, visibility and opacity, and drops its paths; one undo step
     // that gives the editable Vector Layer back. Returns false, changing nothing, for a Raster Layer or a bad index.
     bool rasterizeLayer(int layer);
@@ -79,6 +80,9 @@ public:
     // Adds a Width Knot at the path point nearest p, with the width the stroke has there (so a flat stretch renders unchanged); one undo step.
     // Returns false, changing nothing, for a Raster Layer or a bad path index.
     bool addKnot(int layer, int path, QPointF p);
+    // Inserts a Spiro Node of `type` at the path point nearest p; the Width Knots move with their stretch of path; one undo step.
+    // Returns false, changing nothing, for a Raster Layer, a bad path index, or a point on an existing node.
+    bool addNode(int layer, int path, QPointF p, SpiroType type);
     // Like setKnots but only redraws: no undo step, no checks beyond the indexes. For live dragging; finish with setKnots.
     void previewKnots(int layer, int path, const std::vector<WidthKnot>& knots);
     // Like setNodes but only redraws: no undo step; a node set with no curve leaves the path as it was. For live dragging; finish with setNodes.

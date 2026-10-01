@@ -122,7 +122,7 @@ bool Document::setKnots(int layer, int path, const std::vector<WidthKnot>& knots
     return true;
 }
 
-bool Document::setNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed) {
+bool Document::setNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed, const std::vector<WidthKnot>& knots) {
     if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size()) || !spiroToPath(nodes, closed)) return false;
     seal();
     Step s;
@@ -132,6 +132,7 @@ bool Document::setNodes(int layer, int path, const std::vector<SpiroNode>& nodes
     s.paths = {layers_[layer].paths[path], layers_[layer].paths[path]};
     s.paths[1].nodes = nodes;
     s.paths[1].closed = closed;
+    if (!knots.empty()) s.paths[1].knots = knots;
     push(s);
     apply(s, false);
     return true;
@@ -230,10 +231,7 @@ std::vector<WidthKnot> Document::knots(int layer, int path) const {
 }
 
 // ponytail: samples each cubic then ternary-searches around the best sample; a far-off pointer between two lobes may pick the other one
-std::optional<WidthKnot> Document::projectKnot(int layer, int path, QPointF p) const {
-    if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return std::nullopt;
-    const VPath& v = layers_[layer].paths[path];
-    std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
+static double projectT(const std::vector<Cubic>& skeleton, QPointF p) {
     auto dist2 = [&](double t) { QPointF d = skeletonAt(skeleton, t) - p; return d.x() * d.x() + d.y() * d.y(); };
     const int steps = 32;
     double n = skeleton.size(), best = 0;
@@ -245,7 +243,14 @@ std::optional<WidthKnot> Document::projectKnot(int layer, int path, QPointF p) c
         if (dist2(a) < dist2(b)) hi = b;
         else lo = a;
     }
-    double t = (lo + hi) / 2;
+    return (lo + hi) / 2;
+}
+
+std::optional<WidthKnot> Document::projectKnot(int layer, int path, QPointF p) const {
+    if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return std::nullopt;
+    const VPath& v = layers_[layer].paths[path];
+    std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
+    double t = projectT(skeleton, p);
     QPointF d = p - skeletonAt(skeleton, t), nrm = leftNormal(skeleton, t);
     return WidthKnot{t, 2 * (d.x() * nrm.x() + d.y() * nrm.y())};
 }
@@ -258,6 +263,30 @@ bool Document::addKnot(int layer, int path, QPointF p) {
     k->width = widthAt(knots, k->t, int(skeletonOf(v.nodes, v.closed).size()), v.closed);
     knots.insert(std::upper_bound(knots.begin(), knots.end(), *k, [](auto& a, auto& b) { return a.t < b.t; }), *k);
     return setKnots(layer, path, knots);
+}
+
+// A knot's t counts cubics, and Spiro splits a sharp segment into several, so the segment under p is found by where the skeleton passes
+// through each node. Re-solving reshapes and recounts the cubics, so each knot is put back at the point it was on.
+bool Document::addNode(int layer, int path, QPointF p, SpiroType type) {
+    auto k = projectKnot(layer, path, p);
+    if (!k) return false;
+    const VPath& v = layers_[layer].paths[path];
+    std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
+    std::vector<int> at{0};  // at[j]: the cubic index where node j sits
+    for (int c = 0; c < int(skeleton.size()) && at.size() < v.nodes.size(); c++)
+        if (QLineF(skeleton[c][3], QPointF(v.nodes[at.size()].x, v.nodes[at.size()].y)).length() < 1e-6) at.push_back(c + 1);
+    int s = std::min(int(std::upper_bound(at.begin(), at.end(), k->t) - at.begin()) - 1, int(v.nodes.size()) - (v.closed ? 1 : 2));
+    QPointF pt = skeletonAt(skeleton, k->t);
+    for (const SpiroNode& n : v.nodes)
+        if (QLineF(pt, QPointF(n.x, n.y)).length() < 1e-3) return false;  // on a node: Spiro would take two coincident nodes
+    auto nodes = v.nodes;
+    nodes.insert(nodes.begin() + s + 1, {pt.x(), pt.y(), type});
+    if (!spiroToPath(nodes, v.closed)) return false;
+    std::vector<Cubic> fresh = skeletonOf(nodes, v.closed);
+    auto knots = v.knots;
+    for (WidthKnot& w : knots)
+        w.t = w.t <= 0 ? 0 : w.t >= skeleton.size() ? double(fresh.size()) : projectT(fresh, skeletonAt(skeleton, w.t));
+    return setNodes(layer, path, nodes, v.closed, knots);
 }
 
 void Document::previewKnots(int layer, int path, const std::vector<WidthKnot>& knots) {

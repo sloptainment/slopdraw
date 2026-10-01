@@ -64,6 +64,7 @@ public:
     void setNodeType(SpiroType t) { pen_.type = t; }  // the Spiro Pen's, for new nodes (#215)
     // Node/Knot edit's picker: retypes the selected nodes (one undo step); the pen's type is left alone.
     void retypeSelected(SpiroType t) {
+        editType_ = t;
         if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(doc_.nodes(doc_.current(), selected_), nodeSel_, t));
     }
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
@@ -294,7 +295,7 @@ private:
         if (spiroTool_ && pen_.nodes.empty()) return "Click places the first node";
         if (spiroTool_) return "Click adds a node · Enter or right-click finishes open · click the first node or Shift+Enter closes · Backspace drops the last node · Esc cancels";
         if (selectTool_ && selected_ < 0) return "Click a path to select it";
-        if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Alt+click deletes";
+        if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Shift+click the path adds a node · Ctrl+Alt+click deletes";
         if (objectTool_ && rasterBox()) return "Drag inside the box moves the pixels · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts them back";
         if (objectTool_ && !doc_.vector(doc_.current())) return "Make a rectangle with Box Select first, then Select transforms its pixels";
         if (boxTool_ && box_.isEmpty()) return "Drag a rectangle to select pixels";
@@ -579,12 +580,14 @@ private:
             if (QLineF(handles[i], view_.toDoc(pos)).length() * view_.screenRadius(1) <= 6) return i;
         return -1;
     }
-    // Ctrl+click on a Width Knot handle duplicates the knot, Ctrl+Alt+click deletes it, Ctrl+click on the selected path off a handle adds one (one undo step each); false otherwise.
+    // Ctrl+click on a Width Knot handle duplicates the knot, Ctrl+Alt+click deletes it, Ctrl+click on the selected path off a handle adds one,
+    // Ctrl+Shift+click there adds a Spiro Node of the picker's type instead (one undo step each); false otherwise.
     bool editKnot(QPointF pos, Qt::KeyboardModifiers mods) {
         int i = knotAt(pos);
         if (i < 0) {
             if (!selectTool_ || selected_ < 0 || (mods & Qt::AltModifier) || doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1)) != selected_) return false;
-            doc_.addKnot(doc_.current(), selected_, view_.toDoc(pos));
+            if (mods & Qt::ShiftModifier) doc_.addNode(doc_.current(), selected_, view_.toDoc(pos), editType_);
+            else doc_.addKnot(doc_.current(), selected_, view_.toDoc(pos));
             update();
             return true;
         }
@@ -686,6 +689,7 @@ private:
     bool boxing_ = false;  // a Select box drag is under way
     QPointF boxStart_;  // where it began, in document coordinates
     QRect box_;  // Box Select's rectangle in document pixels, null for none; it belongs to layer boxLayer_
+    SpiroType editType_ = SpiroType::G2;  // Node/Knot edit's picker choice: retypes selected nodes and types a node added with Ctrl+Shift+click
     int boxLayer_ = -1;
     int penLayer_ = -1;  // the layer the Spiro Pen's unfinished path was started on
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none

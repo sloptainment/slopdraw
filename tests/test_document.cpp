@@ -969,6 +969,29 @@ static bool pickerRowsSetTheNextNodeType() {
     return true;
 }
 
+// On a half circle through 3 nodes (two 90-degree segments, which Spiro splits into several cubics each), addNode at the lower-right
+// quarter puts the new node at index 2 on the click, a click on an existing node adds nothing, every knot stays where it was on the path,
+// and one undo restores nodes and knots together.
+static bool addNodeSplitsTheSegmentUnderTheClick() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{32, 12, T::G2}, {52, 32, T::G2}, {32, 52, T::G2}}, false, Qt::black, 8);
+    auto before = doc.knots(1, 0);
+    double mid = doc.projectKnot(1, 0, {52, 32})->t;
+    doc.setKnots(1, 0, {before[0], {mid, 8}, before[1]});
+    auto handles = doc.knotHandles(1, 0);
+    if (doc.addNode(1, 0, {52, 32}, T::G2)) return false;  // on a node: no curve
+    if (!doc.addNode(1, 0, {46.1, 46.1}, T::G4)) return false;
+    auto n = doc.nodes(1, 0);
+    auto k = doc.knots(1, 0);
+    auto after = doc.knotHandles(1, 0);
+    bool nodes = n.size() == 4 && n[2].type == T::G4 && std::hypot(n[2].x - 46.1, n[2].y - 46.1) < 0.5 && n[1].x == 52 && n[3].y == 52;
+    bool knots = k.size() == 3 && k[0].t == 0 && std::abs(k[1].t - doc.projectKnot(1, 0, {52, 32})->t) < 1e-3;
+    for (int i = 0; i < 3; i++) knots = knots && QLineF(handles[i], after[i]).length() < 0.5;
+    return nodes && knots && doc.undo() && doc.nodes(1, 0).size() == 3 && doc.knots(1, 0)[1].t == mid;
+}
+
 // A layer switch keeps a tool that fits the new layer's kind, else picks the last tool used on that kind (#161), Brush and Spiro Pen the first time.
 static bool toolFollowsLayerKind() {
     return toolForLayer(false, SpiroPenTool) == BrushTool && toolForLayer(true, BrushTool) == SpiroPenTool
@@ -1104,6 +1127,7 @@ int main() {
     run("closedPathIsHitInsideAndThinPathStaysHittable", closedPathIsHitInsideAndThinPathStaysHittable);
     run("nodeAtFindsTheNodeUnderAPoint", nodeAtFindsTheNodeUnderAPoint);
     run("draggingAKnotProjectsAndUndoesOnce", draggingAKnotProjectsAndUndoesOnce);
+    run("addNodeSplitsTheSegmentUnderTheClick", addNodeSplitsTheSegmentUnderTheClick);
     run("addingAKnotKeepsTheStrokeAndUndoesOnce", addingAKnotKeepsTheStrokeAndUndoesOnce);
     run("duplicatingAndDeletingKnots", duplicatingAndDeletingKnots);
     run("draggingNodesMovesThemTogetherAndUndoesOnce", draggingNodesMovesThemTogetherAndUndoesOnce);
