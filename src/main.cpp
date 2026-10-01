@@ -31,6 +31,11 @@
 #include <QMouseEvent>
 #include <algorithm>
 #include <functional>
+#include <qboxlayout.h>
+#include <qdialogbuttonbox.h>
+#include <qlabel.h>
+#include <qlineedit.h>
+#include <qwidget.h>
 #include <set>
 #include <optional>
 #include <QTabletEvent>
@@ -1001,11 +1006,37 @@ int main(int argc, char** argv) {
     fileNew->setShortcut(QKeySequence::New);
     QObject::connect(fileNew, &QAction::triggered, [&] {
         bool ok = false;
-        int w = QInputDialog::getInt(&window, "New", "Width (px):", 1024, 1, 32768, 1, &ok);
-        if (!ok) return;
-        int h = QInputDialog::getInt(&window, "New", "Height (px):", 768, 1, 32768, 1, &ok);
-        if (!ok) return;
-        canvas->setDocument(Document(QSize(w, h)));
+        auto *NewDocWindow = new QDialog;
+        NewDocWindow->setAttribute(Qt::WA_DeleteOnClose);
+
+        auto *NewDocCol = new QVBoxLayout(NewDocWindow);
+        auto *Bbox = new QDialogButtonBox(
+            QDialogButtonBox::Cancel |
+            QDialogButtonBox::Ok,
+            NewDocWindow
+        );
+        NewDocCol->addWidget(new QLabel("Width (px)"));
+        auto ww = new QLineEdit(NewDocWindow);
+        NewDocCol->addWidget(ww);
+        NewDocCol->addWidget(new QLabel("Height (px)"));
+        auto hh = new QLineEdit(NewDocWindow);
+        NewDocCol->addWidget(hh);
+        NewDocCol->addWidget(Bbox);
+
+        QObject::connect(Bbox, &QDialogButtonBox::rejected, NewDocWindow, [NewDocWindow] {
+            NewDocWindow->reject();
+        });
+
+        QObject::connect(Bbox, &QDialogButtonBox::accepted, NewDocWindow,
+        [NewDocWindow, &canvas, ww, hh] {
+            int w = ww->text().toInt();
+            int h = hh->text().toInt();
+            NewDocWindow->accept();
+            canvas->setDocument(Document(QSize(w, h)));
+        });
+        
+        NewDocWindow->show();
+        NewDocWindow->focusWidget();
     });
 
     auto* fileOpen = fileMenu->addAction("&Open...");
