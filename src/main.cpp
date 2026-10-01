@@ -213,7 +213,7 @@ protected:
         if (resizing_) return resizeTo(e->position());
         if (knotDrag_ >= 0) return dragKnotTo(e->position());
         if (nodeDrag_) return dragNodesTo(e->position());
-        if (moveDrag_) return dragMoveTo(e->position());
+        if (moveDrag_) return dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
         if (boxing_) return;
         if (lassoing_) return lassoAt(e->position(), erase());
         if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
@@ -237,7 +237,7 @@ protected:
         else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); }
-        else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); else if (moveDrag_) dragMoveTo(e->position()); }
+        else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (boxTool_) { if (e->type() == QEvent::TabletPress) boxPress(e->position()); }
         else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position()); } }  // the barrel button arrives as right (#178)
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), erase() || eraser);
@@ -278,7 +278,7 @@ private:
         if (boxTool_ && box_.isEmpty()) return "Drag a rectangle to select pixels";
         if (boxTool_) return "Delete clears the pixels · drag a new rectangle to replace it · click outside or Esc clears the selection";
         if (objectTool_ && picked().empty()) return "Click a path to pick it · Shift+click toggles · drag a box on empty canvas picks the paths it touches";
-        if (objectTool_) return QString("%1 picked · drag inside the box moves them · Delete removes them · click or drag a box to pick again · Shift adds").arg(picked().size());
+        if (objectTool_) return QString("%1 picked · drag inside the box moves them · drag a handle scales (Shift keeps the ratio on a corner) · Delete removes them · click or drag a box to pick again · Shift adds").arg(picked().size());
         return "Draw · Shift+drag sizes the brush · Ctrl+click picks a color · E toggles erase";
     }
     // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node.
@@ -323,10 +323,21 @@ private:
         bool shift = mods & Qt::ShiftModifier;
         int i = doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1));
         auto was = picked();
+        auto handle = was.empty() ? std::nullopt : boxHandleAt(pickedBounds(doc_.paths(doc_.current()), was), view_.toDoc(pos), 6 / view_.screenRadius(1));
+        if (handle) {  // a Transform box handle: drag scales the picked paths about the opposite corner or edge (Shift on a corner keeps the ratio)
+            moveDrag_ = true;
+            handle_ = handle;
+            moveBox_ = pickedBounds(doc_.paths(doc_.current()), was);
+            moveStart_ = view_.toDoc(pos);
+            dragM_ = {};
+            pathsBefore_ = doc_.paths(doc_.current());
+            return;
+        }
         if (!shift && !was.empty() && pickedBounds(doc_.paths(doc_.current()), was).contains(view_.toDoc(pos)) && (i < 0 || was.count(i))) {  // inside the Transform box: drag moves the picked paths
             moveDrag_ = true;
             moveStart_ = view_.toDoc(pos);
-            moveBy_ = {};
+            handle_.reset();
+            dragM_ = {};
             pathsBefore_ = doc_.paths(doc_.current());
             return;
         }
@@ -370,8 +381,8 @@ private:
         }
         update();
     }
-    // Select: the Transform box (#206): a 1 px frame, eight 8 px squares on its corners and edge midpoints, and the rotate circle (5 px, 24 px up a stem).
-    // Drawn only; the rotate circle is not grabbable yet.
+    // Select: the Transform box (#206): a 1 px frame, eight 8 px squares on its corners and edge midpoints (grabbable, #231), and the rotate circle (5 px, 24 px up a stem).
+    // The rotate circle is not grabbable yet.
     void drawTransformBox(QPainter& p, QRectF b) {
         double px = 1 / view_.screenRadius(1);
         QPen pen(Qt::blue, 1);
@@ -388,9 +399,9 @@ private:
                 if (fx != 0.5 || fy != 0.5) p.drawRect(QRectF(b.left() + fx * b.width() - 4 * px, b.top() + fy * b.height() - 4 * px, 8 * px, 8 * px));
     }
     // The picked paths follow the pointer live (no undo step yet).
-    void dragMoveTo(QPointF pos) {
-        moveBy_ = view_.toDoc(pos) - moveStart_;
-        auto moved = transformPaths(pathsBefore_, picked_, QTransform::fromTranslate(moveBy_.x(), moveBy_.y()));
+    void dragMoveTo(QPointF pos, bool shift) {
+        dragM_ = handle_ ? scaleMatrix(moveBox_, *handle_, view_.toDoc(pos), shift) : QTransform::fromTranslate(view_.toDoc(pos).x() - moveStart_.x(), view_.toDoc(pos).y() - moveStart_.y());
+        auto moved = transformPaths(pathsBefore_, picked_, dragM_);
         for (int i : picked_) doc_.previewNodes(doc_.current(), i, moved[i].nodes, moved[i].closed);
         update();
     }
@@ -398,9 +409,9 @@ private:
     void endMoveDrag() {
         if (!moveDrag_) return;
         moveDrag_ = false;
-        if (moveBy_.isNull()) return;
+        if (dragM_.isIdentity()) return;
         for (int i : picked_) doc_.previewNodes(doc_.current(), i, pathsBefore_[i].nodes, pathsBefore_[i].closed);
-        doc_.setPaths(doc_.current(), transformPaths(pathsBefore_, picked_, QTransform::fromTranslate(moveBy_.x(), moveBy_.y())));
+        doc_.setPaths(doc_.current(), transformPaths(pathsBefore_, picked_, dragM_));
         update();
     }
     // Delete: removes the picked paths as one undo step.
@@ -545,8 +556,11 @@ private:
     std::set<int> nodeSel_;  // selected Spiro Node indexes of the selected path
     std::set<int> picked_;  // Select's picked path indexes on layer pickedLayer_
     int pickedLayer_ = -1;
-    bool moveDrag_ = false;  // a Transform box move is under way
-    QPointF moveStart_, moveBy_;  // where it began and how far it has gone, in document coordinates
+    bool moveDrag_ = false;  // a Transform box move or scale is under way
+    std::optional<QPoint> handle_;  // the box handle being dragged (scale), none for a move
+    QRectF moveBox_;  // the box when a scale began
+    QPointF moveStart_;  // where the drag began, in document coordinates
+    QTransform dragM_;  // what the drag has done to the picked paths so far
     std::vector<Document::VPath> pathsBefore_;  // the current layer's paths when it began
     bool boxing_ = false;  // a Select box drag is under way
     QPointF boxStart_;  // where it began, in document coordinates

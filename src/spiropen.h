@@ -72,3 +72,21 @@ inline QRectF pickedBounds(const std::vector<Document::VPath>& paths, const std:
         if (i >= 0 && i < int(paths.size())) box |= Document::outline(paths[i]).boundingRect();
     return box;
 }
+
+// The Transform box handle (hx, hy each -1, 0 or 1; not both 0) within tol of p, or none (#231).
+inline std::optional<QPoint> boxHandleAt(QRectF b, QPointF p, double tol) {
+    for (int hx : {-1, 0, 1})
+        for (int hy : {-1, 0, 1})
+            if ((hx || hy) && std::hypot(p.x() - (b.center().x() + hx * b.width() / 2), p.y() - (b.center().y() + hy * b.height() / 2)) <= tol) return QPoint(hx, hy);
+    return std::nullopt;
+}
+
+// The scale from dragging box handle h to pointer: about the opposite corner or edge, one axis only for an edge handle;
+// keepRatio gives a corner the larger of its two factors on both axes (#231).
+inline QTransform scaleMatrix(QRectF b, QPoint h, QPointF pointer, bool keepRatio) {
+    QPointF c = b.center(), grab(c.x() + h.x() * b.width() / 2, c.y() + h.y() * b.height() / 2), anchor(c.x() - h.x() * b.width() / 2, c.y() - h.y() * b.height() / 2);
+    double sx = h.x() && grab.x() != anchor.x() ? (pointer.x() - anchor.x()) / (grab.x() - anchor.x()) : 1;
+    double sy = h.y() && grab.y() != anchor.y() ? (pointer.y() - anchor.y()) / (grab.y() - anchor.y()) : 1;
+    if (keepRatio && h.x() && h.y()) sx = sy = std::abs(sx) >= std::abs(sy) ? sx : sy;
+    return QTransform().translate(anchor.x(), anchor.y()).scale(sx, sy).translate(-anchor.x(), -anchor.y());
+}

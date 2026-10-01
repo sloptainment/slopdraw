@@ -840,6 +840,27 @@ static bool transformBoxBoundsAndMovesPickedPaths() {
     return bounds && only && follows && undone;
 }
 
+// Transform box scale (#231): scaleMatrix(box, handle, pointer, keepRatio) scales about the opposite corner or edge; boxHandleAt finds a handle within tol.
+// Box (10,10)-(50,30): dragging the bottom-right corner to (90,30) doubles x about (10,10); with Shift both axes double; the top edge dragged
+// to y -10 doubles y about the bottom edge and leaves x alone. Through setPaths, one undo restores the nodes.
+static bool transformBoxScalesAboutOppositeHandle() {
+    using T = SpiroType;
+    QRectF box(10, 10, 40, 20);
+    QTransform corner = scaleMatrix(box, {1, 1}, {90, 30}, false), ratio = scaleMatrix(box, {1, 1}, {90, 30}, true), edge = scaleMatrix(box, {0, -1}, {20, -10}, false);
+    bool c = corner.map(QPointF(50, 30)) == QPointF(90, 30) && corner.map(QPointF(10, 10)) == QPointF(10, 10);
+    bool r = ratio.map(QPointF(50, 30)) == QPointF(90, 50) && ratio.map(QPointF(10, 10)) == QPointF(10, 10);
+    bool e = edge.map(QPointF(30, 10)) == QPointF(30, -10) && edge.map(QPointF(50, 30)) == QPointF(50, 30);
+    bool hit = boxHandleAt(box, {52, 31}, 6) == QPoint(1, 1) && boxHandleAt(box, {30, 8}, 6) == QPoint(0, -1) && !boxHandleAt(box, {30, 20}, 6) && !boxHandleAt(box, {70, 20}, 6);
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    for (int y : {10, 30}) doc.addPath({{8, double(y), T::G2}, {32, double(y), T::G2}, {56, double(y), T::G2}}, false, Qt::black, 6);
+    QImage before = doc.render();
+    bool scaled = doc.setPaths(1, transformPaths(doc.paths(1), {0}, scaleMatrix(QRectF(8, 10, 48, 0), {1, 0}, {32, 10}, false)));
+    bool nodes = scaled && doc.paths(1)[0].nodes[2].x == 32 && doc.paths(1)[1].nodes[2].x == 56;
+    bool undone = doc.undo() && doc.paths(1)[0].nodes[2].x == 56 && doc.render() == before;
+    return c && r && e && hit && nodes && undone;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -1033,5 +1054,6 @@ int main() {
     run("boxPicksThePathsItTouches", boxPicksThePathsItTouches);
     run("clearingARectangleUndoesOnce", clearingARectangleUndoesOnce);
     run("transformBoxBoundsAndMovesPickedPaths", transformBoxBoundsAndMovesPickedPaths);
+    run("transformBoxScalesAboutOppositeHandle", transformBoxScalesAboutOppositeHandle);
     return failed != 0;
 }
