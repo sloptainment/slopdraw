@@ -73,6 +73,7 @@ public:
         commitFloat();
         fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4; boxTool_ = t == 5;
         if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
+        if (!spiroTool_) pen_.cancel();
         picked_.clear();
         boxing_ = false;
         unsetCursor();
@@ -115,6 +116,7 @@ protected:
     void paintEvent(QPaintEvent*) override {
         if (boxLayer_ != doc_.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
         flushPreview();
+        if (penLayer_ != doc_.current()) { pen_.cancel(); penLayer_ = doc_.current(); }  // a layer switch drops the unfinished path
         QString h = hint();  // every tool or state change calls update(), so paint is where a change of hint is noticed
         if (h != hint_) { hint_ = h; if (onHint) onHint(h); }
         QPainter p(this);
@@ -245,6 +247,7 @@ protected:
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
+        if (e->type() == QEvent::TabletPress) setFocus();  // an accepted tablet press makes no mouse press, so nothing else gives the canvas the keys (Esc)
         if (e->type() == QEvent::TabletLeaveProximity) { cursor_.reset(); update(); }
         else if (!resizing_ || e->type() == QEvent::TabletPress) { cursor_ = e->position(); update(); }
         if (e->button() == Qt::MiddleButton && e->type() != QEvent::TabletMove) { dragging_ = e->type() == QEvent::TabletPress; last_ = e->position(); return; }  // barrel button pans like the mouse's middle button
@@ -684,6 +687,7 @@ private:
     QPointF boxStart_;  // where it began, in document coordinates
     QRect box_;  // Box Select's rectangle in document pixels, null for none; it belongs to layer boxLayer_
     int boxLayer_ = -1;
+    int penLayer_ = -1;  // the layer the Spiro Pen's unfinished path was started on
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false;
     double pathWidth_ = 10;  // px
