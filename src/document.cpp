@@ -468,6 +468,37 @@ bool Document::clearRect(const QRect& rect) {
     return true;
 }
 
+bool Document::floatRect(const QRect& rect, const QTransform& m) {
+    if (layers_[current_].vector) return false;
+    if (strokeStart_.isNull()) {
+        seal();
+        history_.resize(applied_);  // a new edit discards the redo branch
+        strokeStart_ = layers_[current_].image;
+    }
+    QImage lifted = strokeStart_.copy(rect);
+    layers_[current_].image = strokeStart_;
+    QPainter p(&layers_[current_].image);
+    p.setCompositionMode(QPainter::CompositionMode_Source);
+    p.fillRect(rect, current_ == 0 ? QColor(Qt::white) : QColor(Qt::transparent));
+    p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    p.setTransform(m);
+    p.drawImage(rect.topLeft(), lifted);
+    return true;
+}
+
+bool Document::transformRect(const QRect& rect, const QTransform& m) {
+    if (!floatRect(rect, m)) return false;
+    seal();
+    return true;
+}
+
+void Document::cancelFloat() {
+    if (strokeStart_.isNull()) return;
+    layers_[current_].image = strokeStart_;
+    strokeStart_ = QImage();
+}
+
 void Document::seal() {
     if (strokeStart_.isNull()) return;
     // ponytail: full-layer diff once per stroke; upgrade to dirty rects from the dab callback if it shows up in a profile

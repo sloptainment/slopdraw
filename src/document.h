@@ -35,6 +35,12 @@ public:
     // Clears a rectangle of the current Raster Layer: transparent, white on the background (layer 0). One undo step.
     // Returns false, changing nothing, for a Vector Layer.
     bool clearRect(const QRect& rect);
+    // Select on a raster selection (#205). floatRect lifts rect's pixels from the current Raster Layer, clears rect, and draws the lifted pixels through m
+    // (smooth): the live drag, no undo step. Every call starts again from the pixels as they were before the first one, so resampling never compounds.
+    // transformRect is floatRect plus the one undo step; cancelFloat puts the layer back. Both calls refuse a Vector Layer (false).
+    bool floatRect(const QRect& rect, const QTransform& m);
+    bool transformRect(const QRect& rect, const QTransform& m);
+    void cancelFloat();
     // The visible (composite) color at a document pixel; an invalid QColor when p is off the canvas.
     QColor colorAt(QPoint p) const;
     // Adds a transparent Raster Layer on top and makes it current; returns its index (0 is the white background).

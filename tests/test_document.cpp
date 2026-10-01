@@ -900,6 +900,30 @@ static bool flipMirrorsAndScaleWidthsIsOptIn() {
     return widths && mirror && kept && flipped && undone;
 }
 
+// Raster selection transform (#205): transformRect lifts a rectangle of the current Raster Layer, clears its source and draws the lifted pixels
+// through a transform as one undo step. A red 8x6 block at (10,20) on a blue layer, translated by (20,5): red at (30,25), source transparent,
+// one undo restores the exact image. floatRect is the live version: each call starts again from the untouched pixels, so a 0.5 scale followed
+// by the same translation ends exactly where a plain translation does, and cancelFloat puts the layer back with no undo step.
+static bool transformRectMovesPixelsAndUndoesOnce() {
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.fill(Qt::red, {{10, 20}, {18, 20}, {18, 26}, {10, 26}});
+    QImage before = doc.image(1);
+    QRect box(8, 18, 12, 10);
+    QTransform move = QTransform::fromTranslate(20, 5);
+    bool moved = doc.transformRect(box, move) && doc.image(1).pixelColor(30, 25) == QColor(Qt::red) && doc.image(1).pixelColor(37, 30) == QColor(Qt::red)
+        && doc.image(1).pixelColor(29, 25).alpha() == 0 && doc.image(1).pixelColor(38, 25).alpha() == 0 && doc.image(1).pixelColor(11, 21).alpha() == 0;
+    QImage after = doc.image(1);
+    bool undone = doc.undo() && doc.image(1) == before;
+    bool redone = doc.redo() && doc.image(1) == after && doc.undo() && doc.image(1) == before;
+    bool live = doc.floatRect(box, QTransform().scale(0.5, 0.5)) && doc.image(1) != before && doc.floatRect(box, move) && doc.image(1) == after;
+    doc.cancelFloat();
+    bool cancelled = doc.image(1) == before && !doc.redo();
+    doc.addVectorLayer();
+    bool refused = !doc.transformRect(box, move) && !doc.floatRect(box, move);
+    return moved && undone && redone && live && cancelled && refused;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -1087,6 +1111,7 @@ int main() {
     run("transformNodesMapsNodesAndKeepsTheRest", transformNodesMapsNodesAndKeepsTheRest);
     run("transformBoxRotatesAndScalesAlongItsAxes", transformBoxRotatesAndScalesAlongItsAxes);
     run("flipMirrorsAndScaleWidthsIsOptIn", flipMirrorsAndScaleWidthsIsOptIn);
+    run("transformRectMovesPixelsAndUndoesOnce", transformRectMovesPixelsAndUndoesOnce);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     run("toolFollowsLayerKind", toolFollowsLayerKind);

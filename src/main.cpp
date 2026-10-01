@@ -44,7 +44,7 @@
 class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
-    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); selected_ = -1; nodeSel_.clear(); picked_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
+    void setDocument(Document doc) { doc_ = std::move(doc); floating_ = false; floatM_ = {}; frame_.reset(); view_ = View(); selected_ = -1; nodeSel_.clear(); picked_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return doc_; }
     bool hasDoc() const { return !doc_.image(0).isNull(); }  // the app starts on Document(QSize()), which has no pixels (#157)
     std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
@@ -65,6 +65,7 @@ public:
     std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
     // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_: picks and deletes whole paths), 5 Box Select (boxTool_).
     void setTool(int t) {
+        commitFloat();
         fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4; boxTool_ = t == 5;
         if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
         picked_.clear();
@@ -75,6 +76,7 @@ public:
     }
     // The Edit, View and Tools menu actions call these; their keys are window-wide shortcuts.
     void undo(bool redo) {
+        commitFloat();  // so undo takes the whole piece back
         redo ? doc_.redo() : doc_.undo();
         selected_ = -1;
         nodeSel_.clear();
@@ -90,6 +92,7 @@ public:
     void setScaleWidths(bool on) { scaleWidths_ = on; }
     void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
     void finishPath(bool closed) {
+        if (floating_) return commitFloat();
         if (spiroTool_) pen_.finish(doc_, closed, color_, pathWidth_);  // refused on a Raster Layer
         update();
         if (onLayersChange) onLayersChange();
@@ -105,7 +108,7 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override {
-        if (boxLayer_ != doc_.current()) box_ = QRect();  // a layer switch clears the Box Select rectangle
+        if (boxLayer_ != doc_.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
         QString h = hint();  // every tool or state change calls update(), so paint is where a change of hint is noticed
         if (h != hint_) { hint_ = h; if (onHint) onHint(h); }
         QPainter p(this);
@@ -169,7 +172,7 @@ protected:
             p.setPen(pen);
             p.setBrush(Qt::NoBrush);
             for (int i : picked()) p.drawPath(Document::outline(doc_.paths(doc_.current())[i]));
-            if (!picked().empty()) drawTransformBox(p, frame());
+            if (!picked().empty() || rasterBox()) drawTransformBox(p, frame());
             if (boxing_ && cursor_) {
                 pen.setStyle(Qt::DashLine);
                 p.setPen(pen);
@@ -264,7 +267,7 @@ protected:
             else pen_.backspace();
             update();
         }
-        else if (e->key() == Qt::Key_Escape) { pen_.cancel(); box_ = QRect(); update(); }
+        else if (e->key() == Qt::Key_Escape) { pen_.cancel(); cancelFloat(); box_ = QRect(); update(); }
     }
     void keyReleaseEvent(QKeyEvent* e) override {
         if (!e->isAutoRepeat() && e->key() == Qt::Key_Space) space_ = false;
@@ -278,7 +281,8 @@ private:
         if (spiroTool_) return "Click adds a node · Enter or right-click finishes open · click the first node or Shift+Enter closes · Backspace drops the last node · Esc cancels";
         if (selectTool_ && selected_ < 0) return "Click a path to select it";
         if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Alt+click deletes";
-        if (objectTool_ && !doc_.vector(doc_.current())) return "Select does nothing on a Raster Layer";
+        if (objectTool_ && rasterBox()) return "Drag inside the box moves the pixels · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts them back";
+        if (objectTool_ && !doc_.vector(doc_.current())) return "Make a rectangle with Box Select first, then Select transforms its pixels";
         if (boxTool_ && box_.isEmpty()) return "Drag a rectangle to select pixels";
         if (boxTool_) return "Delete clears the pixels · drag a new rectangle to replace it · click outside or Esc clears the selection";
         if (objectTool_ && picked().empty()) return "Click a path to pick it · Shift+click toggles · drag a box on empty canvas picks the paths it touches";
@@ -323,7 +327,7 @@ private:
     // Select press on a Vector Layer: on a path it picks that path alone (Shift toggles it); on empty canvas it clears the pick (Shift keeps it)
     // and starts a box that endBox turns into the paths it touches.
     void objectPress(QPointF pos, Qt::KeyboardModifiers mods) {
-        if (!doc_.vector(doc_.current())) return;
+        if (!doc_.vector(doc_.current())) return rasterPress(pos);
         bool shift = mods & Qt::ShiftModifier;
         int i = doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1));
         auto was = picked();
@@ -361,6 +365,42 @@ private:
         }
         update();
     }
+    // Select press on a Raster Layer: with a Box Select rectangle, a handle, the rotate circle or the inside of the box starts a drag of the piece; outside commits a floating one.
+    void rasterPress(QPointF pos) {
+        if (!rasterBox()) return;
+        BoxFrame f = frame();
+        QPointF d = view_.toDoc(pos);
+        auto handle = frameHandleAt(f, d, 6 / view_.screenRadius(1));
+        bool rotate = onRotateHandle(pos);
+        if (!handle && !rotate && !f.rect.contains(f.toDoc().inverted().map(d))) return commitFloat();
+        moveFrame_ = f;
+        moveDrag_ = true;
+        handle_ = handle;
+        rotating_ = rotate;
+        moveStart_ = d;
+        dragM_ = {};
+    }
+    // The piece's pixels are in the document again: one undo step, and the selection ends.
+    void commitFloat() {
+        if (!floating_) return;
+        doc_.transformRect(box_, floatM_);
+        floating_ = false;
+        floatM_ = {};
+        frame_.reset();
+        box_ = QRect();
+        update();
+        if (onLayersChange) onLayersChange();
+    }
+    void cancelFloat() {
+        if (!floating_) return;
+        doc_.cancelFloat();
+        floating_ = false;
+        floatM_ = {};
+        frame_.reset();
+        update();
+    }
+    // A Box Select rectangle on the current Raster Layer: Select's Transform box shows on it.
+    bool rasterBox() const { return hasDoc() && !doc_.vector(doc_.current()) && !box_.isEmpty() && boxLayer_ == doc_.current(); }
     // Box Select press: starts a drag; endBox makes it the rectangle, or a click outside the old one clears it.
     void boxPress(QPointF pos) {
         boxing_ = true;
@@ -381,7 +421,7 @@ private:
             QRectF box = QRectF(boxStart_, view_.toDoc(*cursor_)).normalized();
             bool dragged = std::max(box.width(), box.height()) * view_.screenRadius(1) > 3;
             if (boxTool_) {
-                if (dragged) { box_ = box.toAlignedRect() & doc_.image(0).rect(); boxLayer_ = doc_.current(); }
+                if (dragged) { box_ = box.toAlignedRect() & doc_.image(0).rect(); boxLayer_ = doc_.current(); frame_.reset(); }
                 else if (!box_.contains(box.topLeft().toPoint())) box_ = QRect();
             } else if (dragged) {
                 auto in = doc_.pathsIn(doc_.current(), box);
@@ -412,6 +452,7 @@ private:
     }
     // The Transform box: the frame a rotate drag left, else the picked paths' bounds, unturned (#202).
     BoxFrame frame() const {
+        if (rasterBox()) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : frame_ ? *frame_ : BoxFrame{QRectF(box_), 0};
         if (moveDrag_ && (rotating_ || frame_)) return frameAfter(moveFrame_, dragM_);
         return frame_ ? *frame_ : BoxFrame{pickedBounds(doc_.paths(doc_.current()), picked()), 0};
     }
@@ -424,6 +465,10 @@ private:
     // The picked paths follow the pointer live (no undo step yet).
     void dragMoveTo(QPointF pos, bool shift) {
         dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, view_.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, view_.toDoc(pos), shift) : QTransform::fromTranslate(view_.toDoc(pos).x() - moveStart_.x(), view_.toDoc(pos).y() - moveStart_.y());
+        if (rasterBox()) {  // lift on the first drag; every drag resamples from the untouched pixels
+            floating_ = doc_.floatRect(box_, floatM_ * dragM_);
+            return update();
+        }
         auto moved = transformPaths(pathsBefore_, picked_, dragM_);  // live preview moves nodes only; widths follow on release
         for (int i : picked_) doc_.previewNodes(doc_.current(), i, moved[i].nodes, moved[i].closed);
         update();
@@ -432,6 +477,10 @@ private:
     void endMoveDrag() {
         if (!moveDrag_) return;
         moveDrag_ = false;
+        if (rasterBox()) {
+            if (floating_) { floatM_ = floatM_ * dragM_; frame_ = frameAfter(moveFrame_, dragM_); }
+            return;
+        }
         if (dragM_.isIdentity()) return;
         for (int i : picked_) doc_.previewNodes(doc_.current(), i, pathsBefore_[i].nodes, pathsBefore_[i].closed);
         doc_.setPaths(doc_.current(), transformPaths(pathsBefore_, picked_, dragM_, scaleWidths_));
@@ -440,7 +489,7 @@ private:
     }
     // Right-click on Select with paths picked: Flip Horizontal / Vertical about the Transform box centre, each one undo step (#203).
     void flipMenu(QPoint globalPos) {
-        if (picked().empty()) return;
+        if (picked().empty() && !rasterBox()) return;
         QMenu menu;
         auto* h = menu.addAction("Flip Horizontal");
         auto* v = menu.addAction("Flip Vertical");
@@ -448,6 +497,12 @@ private:
         if (chosen != h && chosen != v) return;
         BoxFrame f = frame();
         QTransform m = flipMatrix(f.rect.center(), chosen == h);
+        if (rasterBox()) {  // joins the floating piece; the commit is the one undo step
+            floatM_ = floatM_ * m;
+            floating_ = doc_.floatRect(box_, floatM_);
+            frame_ = frameAfter(f, m);
+            return update();
+        }
         if (!doc_.setPaths(doc_.current(), transformPaths(doc_.paths(doc_.current()), picked(), m, scaleWidths_))) return;
         if (frame_) frame_ = frameAfter(f, m);
         update();
@@ -598,6 +653,8 @@ private:
     std::optional<QPoint> handle_;  // the box handle being dragged (scale), none for a move
     BoxFrame moveFrame_;  // the box when a drag began
     std::optional<BoxFrame> frame_;  // the box a rotate left, until the next pick
+    bool floating_ = false;  // a raster selection's piece is lifted: the layer shows box_'s pixels moved through floatM_, not yet an undo step
+    QTransform floatM_;
     bool scaleWidths_ = false;  // Select's Scale widths: transforms scale Width Knot widths too
     bool rotating_ = false;  // the drag is a rotate
     QPointF moveStart_;  // where the drag began, in document coordinates
