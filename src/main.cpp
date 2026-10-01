@@ -114,6 +114,7 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override {
         if (boxLayer_ != doc_.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
+        flushPreview();
         QString h = hint();  // every tool or state change calls update(), so paint is where a change of hint is noticed
         if (h != hint_) { hint_ = h; if (onHint) onHint(h); }
         QPainter p(this);
@@ -548,12 +549,17 @@ private:
     }
     // The selected nodes follow the pointer live (no undo step yet).
     void dragNodesTo(QPointF pos) {
-        doc_.previewNodes(doc_.current(), selected_, moveNodes(pathBefore_.nodes, nodeSel_, view_.toDoc(pos) - nodeStart_), pathBefore_.closed);
+        preview_ = [=, this] { doc_.previewNodes(doc_.current(), selected_, moveNodes(pathBefore_.nodes, nodeSel_, view_.toDoc(pos) - nodeStart_), pathBefore_.closed); };
         update();
+    }
+    // A pen sends far more moves than a re-rasterize can keep up with, so a drag only queues its preview and paint runs the latest one.
+    void flushPreview() {
+        if (auto f = std::exchange(preview_, nullptr)) f();
     }
     // Release: one undo step for the whole drag, from the nodes it started with.
     void endNodeDrag() {
         if (!nodeDrag_) return;
+        flushPreview();
         auto after = doc_.nodes(doc_.current(), selected_);
         doc_.previewNodes(doc_.current(), selected_, pathBefore_.nodes, pathBefore_.closed);
         auto& was = pathBefore_.nodes;
@@ -586,16 +592,19 @@ private:
     }
     // The dragged knot follows the pointer live (no undo step yet).
     void dragKnotTo(QPointF pos) {
-        auto k = doc_.projectKnot(doc_.current(), selected_, view_.toDoc(pos));
-        if (!k) return;
-        auto knots = knotsBefore_;
-        knots[knotDrag_] = *k;
-        doc_.previewKnots(doc_.current(), selected_, knots);
+        preview_ = [=, this] {
+            auto k = doc_.projectKnot(doc_.current(), selected_, view_.toDoc(pos));
+            if (!k) return;
+            auto knots = knotsBefore_;
+            knots[knotDrag_] = *k;
+            doc_.previewKnots(doc_.current(), selected_, knots);
+        };
         update();
     }
     // Release: one undo step for the whole drag, from the knots it started with.
     void endKnotDrag() {
         if (knotDrag_ < 0) return;
+        flushPreview();
         auto after = doc_.knots(doc_.current(), selected_);
         doc_.previewKnots(doc_.current(), selected_, knotsBefore_);
         if (after.size() == knotsBefore_.size() && !std::equal(after.begin(), after.end(), knotsBefore_.begin(), [](auto& a, auto& b) { return a.t == b.t && a.width == b.width; }))
@@ -651,6 +660,7 @@ private:
     QColor color_ = Qt::black;  // matches pencil.myb and the Color dock's start
     QPolygonF lasso_;
     SpiroPen pen_;
+    std::function<void()> preview_;  // the latest queued drag preview, run by flushPreview
     int knotDrag_ = -1;  // index of the Width Knot being dragged on the selected path, -1 for none
     std::vector<WidthKnot> knotsBefore_;  // the selected path's knots when the drag began
     bool nodeDrag_ = false;  // a Spiro Node drag is under way
