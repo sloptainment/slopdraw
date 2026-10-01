@@ -57,3 +57,18 @@ inline Document::VPath transformNodes(Document::VPath p, const QTransform& m) {
     for (auto& n : p.nodes) m.map(n.x, n.y, &n.x, &n.y);
     return p;
 }
+
+// The paths with those at the picked indexes mapped through m (Transform box, #230).
+inline std::vector<Document::VPath> transformPaths(std::vector<Document::VPath> paths, const std::set<int>& picked, const QTransform& m) {
+    for (int i : picked)
+        if (i >= 0 && i < int(paths.size())) paths[i] = transformNodes(paths[i], m);
+    return paths;
+}
+
+// The union of the picked paths' Power Stroke outlines (Transform box, #230); null when none are picked.
+inline QRectF pickedBounds(const std::vector<Document::VPath>& paths, const std::set<int>& picked) {
+    QRectF box;
+    for (int i : picked)
+        if (i >= 0 && i < int(paths.size())) box |= Document::outline(paths[i]).boundingRect();
+    return box;
+}

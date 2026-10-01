@@ -823,6 +823,23 @@ static bool transformNodesMapsNodesAndKeepsTheRest() {
     return nodes && types && knots && q.closed && q.color == Qt::red && q.width == 6;
 }
 
+// The Transform box (#230): pickedBounds is the union of the picked paths' outlines (two of three picked give those two, not the third);
+// moving them through transformPaths then setPaths shifts only those, the bounds follow, and one undo restores the nodes and the render.
+static bool transformBoxBoundsAndMovesPickedPaths() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    for (int y : {10, 30, 50}) doc.addPath({{8, double(y), T::G2}, {32, double(y), T::G2}, {56, double(y), T::G2}}, false, Qt::black, 6);
+    QImage all = doc.render();
+    QRectF b = pickedBounds(doc.paths(1), {0, 1});
+    bool bounds = b.left() > 3 && b.left() < 9 && b.right() > 55 && b.right() < 61 && b.top() > 5 && b.top() < 10 && b.bottom() > 30 && b.bottom() < 36;
+    bool moved = doc.setPaths(1, transformPaths(doc.paths(1), {0, 1}, QTransform::fromTranslate(5, 0)));
+    bool only = moved && doc.paths(1)[0].nodes[0].x == 13 && doc.paths(1)[1].nodes[0].x == 13 && doc.paths(1)[2].nodes[0].x == 8;
+    bool follows = std::abs(pickedBounds(doc.paths(1), {0, 1}).left() - (b.left() + 5)) < 1e-6;
+    bool undone = doc.undo() && doc.paths(1)[0].nodes[0].x == 8 && doc.render() == all;
+    return bounds && only && follows && undone;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -1015,5 +1032,6 @@ int main() {
     run("rasterizingAVectorLayerUndoesOnce", rasterizingAVectorLayerUndoesOnce);
     run("boxPicksThePathsItTouches", boxPicksThePathsItTouches);
     run("clearingARectangleUndoesOnce", clearingARectangleUndoesOnce);
+    run("transformBoxBoundsAndMovesPickedPaths", transformBoxBoundsAndMovesPickedPaths);
     return failed != 0;
 }
