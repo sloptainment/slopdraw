@@ -235,7 +235,7 @@ private:
         if (spiroTool_ && pen_.nodes.empty()) return "Click places the first node";
         if (spiroTool_) return "Click adds a node · Enter or right-click finishes open · click the first node or Shift+Enter closes · Backspace drops the last node · Esc cancels";
         if (selectTool_ && selected_ < 0) return "Click a path to select it";
-        if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+Alt+click deletes";
+        if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Alt+click deletes";
         return "Draw · Shift+drag sizes the brush · Ctrl+click picks a color · E toggles erase";
     }
     // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node.
@@ -310,10 +310,15 @@ private:
             if (QLineF(handles[i], view_.toDoc(pos)).length() * view_.screenRadius(1) <= 6) return i;
         return -1;
     }
-    // Ctrl+click on a Width Knot handle duplicates the knot, Ctrl+Alt+click deletes it (one undo step each); false when no handle is there.
+    // Ctrl+click on a Width Knot handle duplicates the knot, Ctrl+Alt+click deletes it, Ctrl+click on the selected path off a handle adds one (one undo step each); false otherwise.
     bool editKnot(QPointF pos, Qt::KeyboardModifiers mods) {
         int i = knotAt(pos);
-        if (i < 0) return false;
+        if (i < 0) {
+            if (!selectTool_ || selected_ < 0 || (mods & Qt::AltModifier) || doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1)) != selected_) return false;
+            doc_.addKnot(doc_.current(), selected_, view_.toDoc(pos));
+            update();
+            return true;
+        }
         auto k = doc_.knots(doc_.current(), selected_);
         doc_.setKnots(doc_.current(), selected_, (mods & Qt::AltModifier) ? deleteKnot(k, i) : duplicateKnot(k, i));
         update();

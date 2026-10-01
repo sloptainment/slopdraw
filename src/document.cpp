@@ -215,6 +215,16 @@ std::optional<WidthKnot> Document::projectKnot(int layer, int path, QPointF p) c
     return WidthKnot{t, 2 * (d.x() * nrm.x() + d.y() * nrm.y())};
 }
 
+bool Document::addKnot(int layer, int path, QPointF p) {
+    auto k = projectKnot(layer, path, p);
+    if (!k || !layers_[layer].vector) return false;
+    const VPath& v = layers_[layer].paths[path];
+    auto knots = v.knots;
+    k->width = widthAt(knots, k->t, int(skeletonOf(v.nodes, v.closed).size()), v.closed);
+    knots.insert(std::upper_bound(knots.begin(), knots.end(), *k, [](auto& a, auto& b) { return a.t < b.t; }), *k);
+    return setKnots(layer, path, knots);
+}
+
 void Document::previewKnots(int layer, int path, const std::vector<WidthKnot>& knots) {
     if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size())) return;
     layers_[layer].paths[path].knots = knots;

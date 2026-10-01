@@ -684,6 +684,24 @@ static bool draggingAKnotProjectsAndUndoesOnce() {
     return showing && restored && oneStep;
 }
 
+// addKnot on a straight 2-knot path (width 8, y=32) puts one knot at the path point nearest the click, with the width the stroke has there,
+// so the render is unchanged; one undo removes it; a Raster Layer or bad path index is refused.
+static bool addingAKnotKeepsTheStrokeAndUndoesOnce() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 32, T::G2}, {32, 32, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
+    QImage original = doc.render();
+    auto before = doc.knots(1, 0);
+    bool added = doc.addKnot(1, 0, {32, 20});
+    auto k = doc.knots(1, 0);
+    bool shape = added && before.size() == 2 && k.size() == 3 && k[0].t == before[0].t && k[2].t == before[1].t && std::abs(k[1].t - 1) < 1e-2 && std::abs(k[1].width - 8) < 1e-6;
+    bool same = doc.render() == original;
+    bool oneStep = doc.undo() && doc.knots(1, 0).size() == 2 && doc.render() == original && doc.redo() && doc.knots(1, 0).size() == 3;
+    bool refused = !doc.addKnot(0, 0, {32, 32}) && !doc.addKnot(1, 1, {32, 32});
+    return shape && same && oneStep && refused;
+}
+
 // Ctrl+click duplicates a knot in place after itself; Ctrl+Alt+click deletes it, but never the last one.
 static bool duplicatingAndDeletingKnots() {
     std::vector<WidthKnot> k{{0, 4}, {1, 8}, {2, 6}};
@@ -880,6 +898,7 @@ int main() {
     run("closedPathIsHitInsideAndThinPathStaysHittable", closedPathIsHitInsideAndThinPathStaysHittable);
     run("nodeAtFindsTheNodeUnderAPoint", nodeAtFindsTheNodeUnderAPoint);
     run("draggingAKnotProjectsAndUndoesOnce", draggingAKnotProjectsAndUndoesOnce);
+    run("addingAKnotKeepsTheStrokeAndUndoesOnce", addingAKnotKeepsTheStrokeAndUndoesOnce);
     run("duplicatingAndDeletingKnots", duplicatingAndDeletingKnots);
     run("draggingNodesMovesThemTogetherAndUndoesOnce", draggingNodesMovesThemTogetherAndUndoesOnce);
     run("deletingAndRetypingNodes", deletingAndRetypingNodes);

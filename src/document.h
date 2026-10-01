@@ -60,6 +60,9 @@ public:
     // The Width Knot a pointer at p drags a knot to: t of the nearest point of the path's curve, width twice the signed distance
     // from p to that point along the left normal (-ty, tx), so crossing the path makes it negative. nullopt for a bad layer or path index.
     std::optional<WidthKnot> projectKnot(int layer, int path, QPointF p) const;
+    // Adds a Width Knot at the path point nearest p, with the width the stroke has there (so a flat stretch renders unchanged); one undo step.
+    // Returns false, changing nothing, for a Raster Layer or a bad path index.
+    bool addKnot(int layer, int path, QPointF p);
     // Like setKnots but only redraws: no undo step, no checks beyond the indexes. For live dragging; finish with setKnots.
     void previewKnots(int layer, int path, const std::vector<WidthKnot>& knots);
     // Like setNodes but only redraws: no undo step; a node set with no curve leaves the path as it was. For live dragging; finish with setNodes.
