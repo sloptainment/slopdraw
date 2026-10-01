@@ -1087,6 +1087,9 @@ int main(int argc, char** argv) {
     QObject::connect(key(toolsMenu->addAction("Finish path &open"), {QKeySequence("Return"), QKeySequence("Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(false); });
     QObject::connect(key(toolsMenu->addAction("Finish path &closed"), {QKeySequence("Shift+Return"), QKeySequence("Shift+Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(true); });
 
+    auto* helpMenu = window.menuBar()->addMenu("&Help");
+    QObject::connect(helpMenu->addAction("About Qt"), &QAction::triggered, [&] { app.aboutQt(); });
+
     for (auto* m : {editMenu, layerMenu, toolsMenu}) docActions.push_back(m->menuAction());
     kindChanged();  // the menus exist now: the no-document state applies to them too
     window.resize(1024, 768);
