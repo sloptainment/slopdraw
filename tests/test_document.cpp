@@ -860,7 +860,8 @@ static bool toolFollowsLayerKind() {
     return toolForLayer(false, SpiroPenTool) == BrushTool && toolForLayer(true, BrushTool) == SpiroPenTool
         && toolForLayer(false, NodeKnotEditTool, LassoFillTool, NodeKnotEditTool) == LassoFillTool
         && toolForLayer(true, LassoFillTool, LassoFillTool, NodeKnotEditTool) == NodeKnotEditTool
-        && toolForLayer(false, LassoFillTool) == LassoFillTool && toolForLayer(true, NodeKnotEditTool) == NodeKnotEditTool;
+        && toolForLayer(false, LassoFillTool) == LassoFillTool && toolForLayer(true, NodeKnotEditTool) == NodeKnotEditTool
+        && toolForLayer(false, SelectTool) == SelectTool && toolForLayer(true, SelectTool) == SelectTool;  // Select fits both kinds (#221)
 }
 
 // rasterizeLayer turns a Vector Layer into a Raster Layer with the same pixels, name, visibility and opacity and no paths; one undo

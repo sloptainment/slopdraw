@@ -63,9 +63,9 @@ public:
     }
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
     std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
-    // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (the Select tool).
+    // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_, picks nothing yet).
     void setTool(int t) {
-        fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3;
+        fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4;
         if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
         update();
         if (onToolChange) onToolChange(t);
@@ -80,8 +80,8 @@ public:
     }
     void mirror() { view_.mirrorAt(rect().center()); update(); }
     // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
-    bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && eraseBrush_; }
-    void setErase(bool on) { if (!spiroTool_ && !selectTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
+    bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && !objectTool_ && eraseBrush_; }
+    void setErase(bool on) { if (!spiroTool_ && !selectTool_ && !objectTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
     void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
     void finishPath(bool closed) {
         if (spiroTool_) pen_.finish(doc_, closed, color_, pathWidth_);  // refused on a Raster Layer
@@ -156,7 +156,7 @@ protected:
             double r = 4 / view_.screenRadius(1);
             for (QPointF h : doc_.knotHandles(doc_.current(), selected_)) p.drawEllipse(h, r, r);
         }
-        if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_) {  // brush outline: dark with a light line beside it, readable on any color
+        if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_) {  // brush outline: dark with a light line beside it, readable on any color
             p.resetTransform();
             p.setRenderHint(QPainter::Antialiasing);
             double r = view_.screenRadius(radius());
@@ -177,7 +177,7 @@ protected:
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && spiroTool_) spiroClick(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), erase());
-        else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
+        else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && !objectTool_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
     }
     void mouseMoveEvent(QMouseEvent* e) override {
         if (!resizing_) cursor_ = e->position();  // the circle stays at the press point while Shift+drag resizes
@@ -209,7 +209,7 @@ protected:
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); }
         else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position()); } }  // the barrel button arrives as right (#178)
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), erase() || eraser);
-        else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
+        else if (!objectTool_ && (e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
                     eraser);  // the flag is per call (b20)
     }
@@ -240,6 +240,7 @@ private:
         if (spiroTool_) return "Click adds a node · Enter or right-click finishes open · click the first node or Shift+Enter closes · Backspace drops the last node · Esc cancels";
         if (selectTool_ && selected_ < 0) return "Click a path to select it";
         if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Alt+click deletes";
+        if (objectTool_) return "Select: click a path to select it (picking comes next)";
         return "Draw · Shift+drag sizes the brush · Ctrl+click picks a color · E toggles erase";
     }
     // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node.
@@ -402,7 +403,7 @@ private:
     Document::VPath pathBefore_;  // the selected path when it began
     std::set<int> nodeSel_;  // selected Spiro Node indexes of the selected path
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
-    bool spiroTool_ = false, selectTool_ = false;
+    bool spiroTool_ = false, selectTool_ = false, objectTool_ = false;
     double pathWidth_ = 10;  // px
     float lassoOpacity_ = 1;
     bool fillTool_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
@@ -688,15 +689,15 @@ int main(int argc, char** argv) {
     auto* toolPanel = new QWidget;
     auto* toolCol = new QVBoxLayout(toolPanel);
     auto* toolGroup = new QActionGroup(&window);
-    const struct { const char* text; const char* key; } kTools[] = {{"\U0001F58C Brush (B)", "B"}, {"\u2B2E Lasso Fill (F)", "F"}, {"\u2712 Spiro Pen (P)", "P"}, {"\u2316 Node/Knot edit (N)", "N"}};
-    int lastTool[2] = {BrushTool, SpiroPenTool};  // last tool used on a Raster, a Vector Layer (#161)
-    for (int i = 0; i < 4; i++) {
+    const struct { const char* text; const char* key; } kTools[] = {{"\U0001F58C Brush (B)", "B"}, {"\u2B2E Lasso Fill (F)", "F"}, {"\u2712 Spiro Pen (P)", "P"}, {"\u2316 Node/Knot edit (N)", "N"}, {"\u25AD Select (S)", "S"}};
+    int lastTool[2] = {BrushTool, SpiroPenTool};  // last tool used on a Raster, a Vector Layer (#161); Select fits both, so it is no one's last
+    for (int i = 0; i < 5; i++) {
         auto* a = toolGroup->addAction(kTools[i].text);
         a->setCheckable(true);
         a->setChecked(i == 0);
         a->setShortcut(QKeySequence(kTools[i].key));
         window.addAction(a);
-        QObject::connect(a, &QAction::triggered, [canvas, i, &lastTool] { canvas->setTool(i); lastTool[i >= SpiroPenTool] = i; });
+        QObject::connect(a, &QAction::triggered, [canvas, i, &lastTool] { canvas->setTool(i); if (i != SelectTool) lastTool[i >= SpiroPenTool] = i; });
         auto* b = new QToolButton;
         b->setDefaultAction(a);
         b->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -711,7 +712,7 @@ int main(int argc, char** argv) {
         for (auto* w : {colorDock->widget(), layerPanel, optionsPanel}) w->setEnabled(has);
         for (auto* a : docActions) a->setEnabled(has);
         auto tools = toolGroup->actions();
-        for (int i = 0; i < 4; i++) tools[i]->setEnabled(has && (i >= SpiroPenTool) == vec);
+        for (int i = 0; i < 5; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i));
         brushPanel->setEnabled(has && !vec);
         int now = toolForLayer(vec, tools.indexOf(toolGroup->checkedAction()), lastTool[0], lastTool[1]);
         if (!tools[now]->isChecked()) tools[now]->trigger();
