@@ -230,10 +230,13 @@ protected:
         if (lassoing_) return lassoAt(e->position(), erase());
         if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
         if (!dragging_) return;
-        QPointF d = e->position() - last_;
-        last_ = e->position();
-        if (e->modifiers() & Qt::ControlModifier) view_.zoomAt(rect().center(), std::exp(-d.y() * 0.01));
-        else if (e->modifiers() & Qt::ShiftModifier) view_.rotateAt(rect().center(), d.x() * 0.5);
+        panZoom(e->position(), e->modifiers());
+    }
+    void panZoom(QPointF pos, Qt::KeyboardModifiers mods) {
+        QPointF d = pos - last_;
+        last_ = pos;
+        if (mods & Qt::ControlModifier) view_.zoomAt(rect().center(), std::exp(-d.y() * 0.01));
+        else if (mods & Qt::ShiftModifier) view_.rotateAt(rect().center(), d.x() * 0.5);
         else view_.pan(d);
         update();
     }
@@ -243,6 +246,8 @@ protected:
         e->accept();
         if (e->type() == QEvent::TabletLeaveProximity) { cursor_.reset(); update(); }
         else if (!resizing_ || e->type() == QEvent::TabletPress) { cursor_ = e->position(); update(); }
+        if (e->button() == Qt::MiddleButton && e->type() != QEvent::TabletMove) { dragging_ = e->type() == QEvent::TabletPress; last_ = e->position(); return; }  // barrel button pans like the mouse's middle button
+        if (dragging_) return panZoom(e->position(), e->modifiers());
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
         if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
