@@ -52,16 +52,19 @@ inline std::vector<SpiroNode> retypeNodes(std::vector<SpiroNode> nodes, const st
     return nodes;
 }
 
-// The path with every node mapped through m (Transform box, #229); types, closed, knots and widths stay as they were.
-inline Document::VPath transformNodes(Document::VPath p, const QTransform& m) {
+// The path with every node mapped through m (Transform box, #229); types, closed and knot positions stay as they were. Knot widths
+// do too, unless scaleWidths: then each is scaled by sqrt(|det m|) (#203).
+inline Document::VPath transformNodes(Document::VPath p, const QTransform& m, bool scaleWidths = false) {
     for (auto& n : p.nodes) m.map(n.x, n.y, &n.x, &n.y);
+    if (scaleWidths)
+        for (auto& k : p.knots) k.width *= std::sqrt(std::abs(m.determinant()));
     return p;
 }
 
 // The paths with those at the picked indexes mapped through m (Transform box, #230).
-inline std::vector<Document::VPath> transformPaths(std::vector<Document::VPath> paths, const std::set<int>& picked, const QTransform& m) {
+inline std::vector<Document::VPath> transformPaths(std::vector<Document::VPath> paths, const std::set<int>& picked, const QTransform& m, bool scaleWidths = false) {
     for (int i : picked)
-        if (i >= 0 && i < int(paths.size())) paths[i] = transformNodes(paths[i], m);
+        if (i >= 0 && i < int(paths.size())) paths[i] = transformNodes(paths[i], m, scaleWidths);
     return paths;
 }
 
@@ -122,4 +125,9 @@ inline std::optional<QPoint> frameHandleAt(const BoxFrame& f, QPointF p, double 
 inline QTransform frameScaleMatrix(const BoxFrame& f, QPoint h, QPointF pointer, bool keepRatio) {
     QTransform t = f.toDoc();
     return t.inverted() * scaleMatrix(f.rect, h, t.inverted().map(pointer), keepRatio) * t;
+}
+
+// The mirror about c: left-right (x flipped) when horizontal, else top-bottom (#203).
+inline QTransform flipMatrix(QPointF c, bool horizontal) {
+    return QTransform().translate(c.x(), c.y()).scale(horizontal ? -1 : 1, horizontal ? 1 : -1).translate(-c.x(), -c.y());
 }

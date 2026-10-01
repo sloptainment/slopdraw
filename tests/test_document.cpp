@@ -879,6 +879,27 @@ static bool transformBoxRotatesAndScalesAlongItsAxes() {
     return turn && frame && hit && scale && follows;
 }
 
+// Flip and Scale widths (#203): flipMatrix mirrors about a centre, horizontally (x) or vertically (y); transformNodes and transformPaths
+// scale each Width Knot by sqrt(|det|) of the transform only when asked. A path with knots (0,8) and (2,4) under a 0.5 scale gives 4 and 2
+// with it on and 8 and 4 with it off; a flip about x = 50 maps node x 10 to 90, its determinant -1 leaves widths as they are, and one undo restores it.
+static bool flipMirrorsAndScaleWidthsIsOptIn() {
+    using T = SpiroType;
+    Document::VPath p{{{10, 20, T::G2}, {30, 20, T::G2}, {50, 20, T::G2}}, false, Qt::red, 6, {{0, 8}, {2, 4}}};
+    QTransform half = QTransform().scale(0.5, 0.5);
+    auto on = transformNodes(p, half, true), off = transformNodes(p, half);
+    bool widths = on.knots[0].width == 4 && on.knots[1].width == 2 && off.knots[0].width == 8 && off.knots[1].width == 4;
+    QTransform h = flipMatrix({50, 25}, true), v = flipMatrix({50, 25}, false);
+    bool mirror = h.map(QPointF(10, 20)) == QPointF(90, 20) && v.map(QPointF(10, 20)) == QPointF(10, 30);
+    bool kept = transformNodes(p, h, true).knots[0].width == 8;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath(p.nodes, false, Qt::black, 6);
+    QImage before = doc.render();
+    bool flipped = doc.setPaths(1, transformPaths(doc.paths(1), {0}, flipMatrix({32, 20}, true))) && doc.paths(1)[0].nodes[0].x == 54;
+    bool undone = doc.undo() && doc.paths(1)[0].nodes[0].x == 10 && doc.render() == before;
+    return widths && mirror && kept && flipped && undone;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -1065,6 +1086,7 @@ int main() {
     run("deletingAndRetypingNodes", deletingAndRetypingNodes);
     run("transformNodesMapsNodesAndKeepsTheRest", transformNodesMapsNodesAndKeepsTheRest);
     run("transformBoxRotatesAndScalesAlongItsAxes", transformBoxRotatesAndScalesAlongItsAxes);
+    run("flipMirrorsAndScaleWidthsIsOptIn", flipMirrorsAndScaleWidthsIsOptIn);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     run("toolFollowsLayerKind", toolFollowsLayerKind);

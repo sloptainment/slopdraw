@@ -87,6 +87,7 @@ public:
     // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
     bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && eraseBrush_; }
     void setErase(bool on) { if (!spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
+    void setScaleWidths(bool on) { scaleWidths_ = on; }
     void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
     void finishPath(bool closed) {
         if (spiroTool_) pen_.finish(doc_, closed, color_, pathWidth_);  // refused on a Raster Layer
@@ -201,6 +202,7 @@ protected:
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier) && !editKnot(e->position(), e->modifiers())) pickAt(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) return;
         else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
+        else if (e->button() == Qt::RightButton && objectTool_) flipMenu(e->globalPosition().toPoint());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
         else if (e->button() == Qt::LeftButton && !space_ && objectTool_) objectPress(e->position(), e->modifiers());
         else if (e->button() == Qt::LeftButton && !space_ && boxTool_) boxPress(e->position());
@@ -422,7 +424,7 @@ private:
     // The picked paths follow the pointer live (no undo step yet).
     void dragMoveTo(QPointF pos, bool shift) {
         dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, view_.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, view_.toDoc(pos), shift) : QTransform::fromTranslate(view_.toDoc(pos).x() - moveStart_.x(), view_.toDoc(pos).y() - moveStart_.y());
-        auto moved = transformPaths(pathsBefore_, picked_, dragM_);
+        auto moved = transformPaths(pathsBefore_, picked_, dragM_);  // live preview moves nodes only; widths follow on release
         for (int i : picked_) doc_.previewNodes(doc_.current(), i, moved[i].nodes, moved[i].closed);
         update();
     }
@@ -432,8 +434,22 @@ private:
         moveDrag_ = false;
         if (dragM_.isIdentity()) return;
         for (int i : picked_) doc_.previewNodes(doc_.current(), i, pathsBefore_[i].nodes, pathsBefore_[i].closed);
-        doc_.setPaths(doc_.current(), transformPaths(pathsBefore_, picked_, dragM_));
+        doc_.setPaths(doc_.current(), transformPaths(pathsBefore_, picked_, dragM_, scaleWidths_));
         if (rotating_ || frame_) frame_ = frameAfter(moveFrame_, dragM_);  // once rotated the box stays so, through moves and scales, until the next pick
+        update();
+    }
+    // Right-click on Select with paths picked: Flip Horizontal / Vertical about the Transform box centre, each one undo step (#203).
+    void flipMenu(QPoint globalPos) {
+        if (picked().empty()) return;
+        QMenu menu;
+        auto* h = menu.addAction("Flip Horizontal");
+        auto* v = menu.addAction("Flip Vertical");
+        auto* chosen = menu.exec(globalPos);
+        if (chosen != h && chosen != v) return;
+        BoxFrame f = frame();
+        QTransform m = flipMatrix(f.rect.center(), chosen == h);
+        if (!doc_.setPaths(doc_.current(), transformPaths(doc_.paths(doc_.current()), picked(), m, scaleWidths_))) return;
+        if (frame_) frame_ = frameAfter(f, m);
         update();
     }
     // Delete: removes the picked paths as one undo step.
@@ -582,6 +598,7 @@ private:
     std::optional<QPoint> handle_;  // the box handle being dragged (scale), none for a move
     BoxFrame moveFrame_;  // the box when a drag began
     std::optional<BoxFrame> frame_;  // the box a rotate left, until the next pick
+    bool scaleWidths_ = false;  // Select's Scale widths: transforms scale Width Knot widths too
     bool rotating_ = false;  // the drag is a rotate
     QPointF moveStart_;  // where the drag began, in document coordinates
     QTransform dragM_;  // what the drag has done to the picked paths so far
@@ -851,7 +868,10 @@ int main(int argc, char** argv) {
     penTypes->setCurrentRow(2);  // G2, SpiroPen's starting type
     QObject::connect(penTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->setNodeType(kNodeTypes[row].type); });
     QObject::connect(editTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->retypeSelected(kNodeTypes[row].type); });
+    auto* scaleWidths = new QCheckBox("Scale widths");  // Select's, off by default (#203)
+    QObject::connect(scaleWidths, &QCheckBox::toggled, [canvas](bool on) { canvas->setScaleWidths(on); });
     auto showOptions = [=](int tool) {
+        scaleWidths->setVisible(tool == SelectTool);
         eraseBox->setVisible(tool <= LassoFillTool);
         brushBox->setVisible(tool == BrushTool);
         lassoBox->setVisible(tool == LassoFillTool);
@@ -867,6 +887,7 @@ int main(int argc, char** argv) {
     optionsCol->addWidget(brushBox);
     optionsCol->addWidget(lassoBox);
     optionsCol->addWidget(widthBox);
+    optionsCol->addWidget(scaleWidths);
     optionsCol->addWidget(penTypes);
     optionsCol->addWidget(editTypes);
     auto* optionsDock = new QDockWidget("Tool Options", &window);
