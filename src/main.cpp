@@ -56,9 +56,9 @@ public:
     void setLassoOpacity(float o) { lassoOpacity_ = o; }  // Lasso Fill's own, apart from the Brush's (#213)
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
-    // Sets the Spiro Pen's type; in the Select tool it also retypes the selected nodes (one undo step).
-    void setNodeType(SpiroType t) {
-        pen_.type = t;
+    void setNodeType(SpiroType t) { pen_.type = t; }  // the Spiro Pen's, for new nodes (#215)
+    // Node/Knot edit's picker: retypes the selected nodes (one undo step); the pen's type is left alone.
+    void retypeSelected(SpiroType t) {
         if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(doc_.nodes(doc_.current(), selected_), nodeSel_, t));
     }
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
@@ -79,7 +79,9 @@ public:
         if (onLayersChange) onLayersChange();
     }
     void mirror() { view_.mirrorAt(rect().center()); update(); }
-    void setErase(bool on) { eraseMode_ = on; }
+    // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
+    bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && eraseBrush_; }
+    void setErase(bool on) { if (!spiroTool_ && !selectTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
     void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
     void finishPath(bool closed) {
         if (spiroTool_) pen_.finish(doc_, closed, color_, pathWidth_);  // refused on a Raster Layer
@@ -174,8 +176,8 @@ protected:
         else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && spiroTool_) spiroClick(e->position());
-        else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), eraseMode_);
-        else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), eraseMode_);
+        else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), erase());
+        else if (e->button() == Qt::LeftButton && !space_ && !resizing_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
     }
     void mouseMoveEvent(QMouseEvent* e) override {
         if (!resizing_) cursor_ = e->position();  // the circle stays at the press point while Shift+drag resizes
@@ -183,8 +185,8 @@ protected:
         if (resizing_) return resizeTo(e->position());
         if (knotDrag_ >= 0) return dragKnotTo(e->position());
         if (nodeDrag_) return dragNodesTo(e->position());
-        if (lassoing_) return lassoAt(e->position(), eraseMode_);
-        if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), eraseMode_);
+        if (lassoing_) return lassoAt(e->position(), erase());
+        if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
         if (!dragging_) return;
         QPointF d = e->position() - last_;
         last_ = e->position();
@@ -206,7 +208,7 @@ protected:
         else if (resizing_) resizeTo(e->position());
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); }
         else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position()); } }  // the barrel button arrives as right (#178)
-        else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), eraseMode_ || eraser);
+        else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), erase() || eraser);
         else if ((e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
                     eraser);  // the flag is per call (b20)
@@ -403,7 +405,7 @@ private:
     bool spiroTool_ = false, selectTool_ = false;
     double pathWidth_ = 10;  // px
     float lassoOpacity_ = 1;
-    bool fillTool_ = false, eraseMode_ = false, lassoing_ = false, lassoErase_ = false;
+    bool fillTool_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
 };
 
 // Hue ring around a saturation/value square. Dragging either calls onChange with the new color; setColor moves it from outside.
@@ -654,16 +656,19 @@ int main(int argc, char** argv) {
     widthRow->addWidget(new QLabel("Width"));
     widthRow->addWidget(pathWidth);
     widthRow->addWidget(pathWidthValue);
-    auto* nodeTypes = new QListWidget;
-    for (const auto& t : kNodeTypes) nodeTypes->addItem(t.name);
-    nodeTypes->setCurrentRow(2);  // G2, SpiroPen's starting type
-    QObject::connect(nodeTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->setNodeType(kNodeTypes[row].type); });
+    auto* penTypes = new QListWidget;  // the Spiro Pen's type for new nodes
+    auto* editTypes = new QListWidget;  // retypes Node/Knot edit's selected nodes, apart from the pen's (#215)
+    for (auto* l : {penTypes, editTypes}) for (const auto& t : kNodeTypes) l->addItem(t.name);
+    penTypes->setCurrentRow(2);  // G2, SpiroPen's starting type
+    QObject::connect(penTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->setNodeType(kNodeTypes[row].type); });
+    QObject::connect(editTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->retypeSelected(kNodeTypes[row].type); });
     auto showOptions = [=](int tool) {
         eraseBox->setVisible(tool <= LassoFillTool);
         brushBox->setVisible(tool == BrushTool);
         lassoBox->setVisible(tool == LassoFillTool);
         widthBox->setVisible(tool == SpiroPenTool);
-        nodeTypes->setVisible(tool >= SpiroPenTool);
+        penTypes->setVisible(tool == SpiroPenTool);
+        editTypes->setVisible(tool == NodeKnotEditTool);
     };
     canvas->onToolChange = showOptions;
     showOptions(BrushTool);
@@ -673,7 +678,8 @@ int main(int argc, char** argv) {
     optionsCol->addWidget(brushBox);
     optionsCol->addWidget(lassoBox);
     optionsCol->addWidget(widthBox);
-    optionsCol->addWidget(nodeTypes);
+    optionsCol->addWidget(penTypes);
+    optionsCol->addWidget(editTypes);
     auto* optionsDock = new QDockWidget("Tool Options", &window);
     optionsDock->setWidget(optionsPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, optionsDock);
@@ -800,7 +806,9 @@ int main(int argc, char** argv) {
     toolsMenu->addSeparator();
     auto* erase = key(toolsMenu->addAction("&Erase mode"), {QKeySequence("E")});
     erase->setCheckable(true);
-    QObject::connect(erase, &QAction::toggled, [canvas, eraseBox](bool on) { canvas->setErase(on); eraseBox->setChecked(on); });
+    QObject::connect(erase, &QAction::toggled, [canvas, eraseBox, erase](bool on) { canvas->setErase(on); eraseBox->setChecked(canvas->erase()); erase->setChecked(canvas->erase()); });
+    auto showOptionsFor = canvas->onToolChange;
+    canvas->onToolChange = [=](int tool) { showOptionsFor(tool); erase->setChecked(canvas->erase()); };  // the new tool's own Erase
     QObject::connect(eraseBox, &QCheckBox::toggled, erase, &QAction::setChecked);  // each side's setChecked with the same value emits nothing, so they settle
     QObject::connect(key(toolsMenu->addAction("Finish path &open"), {QKeySequence("Return"), QKeySequence("Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(false); });
     QObject::connect(key(toolsMenu->addAction("Finish path &closed"), {QKeySequence("Shift+Return"), QKeySequence("Shift+Enter")}), &QAction::triggered, [canvas] { canvas->finishPath(true); });
