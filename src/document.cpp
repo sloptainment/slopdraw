@@ -174,6 +174,16 @@ int Document::pathAt(int layer, QPointF p, double tol) const {
     return -1;
 }
 
+std::vector<int> Document::pathsIn(int layer, const QRectF& box) const {
+    std::vector<int> hit;
+    if (!layers_[layer].vector) return hit;
+    for (int i = 0; i < int(layers_[layer].paths.size()); i++) {
+        const VPath& v = layers_[layer].paths[i];
+        if (outline(v).intersects(box) || (v.closed && spiroToPath(v.nodes, v.closed)->intersects(box))) hit.push_back(i);
+    }
+    return hit;
+}
+
 std::vector<SpiroNode> Document::nodes(int layer, int path) const {
     if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return {};
     return layers_[layer].paths[path].nodes;

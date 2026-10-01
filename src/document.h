@@ -54,6 +54,8 @@ public:
     bool setPaths(int layer, const std::vector<VPath>& paths);
     // The topmost path of Vector Layer `layer` whose Spiro curve passes within tol of p, or -1 (also for a Raster Layer).
     int pathAt(int layer, QPointF p, double tol) const;
+    // The indexes, bottom first, of the paths of Vector Layer `layer` whose drawn stroke (or, closed, Spiro curve fill) touches box; empty for a Raster Layer.
+    std::vector<int> pathsIn(int layer, const QRectF& box) const;
     // The Spiro Node of path `path` nearest to p within tol, as its index, or -1 (also for a bad layer or path index).
     int nodeAt(int layer, int path, QPointF p, double tol) const;
     // The path's Spiro Nodes; empty for a bad layer or path index.

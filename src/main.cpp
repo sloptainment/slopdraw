@@ -44,7 +44,7 @@
 class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
-    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); selected_ = -1; nodeSel_.clear(); update(); if (onLayersChange) onLayersChange(); }
+    void setDocument(Document doc) { doc_ = std::move(doc); view_ = View(); selected_ = -1; nodeSel_.clear(); picked_.clear(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return doc_; }
     bool hasDoc() const { return !doc_.image(0).isNull(); }  // the app starts on Document(QSize()), which has no pixels (#157)
     std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
@@ -63,10 +63,12 @@ public:
     }
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
     std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
-    // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_, picks nothing yet).
+    // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_: picks and deletes whole paths).
     void setTool(int t) {
         fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4;
         if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
+        picked_.clear();
+        boxing_ = false;
         update();
         if (onToolChange) onToolChange(t);
     }
@@ -75,6 +77,7 @@ public:
         redo ? doc_.redo() : doc_.undo();
         selected_ = -1;
         nodeSel_.clear();
+        picked_.clear();
         update();
         if (onLayersChange) onLayersChange();
     }
@@ -156,6 +159,18 @@ protected:
             double r = 4 / view_.screenRadius(1);
             for (QPointF h : doc_.knotHandles(doc_.current(), selected_)) p.drawEllipse(h, r, r);
         }
+        if (objectTool_) {  // Select: the picked paths' outlines, and the box being dragged
+            QPen pen(Qt::blue, 1);
+            pen.setCosmetic(true);
+            p.setPen(pen);
+            p.setBrush(Qt::NoBrush);
+            for (int i : picked()) p.drawPath(Document::outline(doc_.paths(doc_.current())[i]));
+            if (boxing_ && cursor_) {
+                pen.setStyle(Qt::DashLine);
+                p.setPen(pen);
+                p.drawRect(QRectF(boxStart_, view_.toDoc(*cursor_)).normalized());
+            }
+        }
         if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_) {  // brush outline: dark with a light line beside it, readable on any color
             p.resetTransform();
             p.setRenderHint(QPainter::Antialiasing);
@@ -170,11 +185,12 @@ protected:
     void mousePressEvent(QMouseEvent* e) override {
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
-        resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && (e->modifiers() & Qt::ShiftModifier);
+        resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && !objectTool_ && (e->modifiers() & Qt::ShiftModifier);
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier) && !editKnot(e->position(), e->modifiers())) pickAt(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) return;
         else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
+        else if (e->button() == Qt::LeftButton && !space_ && objectTool_) objectPress(e->position(), e->modifiers());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && spiroTool_) spiroClick(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), erase());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && !objectTool_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
@@ -185,6 +201,7 @@ protected:
         if (resizing_) return resizeTo(e->position());
         if (knotDrag_ >= 0) return dragKnotTo(e->position());
         if (nodeDrag_) return dragNodesTo(e->position());
+        if (boxing_) return;
         if (lassoing_) return lassoAt(e->position(), erase());
         if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
         if (!dragging_) return;
@@ -195,18 +212,19 @@ protected:
         else view_.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); dragging_ = painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
+    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); endBox(); dragging_ = painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
         if (e->type() == QEvent::TabletLeaveProximity) { cursor_.reset(); update(); }
         else if (!resizing_ || e->type() == QEvent::TabletPress) { cursor_ = e->position(); update(); }
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
-        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
+        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); endBox(); painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
-        else if (e->type() == QEvent::TabletPress && !selectTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
+        else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); }
+        else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); }
         else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position()); } }  // the barrel button arrives as right (#178)
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), erase() || eraser);
         else if (!objectTool_ && (e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
@@ -223,6 +241,7 @@ protected:
         if (e->key() == Qt::Key_Space) space_ = true;
         else if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
             if (selectTool_) deleteSelectedNodes();
+            else if (objectTool_) deletePicked();
             else pen_.backspace();
             update();
         }
@@ -240,7 +259,9 @@ private:
         if (spiroTool_) return "Click adds a node · Enter or right-click finishes open · click the first node or Shift+Enter closes · Backspace drops the last node · Esc cancels";
         if (selectTool_ && selected_ < 0) return "Click a path to select it";
         if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Alt+click deletes";
-        if (objectTool_) return "Select: click a path to select it (picking comes next)";
+        if (objectTool_ && !doc_.vector(doc_.current())) return "Select does nothing on a Raster Layer";
+        if (objectTool_ && picked().empty()) return "Click a path to pick it · Shift+click toggles · drag a box on empty canvas picks the paths it touches";
+        if (objectTool_) return QString("%1 picked · Delete removes them · click or drag a box to pick again · Shift adds").arg(picked().size());
         return "Draw · Shift+drag sizes the brush · Ctrl+click picks a color · E toggles erase";
     }
     // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node.
@@ -277,6 +298,53 @@ private:
             pathBefore_ = doc_.paths(doc_.current())[selected_];
         }
         update();
+    }
+    // Select press on a Vector Layer: on a path it picks that path alone (Shift toggles it); on empty canvas it clears the pick (Shift keeps it)
+    // and starts a box that endBox turns into the paths it touches.
+    void objectPress(QPointF pos, Qt::KeyboardModifiers mods) {
+        if (!doc_.vector(doc_.current())) return;
+        bool shift = mods & Qt::ShiftModifier;
+        int i = doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1));
+        auto was = picked();
+        pickedLayer_ = doc_.current();
+        picked_ = shift ? was : std::set<int>{};
+        if (i >= 0) {
+            if (!shift) picked_ = {i};
+            else if (!picked_.erase(i)) picked_.insert(i);
+        } else {
+            boxing_ = true;
+            boxStart_ = view_.toDoc(pos);
+        }
+        update();
+    }
+    // Release: a box dragged more than 3 screen px picks the paths it touches (added to the pick, which a press without Shift cleared).
+    void endBox() {
+        if (!boxing_) return;
+        boxing_ = false;
+        if (cursor_) {
+            QRectF box = QRectF(boxStart_, view_.toDoc(*cursor_)).normalized();
+            if (std::max(box.width(), box.height()) * view_.screenRadius(1) > 3) {
+                auto in = doc_.pathsIn(doc_.current(), box);
+                picked_.insert(in.begin(), in.end());
+            }
+        }
+        update();
+    }
+    // Delete: removes the picked paths as one undo step.
+    void deletePicked() {
+        auto& all = doc_.paths(doc_.current());
+        std::vector<Document::VPath> kept;
+        for (int i = 0; i < int(all.size()); i++) if (!picked().count(i)) kept.push_back(all[i]);
+        if (picked().empty() || !doc_.setPaths(doc_.current(), kept)) return;
+        picked_.clear();
+        update();
+        if (onLayersChange) onLayersChange();
+    }
+    // The paths Select has picked, on the layer they were picked on; none once another layer is current or the list got shorter.
+    const std::set<int>& picked() const {
+        static const std::set<int> none;
+        bool ok = pickedLayer_ == doc_.current() && (picked_.empty() || *picked_.rbegin() < int(doc_.paths(pickedLayer_).size()));
+        return ok ? picked_ : none;
     }
     // Replaces the selected path's nodes with one undo step; a set with no curve is refused and leaves the path as it was.
     void editNodes(const std::vector<SpiroNode>& nodes) {
@@ -402,6 +470,10 @@ private:
     QPointF nodeStart_;  // where it began, in document coordinates
     Document::VPath pathBefore_;  // the selected path when it began
     std::set<int> nodeSel_;  // selected Spiro Node indexes of the selected path
+    std::set<int> picked_;  // Select's picked path indexes on layer pickedLayer_
+    int pickedLayer_ = -1;
+    bool boxing_ = false;  // a Select box drag is under way
+    QPointF boxStart_;  // where it began, in document coordinates
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false, objectTool_ = false;
     double pathWidth_ = 10;  // px

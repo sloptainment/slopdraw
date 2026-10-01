@@ -900,6 +900,22 @@ static bool settingPathsUndoesOnce() {
     return set && undone && redone && refused;
 }
 
+// pathsIn returns the indexes of the paths a box touches: a box over two of three horizontal paths gives those two (a box in the
+// gap between them gives none), and a Raster Layer gives none. Deleting the others through setPaths undoes in one step.
+static bool boxPicksThePathsItTouches() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    for (int y : {10, 30, 50}) doc.addPath({{8, double(y), T::G2}, {32, double(y), T::G2}, {56, double(y), T::G2}}, false, Qt::black, 6);
+    auto hit = doc.pathsIn(1, QRectF(20, 5, 10, 30));
+    bool two = hit == std::vector<int>{0, 1} && doc.pathsIn(1, QRectF(20, 15, 10, 10)).empty() && doc.pathsIn(0, QRectF(0, 0, 64, 64)).empty();
+    QImage all = doc.render();
+    auto rest = doc.paths(1);
+    rest.erase(rest.begin(), rest.begin() + 2);
+    bool deleted = doc.setPaths(1, rest) && doc.paths(1).size() == 1 && doc.undo() && doc.paths(1).size() == 3 && doc.render() == all;
+    return two && deleted;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -960,5 +976,6 @@ int main() {
     run("toolFollowsLayerKind", toolFollowsLayerKind);
     run("settingPathsUndoesOnce", settingPathsUndoesOnce);
     run("rasterizingAVectorLayerUndoesOnce", rasterizingAVectorLayerUndoesOnce);
+    run("boxPicksThePathsItTouches", boxPicksThePathsItTouches);
     return failed != 0;
 }
