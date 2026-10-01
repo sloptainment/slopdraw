@@ -3,6 +3,7 @@
 #include <optional>
 #include <set>
 #include <vector>
+#include <QTransform>
 #include "document.h"
 
 // The Tool Options picker's rows (#53), in display order.
@@ -49,4 +50,10 @@ inline std::vector<SpiroNode> retypeNodes(std::vector<SpiroNode> nodes, const st
     for (int i : selected)
         if (i >= 0 && i < int(nodes.size())) nodes[i].type = t;
     return nodes;
+}
+
+// The path with every node mapped through m (Transform box, #229); types, closed, knots and widths stay as they were.
+inline Document::VPath transformNodes(Document::VPath p, const QTransform& m) {
+    for (auto& n : p.nodes) m.map(n.x, n.y, &n.x, &n.y);
+    return p;
 }

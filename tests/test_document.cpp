@@ -810,6 +810,19 @@ static bool deletingAndRetypingNodes() {
     return doc.undo() && doc.render() == original;
 }
 
+// transformNodes maps a path's nodes through a scale+rotate transform (x' = -3y + 5, y' = 2x + 7) and leaves node types, closed, knots
+// (t and width) and the rest of the path as they were.
+static bool transformNodesMapsNodesAndKeepsTheRest() {
+    using T = SpiroType;
+    Document::VPath p{{{10, 20, T::G2}, {1, 0, T::Corner}, {0, 1, T::Left}}, true, Qt::red, 6, {{0, 3}, {2, 4}}};
+    auto q = transformNodes(p, QTransform(0, 2, -3, 0, 5, 7));
+    bool nodes = q.nodes.size() == 3 && q.nodes[0].x == -55 && q.nodes[0].y == 27 && q.nodes[1].x == 5 && q.nodes[1].y == 9
+        && q.nodes[2].x == 2 && q.nodes[2].y == 7;
+    bool types = q.nodes[0].type == T::G2 && q.nodes[1].type == T::Corner && q.nodes[2].type == T::Left;
+    bool knots = q.knots.size() == 2 && q.knots[0].t == 0 && q.knots[0].width == 3 && q.knots[1].t == 2 && q.knots[1].width == 4;
+    return nodes && types && knots && q.closed && q.color == Qt::red && q.width == 6;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -994,6 +1007,7 @@ int main() {
     run("duplicatingAndDeletingKnots", duplicatingAndDeletingKnots);
     run("draggingNodesMovesThemTogetherAndUndoesOnce", draggingNodesMovesThemTogetherAndUndoesOnce);
     run("deletingAndRetypingNodes", deletingAndRetypingNodes);
+    run("transformNodesMapsNodesAndKeepsTheRest", transformNodesMapsNodesAndKeepsTheRest);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     run("toolFollowsLayerKind", toolFollowsLayerKind);
