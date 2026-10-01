@@ -14,6 +14,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QSettings>
@@ -886,7 +887,7 @@ int main(int argc, char** argv) {
         canvas->doc().setOpacity(canvas->doc().current(), v / 100.0);
         canvas->update();
     });
-    auto* layerButtons = new QHBoxLayout;
+    auto* layerButtons = new QGridLayout;
     struct LayerOp { const char* button; const char* menu; std::function<void(Document&)> op; };
     const std::initializer_list<LayerOp> layerOps{
         {"+ Raster", "Add &Raster", [](Document& d) { d.addLayer(); }},
@@ -894,10 +895,13 @@ int main(int argc, char** argv) {
         {"↑", "&Up", [](Document& d) { if (d.moveLayer(d.current(), d.current() + 1)) d.setCurrent(d.current() + 1); }},
         {"↓", "Dow&n", [](Document& d) { if (d.moveLayer(d.current(), d.current() - 1)) d.setCurrent(d.current() - 1); }},
         {"🗑", "&Delete", [](Document& d) { d.deleteLayer(d.current()); }}};
+    int layerOpIndex = 0;
     for (const auto& l : layerOps) {
         auto* btn = new QPushButton(l.button);
+        btn->setMinimumWidth(1);  // the style's 80px floor would keep the dock about 450px wide; 0 counts as unset and keeps it
         QObject::connect(btn, &QPushButton::clicked, [canvas, refresh, op = l.op] { op(canvas->doc()); refresh(); });
-        layerButtons->addWidget(btn);
+        layerButtons->addWidget(btn, layerOpIndex / 3, layerOpIndex % 3);  // three per row
+        layerOpIndex++;
     }
     auto* layerPanel = new QWidget;
     auto* layerCol = new QVBoxLayout(layerPanel);
