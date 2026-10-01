@@ -90,3 +90,36 @@ inline QTransform scaleMatrix(QRectF b, QPoint h, QPointF pointer, bool keepRati
     if (keepRatio && h.x() && h.y()) sx = sy = std::abs(sx) >= std::abs(sy) ? sx : sy;
     return QTransform().translate(anchor.x(), anchor.y()).scale(sx, sy).translate(-anchor.x(), -anchor.y());
 }
+
+// The Transform box as it stands: rect turned by angle degrees about its centre (#202). Unrotated until a rotate drag.
+struct BoxFrame {
+    QRectF rect;
+    double angle = 0;
+    // The turn about the centre that takes the box's own axes to the document's.
+    QTransform toDoc() const { return QTransform().translate(rect.center().x(), rect.center().y()).rotate(angle).translate(-rect.center().x(), -rect.center().y()); }
+};
+
+// The turn about c that carries the pointer's direction at the drag's start to its direction now (#202).
+inline QTransform rotateMatrix(QPointF c, QPointF start, QPointF pointer) {
+    double a = std::atan2(pointer.y() - c.y(), pointer.x() - c.x()) - std::atan2(start.y() - c.y(), start.x() - c.x());
+    return QTransform().translate(c.x(), c.y()).rotate(a * 180 / M_PI).translate(-c.x(), -c.y());
+}
+
+// The frame after m: centre mapped, each side scaled by what m does to its axis, angle that of the mapped x axis (#202).
+inline BoxFrame frameAfter(BoxFrame f, const QTransform& m) {
+    double a = f.angle * M_PI / 180;
+    QPointF c = f.rect.center(), mx = m.map(c + QPointF(std::cos(a), std::sin(a))) - m.map(c), my = m.map(c + QPointF(-std::sin(a), std::cos(a))) - m.map(c);
+    QSizeF size(f.rect.width() * std::hypot(mx.x(), mx.y()), f.rect.height() * std::hypot(my.x(), my.y()));
+    QRectF rect(QPointF(), size);
+    rect.moveCenter(m.map(c));
+    return {rect, std::atan2(mx.y(), mx.x()) * 180 / M_PI};
+}
+
+// boxHandleAt for a turned box.
+inline std::optional<QPoint> frameHandleAt(const BoxFrame& f, QPointF p, double tol) { return boxHandleAt(f.rect, f.toDoc().inverted().map(p), tol); }
+
+// scaleMatrix for a turned box: the scale happens along the box's own axes.
+inline QTransform frameScaleMatrix(const BoxFrame& f, QPoint h, QPointF pointer, bool keepRatio) {
+    QTransform t = f.toDoc();
+    return t.inverted() * scaleMatrix(f.rect, h, t.inverted().map(pointer), keepRatio) * t;
+}

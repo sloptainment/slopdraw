@@ -69,6 +69,7 @@ public:
         if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
         picked_.clear();
         boxing_ = false;
+        unsetCursor();
         update();
         if (onToolChange) onToolChange(t);
     }
@@ -167,7 +168,7 @@ protected:
             p.setPen(pen);
             p.setBrush(Qt::NoBrush);
             for (int i : picked()) p.drawPath(Document::outline(doc_.paths(doc_.current())[i]));
-            if (!picked().empty()) drawTransformBox(p, pickedBounds(doc_.paths(doc_.current()), picked()));
+            if (!picked().empty()) drawTransformBox(p, frame());
             if (boxing_ && cursor_) {
                 pen.setStyle(Qt::DashLine);
                 p.setPen(pen);
@@ -215,6 +216,7 @@ protected:
         if (nodeDrag_) return dragNodesTo(e->position());
         if (moveDrag_) return dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
         if (boxing_) return;
+        if (objectTool_) setCursor(!picked().empty() && onRotateHandle(e->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
         if (lassoing_) return lassoAt(e->position(), erase());
         if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
         if (!dragging_) return;
@@ -323,18 +325,22 @@ private:
         bool shift = mods & Qt::ShiftModifier;
         int i = doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1));
         auto was = picked();
-        auto handle = was.empty() ? std::nullopt : boxHandleAt(pickedBounds(doc_.paths(doc_.current()), was), view_.toDoc(pos), 6 / view_.screenRadius(1));
-        if (handle) {  // a Transform box handle: drag scales the picked paths about the opposite corner or edge (Shift on a corner keeps the ratio)
+        auto handle = was.empty() ? std::nullopt : frameHandleAt(frame(), view_.toDoc(pos), 6 / view_.screenRadius(1));
+        bool rotate = !was.empty() && onRotateHandle(pos);
+        if (handle || rotate) {  // a Transform box handle: drag scales the picked paths about the opposite corner or edge (Shift on a corner keeps the ratio); the circle rotates them about the centre
+            moveFrame_ = frame();
             moveDrag_ = true;
             handle_ = handle;
-            moveBox_ = pickedBounds(doc_.paths(doc_.current()), was);
+            rotating_ = rotate;
             moveStart_ = view_.toDoc(pos);
             dragM_ = {};
             pathsBefore_ = doc_.paths(doc_.current());
             return;
         }
-        if (!shift && !was.empty() && pickedBounds(doc_.paths(doc_.current()), was).contains(view_.toDoc(pos)) && (i < 0 || was.count(i))) {  // inside the Transform box: drag moves the picked paths
+        if (!shift && !was.empty() && frame().rect.contains(frame().toDoc().inverted().map(view_.toDoc(pos))) && (i < 0 || was.count(i))) {  // inside the Transform box: drag moves the picked paths
+            moveFrame_ = frame();
             moveDrag_ = true;
+            rotating_ = false;
             moveStart_ = view_.toDoc(pos);
             handle_.reset();
             dragM_ = {};
@@ -342,6 +348,7 @@ private:
             return;
         }
         pickedLayer_ = doc_.current();
+        frame_.reset();
         picked_ = shift ? was : std::set<int>{};
         if (i >= 0) {
             if (!shift) picked_ = {i};
@@ -382,9 +389,11 @@ private:
         update();
     }
     // Select: the Transform box (#206): a 1 px frame, eight 8 px squares on its corners and edge midpoints (grabbable, #231), and the rotate circle (5 px, 24 px up a stem).
-    // The rotate circle is not grabbable yet.
-    void drawTransformBox(QPainter& p, QRectF b) {
+    void drawTransformBox(QPainter& p, const BoxFrame& f) {
         double px = 1 / view_.screenRadius(1);
+        QRectF b = f.rect;
+        p.save();
+        p.setTransform(f.toDoc(), true);
         QPen pen(Qt::blue, 1);
         pen.setCosmetic(true);
         p.setPen(pen);
@@ -397,10 +406,22 @@ private:
         for (double fx : {0.0, 0.5, 1.0})
             for (double fy : {0.0, 0.5, 1.0})
                 if (fx != 0.5 || fy != 0.5) p.drawRect(QRectF(b.left() + fx * b.width() - 4 * px, b.top() + fy * b.height() - 4 * px, 8 * px, 8 * px));
+        p.restore();
+    }
+    // The Transform box: the frame a rotate drag left, else the picked paths' bounds, unturned (#202).
+    BoxFrame frame() const {
+        if (moveDrag_ && (rotating_ || frame_)) return frameAfter(moveFrame_, dragM_);
+        return frame_ ? *frame_ : BoxFrame{pickedBounds(doc_.paths(doc_.current()), picked()), 0};
+    }
+    // Whether the screen point is within 6 px of the rotate circle, 24 px up the stem from the box's top edge midpoint.
+    bool onRotateHandle(QPointF pos) const {
+        BoxFrame f = frame();
+        QPointF c = f.toDoc().map(QPointF(f.rect.center().x(), f.rect.top() - 24 / view_.screenRadius(1))), d = view_.toDoc(pos) - c;
+        return std::hypot(d.x(), d.y()) <= 6 / view_.screenRadius(1);
     }
     // The picked paths follow the pointer live (no undo step yet).
     void dragMoveTo(QPointF pos, bool shift) {
-        dragM_ = handle_ ? scaleMatrix(moveBox_, *handle_, view_.toDoc(pos), shift) : QTransform::fromTranslate(view_.toDoc(pos).x() - moveStart_.x(), view_.toDoc(pos).y() - moveStart_.y());
+        dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, view_.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, view_.toDoc(pos), shift) : QTransform::fromTranslate(view_.toDoc(pos).x() - moveStart_.x(), view_.toDoc(pos).y() - moveStart_.y());
         auto moved = transformPaths(pathsBefore_, picked_, dragM_);
         for (int i : picked_) doc_.previewNodes(doc_.current(), i, moved[i].nodes, moved[i].closed);
         update();
@@ -412,6 +433,7 @@ private:
         if (dragM_.isIdentity()) return;
         for (int i : picked_) doc_.previewNodes(doc_.current(), i, pathsBefore_[i].nodes, pathsBefore_[i].closed);
         doc_.setPaths(doc_.current(), transformPaths(pathsBefore_, picked_, dragM_));
+        if (rotating_ || frame_) frame_ = frameAfter(moveFrame_, dragM_);  // once rotated the box stays so, through moves and scales, until the next pick
         update();
     }
     // Delete: removes the picked paths as one undo step.
@@ -558,7 +580,9 @@ private:
     int pickedLayer_ = -1;
     bool moveDrag_ = false;  // a Transform box move or scale is under way
     std::optional<QPoint> handle_;  // the box handle being dragged (scale), none for a move
-    QRectF moveBox_;  // the box when a scale began
+    BoxFrame moveFrame_;  // the box when a drag began
+    std::optional<BoxFrame> frame_;  // the box a rotate left, until the next pick
+    bool rotating_ = false;  // the drag is a rotate
     QPointF moveStart_;  // where the drag began, in document coordinates
     QTransform dragM_;  // what the drag has done to the picked paths so far
     std::vector<Document::VPath> pathsBefore_;  // the current layer's paths when it began

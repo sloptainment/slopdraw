@@ -861,6 +861,24 @@ static bool transformBoxScalesAboutOppositeHandle() {
     return c && r && e && hit && nodes && undone;
 }
 
+// Transform box rotate (#202): rotateMatrix(centre, start, pointer) turns about the centre by the angle the pointer swept; BoxFrame is the box
+// turned about its rect's centre, and frameAfter follows it through a transform. Box (0,0)-(100,50), centre (50,25): the pointer sweeping from
+// the right of the centre to below it is a quarter turn, the frame then reads 90 degrees, its right handle sits below the box and dragging that
+// handle to (50,125) scales along the rotated axis only (x of the document stays put).
+static bool transformBoxRotatesAndScalesAlongItsAxes() {
+    auto near = [](QPointF a, QPointF b) { return std::abs(a.x() - b.x()) < 1e-9 && std::abs(a.y() - b.y()) < 1e-9; };
+    QTransform r = rotateMatrix({50, 25}, {100, 25}, {50, 75});
+    bool turn = near(r.map(QPointF(100, 25)), {50, 75}) && near(r.map(QPointF(50, 25)), {50, 25});
+    BoxFrame f{QRectF(0, 0, 100, 50), 0}, turned = frameAfter(f, r);
+    bool frame = std::abs(turned.angle - 90) < 1e-9 && near(turned.rect.center(), {50, 25}) && turned.rect.size() == f.rect.size();
+    bool hit = frameHandleAt(turned, {50, 75}, 6) == QPoint(1, 0) && !frameHandleAt(turned, {100, 25}, 6);
+    QTransform m = frameScaleMatrix(turned, {1, 0}, {50, 125}, false);
+    bool scale = near(m.map(QPointF(50, 75)), {50, 125}) && near(m.map(QPointF(50, -25)), {50, -25}) && near(m.map(QPointF(100, -25)), {100, -25});
+    BoxFrame grown = frameAfter(turned, m);
+    bool follows = std::abs(grown.angle - 90) < 1e-9 && near(grown.rect.center(), {50, 50}) && std::abs(grown.rect.width() - 150) < 1e-9 && std::abs(grown.rect.height() - 50) < 1e-9;
+    return turn && frame && hit && scale && follows;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -1046,6 +1064,7 @@ int main() {
     run("draggingNodesMovesThemTogetherAndUndoesOnce", draggingNodesMovesThemTogetherAndUndoesOnce);
     run("deletingAndRetypingNodes", deletingAndRetypingNodes);
     run("transformNodesMapsNodesAndKeepsTheRest", transformNodesMapsNodesAndKeepsTheRest);
+    run("transformBoxRotatesAndScalesAlongItsAxes", transformBoxRotatesAndScalesAlongItsAxes);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     run("toolFollowsLayerKind", toolFollowsLayerKind);
