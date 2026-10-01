@@ -50,6 +50,8 @@ public:
     // Turns Vector Layer `layer` into a Raster Layer keeping its pixels, name, visibility and opacity, and drops its paths; one undo step
     // that gives the editable Vector Layer back. Returns false, changing nothing, for a Raster Layer or a bad index.
     bool rasterizeLayer(int layer);
+    // Replaces a Vector Layer's whole path list and redraws it, as one undo step; false (no step) for a Raster Layer or bad index.
+    bool setPaths(int layer, const std::vector<VPath>& paths);
     // The topmost path of Vector Layer `layer` whose Spiro curve passes within tol of p, or -1 (also for a Raster Layer).
     int pathAt(int layer, QPointF p, double tol) const;
     // The Spiro Node of path `path` nearest to p within tol, as its index, or -1 (also for a bad layer or path index).
@@ -101,8 +103,8 @@ private:
     // Pixels: before/after pixels of the rect a stroke changed. The layer ops keep what undo needs: Add nothing (its layer is blank
     // once later steps are undone), Delete the layer's image in before plus its visible/opacity in a/b, Move the target index in to,
     // Visible and Opacity the old and new value in a and b, Name the old and new in na and nb.
-    // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path, Knots the old and new Width Knots of one path, Nodes the old and new path in paths[0] and paths[1] (index in to), Rasterize the dropped paths.
-    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, PathAdd, Knots, Nodes, Rasterize };
+    // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path, Knots the old and new Width Knots of one path, Nodes the old and new path in paths[0] and paths[1] (index in to), Rasterize the dropped paths, Paths the old and new list in paths and newPaths.
+    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, PathAdd, Knots, Nodes, Rasterize, Paths };
     struct Step {
         Kind kind = Pixels;
         int layer = 0;
@@ -111,7 +113,7 @@ private:
         int to = 0;
         double a = 0, b = 0;
         bool vector = false;
-        std::vector<VPath> paths;
+        std::vector<VPath> paths, newPaths;
         std::vector<WidthKnot> ka, kb;  // Knots: path index in to, the old and new knots
         QString na, nb;  // Add: the new layer's name (nb unused); Delete: the deleted name in na; Name: old and new
     };

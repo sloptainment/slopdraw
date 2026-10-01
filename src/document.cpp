@@ -149,6 +149,19 @@ bool Document::rasterizeLayer(int layer) {
     return true;
 }
 
+bool Document::setPaths(int layer, const std::vector<VPath>& paths) {
+    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector) return false;
+    seal();
+    Step s;
+    s.kind = Paths;
+    s.layer = layer;
+    s.paths = layers_[layer].paths;
+    s.newPaths = paths;
+    push(s);
+    apply(s, false);
+    return true;
+}
+
 int Document::pathAt(int layer, QPointF p, double tol) const {
     if (!layers_[layer].vector) return -1;
     for (int i = int(layers_[layer].paths.size()); i-- > 0;) {
@@ -394,6 +407,10 @@ void Document::apply(const Step& s, bool reverse) {
         break;
     case Nodes:
         layers_[s.layer].paths[s.to] = s.paths[reverse ? 0 : 1];
+        rasterize(layers_[s.layer]);
+        break;
+    case Paths:
+        layers_[s.layer].paths = reverse ? s.paths : s.newPaths;
         rasterize(layers_[s.layer]);
         break;
     case Rasterize:  // the image already shows the paths, so only the kind and the paths change

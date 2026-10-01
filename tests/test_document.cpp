@@ -881,6 +881,24 @@ static bool rasterizingAVectorLayerUndoesOnce() {
     return raster && undone && redone && refused;
 }
 
+// setPaths replaces a Vector Layer's whole path list: a list missing two of three paths removes exactly those and redraws; one undo
+// restores the list and the render, redo removes them again; a Raster Layer or bad index is refused and pushes no step.
+static bool settingPathsUndoesOnce() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    for (int y : {10, 30, 50}) doc.addPath({{8, double(y), T::G2}, {32, double(y), T::G2}, {56, double(y), T::G2}}, false, Qt::black, 6);
+    QImage all = doc.render();
+    auto keep = doc.paths(1);
+    keep.erase(keep.begin() + 1, keep.end());
+    bool set = doc.setPaths(1, keep) && doc.paths(1).size() == 1 && doc.render() != all;
+    QImage one = doc.render();
+    bool undone = doc.undo() && doc.paths(1).size() == 3 && doc.render() == all;
+    bool redone = doc.redo() && doc.paths(1).size() == 1 && doc.render() == one;
+    bool refused = !doc.setPaths(0, keep) && !doc.setPaths(5, keep) && doc.undo() && doc.render() == all;
+    return set && undone && redone && refused;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -939,6 +957,7 @@ int main() {
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     run("toolFollowsLayerKind", toolFollowsLayerKind);
+    run("settingPathsUndoesOnce", settingPathsUndoesOnce);
     run("rasterizingAVectorLayerUndoesOnce", rasterizingAVectorLayerUndoesOnce);
     return failed != 0;
 }
