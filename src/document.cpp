@@ -137,6 +137,18 @@ bool Document::setNodes(int layer, int path, const std::vector<SpiroNode>& nodes
     return true;
 }
 
+bool Document::rasterizeLayer(int layer) {
+    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector) return false;
+    seal();
+    Step s;
+    s.kind = Rasterize;
+    s.layer = layer;
+    s.paths = layers_[layer].paths;
+    push(s);
+    apply(s, false);
+    return true;
+}
+
 int Document::pathAt(int layer, QPointF p, double tol) const {
     if (!layers_[layer].vector) return -1;
     for (int i = int(layers_[layer].paths.size()); i-- > 0;) {
@@ -383,6 +395,10 @@ void Document::apply(const Step& s, bool reverse) {
     case Nodes:
         layers_[s.layer].paths[s.to] = s.paths[reverse ? 0 : 1];
         rasterize(layers_[s.layer]);
+        break;
+    case Rasterize:  // the image already shows the paths, so only the kind and the paths change
+        layers_[s.layer].vector = reverse;
+        layers_[s.layer].paths = reverse ? s.paths : std::vector<VPath>{};
         break;
     }
 }

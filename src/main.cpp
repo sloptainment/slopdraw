@@ -23,6 +23,7 @@
 #include <QSlider>
 #include <QVBoxLayout>
 #include <QMainWindow>
+#include <QMenu>
 #include <QMenuBar>
 #include <QPainter>
 #include <QConicalGradient>
@@ -581,6 +582,15 @@ int main(int argc, char** argv) {
         if (row < 0) return;
         canvas->doc().setCurrent(canvas->doc().layerCount() - 1 - row);
         refresh();
+    });
+    layerList->setContextMenuPolicy(Qt::CustomContextMenu);  // right-click a row: Rasterize, enabled on a Vector Layer only (#200)
+    QObject::connect(layerList, &QListWidget::customContextMenuRequested, [canvas, layerList, refresh](QPoint pos) {
+        int row = layerList->row(layerList->itemAt(pos));
+        if (row < 0) return;
+        int i = canvas->doc().layerCount() - 1 - row;
+        QMenu menu;
+        menu.addAction("Rasterize")->setEnabled(canvas->doc().vector(i));
+        if (menu.exec(layerList->viewport()->mapToGlobal(pos)) && canvas->doc().rasterizeLayer(i)) refresh();
     });
     QObject::connect(layerOpacity, &QSlider::valueChanged, [canvas](int v) {
         canvas->doc().setOpacity(canvas->doc().current(), v / 100.0);

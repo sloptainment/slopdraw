@@ -848,6 +848,24 @@ static bool toolFollowsLayerKind() {
         && toolForLayer(false, LassoFillTool) == LassoFillTool && toolForLayer(true, NodeKnotEditTool) == NodeKnotEditTool;
 }
 
+// rasterizeLayer turns a Vector Layer into a Raster Layer with the same pixels, name, visibility and opacity and no paths; one undo
+// gives back the editable Vector Layer, redo rasterizes again; a Raster Layer or bad index is refused.
+static bool rasterizingAVectorLayerUndoesOnce() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 32, T::G2}, {32, 32, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
+    doc.setOpacity(1, 0.5);
+    QImage pixels = doc.image(1);
+    QString name = doc.name(1);
+    bool done = doc.rasterizeLayer(1);
+    bool raster = done && !doc.vector(1) && doc.paths(1).empty() && doc.image(1) == pixels && doc.name(1) == name && doc.opacity(1) == 0.5 && doc.visible(1);
+    bool undone = doc.undo() && doc.vector(1) && doc.paths(1).size() == 1 && doc.image(1) == pixels;
+    bool redone = doc.redo() && !doc.vector(1) && doc.paths(1).empty() && doc.image(1) == pixels;
+    bool refused = !doc.rasterizeLayer(1) && !doc.rasterizeLayer(0) && !doc.rasterizeLayer(5);
+    return raster && undone && redone && refused;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -905,5 +923,6 @@ int main() {
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     run("toolFollowsLayerKind", toolFollowsLayerKind);
+    run("rasterizingAVectorLayerUndoesOnce", rasterizingAVectorLayerUndoesOnce);
     return failed != 0;
 }
