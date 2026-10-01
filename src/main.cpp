@@ -479,18 +479,21 @@ private:
     }
     // The picked paths follow the pointer live (no undo step yet).
     void dragMoveTo(QPointF pos, bool shift) {
-        dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, view_.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, view_.toDoc(pos), shift) : QTransform::fromTranslate(view_.toDoc(pos).x() - moveStart_.x(), view_.toDoc(pos).y() - moveStart_.y());
-        if (rasterBox()) {  // lift on the first drag; every drag resamples from the untouched pixels
-            floating_ = doc_.floatRect(box_, floatM_ * dragM_);
-            return update();
-        }
-        auto moved = transformPaths(pathsBefore_, picked_, dragM_);  // live preview moves nodes only; widths follow on release
-        for (int i : picked_) doc_.previewNodes(doc_.current(), i, moved[i].nodes, moved[i].closed);
+        preview_ = [=, this] {
+            dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, view_.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, view_.toDoc(pos), shift) : QTransform::fromTranslate(view_.toDoc(pos).x() - moveStart_.x(), view_.toDoc(pos).y() - moveStart_.y());
+            if (rasterBox()) {  // lift on the first drag; every drag resamples from the untouched pixels
+                floating_ = doc_.floatRect(box_, floatM_ * dragM_);
+                return;
+            }
+            auto moved = transformPaths(pathsBefore_, picked_, dragM_);  // live preview moves nodes only; widths follow on release
+            for (int i : picked_) doc_.previewNodes(doc_.current(), i, moved[i].nodes, moved[i].closed);
+        };
         update();
     }
     // Release: one undo step for the whole move, from the paths it started with.
     void endMoveDrag() {
         if (!moveDrag_) return;
+        flushPreview();
         moveDrag_ = false;
         if (rasterBox()) {
             if (floating_) { floatM_ = floatM_ * dragM_; frame_ = frameAfter(moveFrame_, dragM_); }
