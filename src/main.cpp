@@ -1082,7 +1082,13 @@ int main(int argc, char** argv) {
         canvas->setSession(std::move(tabs[i]));
         updateTitle();
     });
-    auto closeTab = [&](int i) {  // no dirty check yet (#284); the last close returns to the no-document start (#157)
+    std::function<bool()> saveActive;  // Save on the active tab; false if cancelled or failed (set once Save exists)
+    auto closeTab = [&](int i) {  // a dirty tab asks Save / Discard / Cancel (#262); the last close returns to the no-document start (#157)
+        tabBar->setCurrentIndex(i);  // a background tab is shown before it is asked about
+        if (canvas->doc().stepId() != canvas->session().saved) {
+            auto b = QMessageBox::question(&window, "Close", tabBar->tabText(i).chopped(1) + " has unsaved changes.", QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+            if (b == QMessageBox::Cancel || (b == QMessageBox::Save && !saveActive())) return;
+        }
         bool wasActive = i == active;
         if (wasActive) canvas->takeSession();  // ends a lifted piece or unfinished path; the session itself is dropped
         tabs.erase(tabs.begin() + i);
@@ -1141,19 +1147,19 @@ int main(int argc, char** argv) {
         openTab(std::move(*doc), path);
     });
     auto saveTo = [&](QString path) {
-        if (path.isEmpty()) return;
+        if (path.isEmpty()) return false;
         if (!path.endsWith(".ora")) path += ".ora";
-        if (!writeOra(canvas->doc(), path)) { QMessageBox::warning(&window, "Save", "Could not write " + path); return; }
+        if (!writeOra(canvas->doc(), path)) { QMessageBox::warning(&window, "Save", "Could not write " + path); return false; }
         canvas->session().path = path;
         canvas->session().saved = canvas->doc().stepId();
         updateTitle();
+        return true;
     };
     auto* fileSave = fileMenu->addAction("&Save");
     docActions.push_back(fileSave);
     fileSave->setShortcut(QKeySequence::Save);
-    QObject::connect(fileSave, &QAction::triggered, [&] {
-        saveTo(!canvas->session().path.isEmpty() ? canvas->session().path : QFileDialog::getSaveFileName(&window, "Save", {}, "OpenRaster (*.ora)"));
-    });
+    saveActive = [&] { return saveTo(!canvas->session().path.isEmpty() ? canvas->session().path : QFileDialog::getSaveFileName(&window, "Save", {}, "OpenRaster (*.ora)")); };
+    QObject::connect(fileSave, &QAction::triggered, [&] { saveActive(); });
     auto* fileSaveAs = fileMenu->addAction("Save &As...");
     docActions.push_back(fileSaveAs);
     fileSaveAs->setShortcut(QKeySequence("Ctrl+Shift+S"));
