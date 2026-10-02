@@ -48,12 +48,21 @@
 // Shift+left drag (mouse or pen) resizes the brush instead of painting: 100 px right = x e.
 // Ctrl+left click (mouse or pen) picks the visible color at that point instead of painting.
 // Painting: the pen tip, or plain left button at pressure 0.5, feeds pen samples to the Document.
+// One open document as the Canvas works on it: the Document, its view, its file and its saved mark (#279).
+struct Session {
+    Document doc{QSize()};
+    View view;
+    QString path;  // the document's file, empty until opened or first saved (#277)
+    int saved = 0;  // Document::stepId() at the last open or save (#240)
+};
+
 class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
-    void setDocument(Document doc) { doc_ = std::move(doc); floating_ = false; floatM_ = {}; frame_.reset(); view_ = View(); selected_ = -1; nodeSel_.clear(); picked_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
-    Document& doc() { return doc_; }
-    bool hasDoc() const { return !doc_.image(0).isNull(); }  // the app starts on Document(QSize()), which has no pixels (#157)
+    void setDocument(Document doc, QString path = {}) { s_ = {std::move(doc), View(), path, 0}; s_.saved = s_.doc.stepId(); floating_ = false; floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
+    Document& doc() { return s_.doc; }
+    Session& session() { return s_; }
+    bool hasDoc() const { return !s_.doc.image(0).isNull(); }  // the app starts on Document(QSize()), which has no pixels (#157)
     std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
     void setColor(const QColor& c) { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
     std::function<void()> onRadiusChange;  // fired after a drag resize so the Size slider can follow
@@ -67,7 +76,7 @@ public:
     // Node/Knot edit's picker: retypes the selected nodes (one undo step); the pen's type is left alone.
     void retypeSelected(SpiroType t) {
         editType_ = t;
-        if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(doc_.nodes(doc_.current(), selected_), nodeSel_, t));
+        if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(s_.doc.nodes(s_.doc.current(), selected_), nodeSel_, t));
     }
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
     std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
@@ -86,7 +95,7 @@ public:
     // The Edit, View and Tools menu actions call these; their keys are window-wide shortcuts.
     void undo(bool redo) {
         commitFloat();  // so undo takes the whole piece back
-        redo ? doc_.redo() : doc_.undo();
+        redo ? s_.doc.redo() : s_.doc.undo();
         selected_ = -1;
         nodeSel_.clear();
         picked_.clear();
@@ -94,7 +103,7 @@ public:
         update();
         if (onLayersChange) onLayersChange();
     }
-    void mirror() { view_.mirrorAt(rect().center()); update(); }
+    void mirror() { s_.view.mirrorAt(rect().center()); update(); }
     // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
     bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && eraseBrush_; }
     void setErase(bool on) { if (!spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
@@ -102,7 +111,7 @@ public:
     void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
     void finishPath(bool closed) {
         if (floating_) return commitFloat();
-        if (spiroTool_) pen_.finish(doc_, closed, color_, pathWidth_);  // refused on a Raster Layer
+        if (spiroTool_) pen_.finish(s_.doc, closed, color_, pathWidth_);  // refused on a Raster Layer
         update();
         if (onLayersChange) onLayersChange();
     }
@@ -117,9 +126,9 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override {
-        if (boxLayer_ != doc_.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
+        if (boxLayer_ != s_.doc.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
         flushPreview();
-        if (penLayer_ != doc_.current()) { pen_.cancel(); penLayer_ = doc_.current(); }  // a layer switch drops the unfinished path
+        if (penLayer_ != s_.doc.current()) { pen_.cancel(); penLayer_ = s_.doc.current(); }  // a layer switch drops the unfinished path
         QString h = hint();  // every tool or state change calls update(), so paint is where a change of hint is noticed
         if (h != hint_) { hint_ = h; if (onHint) onHint(h); }
         QPainter p(this);
@@ -130,8 +139,8 @@ protected:
             return;
         }
         p.setRenderHint(QPainter::SmoothPixmapTransform);
-        p.setTransform(view_.matrix());
-        p.drawImage(0, 0, doc_.render());
+        p.setTransform(s_.view.matrix());
+        p.drawImage(0, 0, s_.doc.render());
         if (lasso_.size() > 1) {
             QPen pen(Qt::gray, 1);
             pen.setCosmetic(true);
@@ -140,7 +149,7 @@ protected:
         }
         if (spiroTool_ && !pen_.nodes.empty()) {  // the path so far, plus a node under the pointer that a click would place
             auto nodes = pen_.nodes;
-            if (cursor_) nodes.push_back({view_.toDoc(*cursor_).x(), view_.toDoc(*cursor_).y(), pen_.type});
+            if (cursor_) nodes.push_back({s_.view.toDoc(*cursor_).x(), s_.view.toDoc(*cursor_).y(), pen_.type});
             if (auto path = spiroToPath(nodes, false)) {
                 QPen pen(Qt::gray, 1);
                 pen.setCosmetic(true);
@@ -151,8 +160,8 @@ protected:
             QPen pen(Qt::blue, 1);
             pen.setCosmetic(true);
             p.setPen(pen);
-            double r = 4 / view_.screenRadius(1);
-            bool closing = cursor_ && pen_.nodes.size() > 2 && pen_.onFirst(view_.toDoc(*cursor_), 6 / view_.screenRadius(1));
+            double r = 4 / s_.view.screenRadius(1);
+            bool closing = cursor_ && pen_.nodes.size() > 2 && pen_.onFirst(s_.view.toDoc(*cursor_), 6 / s_.view.screenRadius(1));
             for (size_t i = 0; i < pen_.nodes.size(); i++) {  // a square per placed node; the first is filled when a click would close (#180)
                 p.setBrush(i == 0 && closing ? Qt::blue : Qt::white);
                 p.drawRect(QRectF(pen_.nodes[i].x - r, pen_.nodes[i].y - r, 2 * r, 2 * r));
@@ -162,8 +171,8 @@ protected:
             QPen pen(Qt::blue, 1);
             pen.setCosmetic(true);
             p.setPen(pen);
-            double r = 4 / view_.screenRadius(1);
-            auto nodes = doc_.nodes(doc_.current(), selected_);
+            double r = 4 / s_.view.screenRadius(1);
+            auto nodes = s_.doc.nodes(s_.doc.current(), selected_);
             for (int i = 0; i < int(nodes.size()); i++) {
                 p.setBrush(nodeSel_.count(i) ? Qt::blue : Qt::white);
                 p.drawRect(QRectF(nodes[i].x - r, nodes[i].y - r, 2 * r, 2 * r));
@@ -174,23 +183,23 @@ protected:
             pen.setCosmetic(true);
             p.setPen(pen);
             p.setBrush(Qt::white);
-            double r = 4 / view_.screenRadius(1);
-            for (QPointF h : doc_.knotHandles(doc_.current(), selected_)) p.drawEllipse(h, r, r);
+            double r = 4 / s_.view.screenRadius(1);
+            for (QPointF h : s_.doc.knotHandles(s_.doc.current(), selected_)) p.drawEllipse(h, r, r);
         }
         if (objectTool_) {  // Select: the picked paths' outlines, and the box being dragged
             QPen pen(Qt::blue, 1);
             pen.setCosmetic(true);
             p.setPen(pen);
             p.setBrush(Qt::NoBrush);
-            for (int i : picked()) p.drawPath(Document::outline(doc_.paths(doc_.current())[i]));
+            for (int i : picked()) p.drawPath(Document::outline(s_.doc.paths(s_.doc.current())[i]));
             if (!picked().empty() || rasterBox()) drawTransformBox(p, frame());
             if (boxing_ && cursor_) {
                 pen.setStyle(Qt::DashLine);
                 p.setPen(pen);
-                p.drawRect(QRectF(boxStart_, view_.toDoc(*cursor_)).normalized());
+                p.drawRect(QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized());
             }
         }
-        QRectF marked = boxTool_ && boxing_ && cursor_ ? QRectF(boxStart_, view_.toDoc(*cursor_)).normalized() : QRectF(box_);  // Box Select: the rectangle, or the one being dragged
+        QRectF marked = boxTool_ && boxing_ && cursor_ ? QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized() : QRectF(box_);  // Box Select: the rectangle, or the one being dragged
         if (!marked.isEmpty()) {
             QPen pen(Qt::blue, 1, Qt::DashLine);
             pen.setCosmetic(true);
@@ -201,7 +210,7 @@ protected:
         if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) {  // brush outline: dark with a light line beside it, readable on any color
             p.resetTransform();
             p.setRenderHint(QPainter::Antialiasing);
-            double r = view_.screenRadius(radius());
+            double r = s_.view.screenRadius(radius());
             p.setBrush(Qt::NoBrush);
             p.setPen(Qt::white);
             p.drawEllipse(*cursor_, r + 1, r + 1);
@@ -241,9 +250,9 @@ protected:
     void panZoom(QPointF pos, Qt::KeyboardModifiers mods) {
         QPointF d = pos - last_;
         last_ = pos;
-        if (mods & Qt::ControlModifier) view_.zoomAt(rect().center(), std::exp(-d.y() * 0.01));
-        else if (mods & Qt::ShiftModifier) view_.rotateAt(rect().center(), d.x() * 0.5);
-        else view_.pan(d);
+        if (mods & Qt::ControlModifier) s_.view.zoomAt(rect().center(), std::exp(-d.y() * 0.01));
+        else if (mods & Qt::ShiftModifier) s_.view.rotateAt(rect().center(), d.x() * 0.5);
+        else s_.view.pan(d);
         update();
     }
     void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
@@ -271,7 +280,7 @@ protected:
     }
     void leaveEvent(QEvent*) override { cursor_.reset(); update(); }
     void wheelEvent(QWheelEvent* e) override {
-        view_.zoomAt(e->position(), std::pow(1.1, e->angleDelta().y() / 120.0));
+        s_.view.zoomAt(e->position(), std::pow(1.1, e->angleDelta().y() / 120.0));
         update();
     }
     void keyPressEvent(QKeyEvent* e) override {
@@ -299,7 +308,7 @@ private:
         if (selectTool_ && selected_ < 0) return "Click a path to select it";
         if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Shift+click the path adds a node · Ctrl+Alt+click deletes";
         if (objectTool_ && rasterBox()) return "Drag inside the box moves the pixels · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts them back";
-        if (objectTool_ && !doc_.vector(doc_.current())) return "Make a rectangle with Box Select first, then Select transforms its pixels";
+        if (objectTool_ && !s_.doc.vector(s_.doc.current())) return "Make a rectangle with Box Select first, then Select transforms its pixels";
         if (boxTool_ && box_.isEmpty()) return "Drag a rectangle to select pixels";
         if (boxTool_) return "Delete clears the pixels · drag a new rectangle to replace it · click outside or Esc clears the selection";
         if (objectTool_ && picked().empty()) return "Click a path to pick it · Shift+click toggles · drag a box on empty canvas picks the paths it touches";
@@ -308,14 +317,14 @@ private:
     }
     // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node.
     void spiroClick(QPointF pos, bool corner = false) {
-        QPointF d = view_.toDoc(pos);
-        if (pen_.nodes.size() > 2 && pen_.onFirst(d, 6 / view_.screenRadius(1))) finishPath(true);
+        QPointF d = s_.view.toDoc(pos);
+        if (pen_.nodes.size() > 2 && pen_.onFirst(d, 6 / s_.view.screenRadius(1))) finishPath(true);
         else pen_.click(d, corner);
         update();
     }
     // Select tool: a click within 6 screen px of a path of the current Vector Layer selects it; any other click deselects.
     void selectAt(QPointF pos) {
-        selected_ = doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1));
+        selected_ = s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
         nodeSel_.clear();
         update();
     }
@@ -325,10 +334,10 @@ private:
         int i = knotAt(pos);
         if (i >= 0) {
             knotDrag_ = i;
-            knotsBefore_ = doc_.knots(doc_.current(), selected_);
+            knotsBefore_ = s_.doc.knots(s_.doc.current(), selected_);
             return;
         }
-        int n = selected_ < 0 ? -1 : doc_.nodeAt(doc_.current(), selected_, view_.toDoc(pos), 6 / view_.screenRadius(1));
+        int n = selected_ < 0 ? -1 : s_.doc.nodeAt(s_.doc.current(), selected_, s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
         if (n < 0 && (mods & Qt::ShiftModifier)) return;
         if (n < 0) return selectAt(pos);
         if (mods & Qt::ShiftModifier) {
@@ -336,41 +345,41 @@ private:
         } else {  // a press on a selected node keeps the selection, so all selected nodes drag together
             if (!nodeSel_.count(n)) nodeSel_ = {n};
             nodeDrag_ = true;
-            nodeStart_ = view_.toDoc(pos);
-            pathBefore_ = doc_.paths(doc_.current())[selected_];
+            nodeStart_ = s_.view.toDoc(pos);
+            pathBefore_ = s_.doc.paths(s_.doc.current())[selected_];
         }
         update();
     }
     // Select press on a Vector Layer: on a path it picks that path alone (Shift toggles it); on empty canvas it clears the pick (Shift keeps it)
     // and starts a box that endBox turns into the paths it touches.
     void objectPress(QPointF pos, Qt::KeyboardModifiers mods) {
-        if (!doc_.vector(doc_.current())) return rasterPress(pos);
+        if (!s_.doc.vector(s_.doc.current())) return rasterPress(pos);
         bool shift = mods & Qt::ShiftModifier;
-        int i = doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1));
+        int i = s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
         auto was = picked();
-        auto handle = was.empty() ? std::nullopt : frameHandleAt(frame(), view_.toDoc(pos), 6 / view_.screenRadius(1));
+        auto handle = was.empty() ? std::nullopt : frameHandleAt(frame(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
         bool rotate = !was.empty() && onRotateHandle(pos);
         if (handle || rotate) {  // a Transform box handle: drag scales the picked paths about the opposite corner or edge (Shift on a corner keeps the ratio); the circle rotates them about the centre
             moveFrame_ = frame();
             moveDrag_ = true;
             handle_ = handle;
             rotating_ = rotate;
-            moveStart_ = view_.toDoc(pos);
+            moveStart_ = s_.view.toDoc(pos);
             dragM_ = {};
-            pathsBefore_ = doc_.paths(doc_.current());
+            pathsBefore_ = s_.doc.paths(s_.doc.current());
             return;
         }
-        if (!shift && !was.empty() && frame().rect.contains(frame().toDoc().inverted().map(view_.toDoc(pos))) && (i < 0 || was.count(i))) {  // inside the Transform box: drag moves the picked paths
+        if (!shift && !was.empty() && frame().rect.contains(frame().toDoc().inverted().map(s_.view.toDoc(pos))) && (i < 0 || was.count(i))) {  // inside the Transform box: drag moves the picked paths
             moveFrame_ = frame();
             moveDrag_ = true;
             rotating_ = false;
-            moveStart_ = view_.toDoc(pos);
+            moveStart_ = s_.view.toDoc(pos);
             handle_.reset();
             dragM_ = {};
-            pathsBefore_ = doc_.paths(doc_.current());
+            pathsBefore_ = s_.doc.paths(s_.doc.current());
             return;
         }
-        pickedLayer_ = doc_.current();
+        pickedLayer_ = s_.doc.current();
         frame_.reset();
         picked_ = shift ? was : std::set<int>{};
         if (i >= 0) {
@@ -378,7 +387,7 @@ private:
             else if (!picked_.erase(i)) picked_.insert(i);
         } else {
             boxing_ = true;
-            boxStart_ = view_.toDoc(pos);
+            boxStart_ = s_.view.toDoc(pos);
         }
         update();
     }
@@ -386,8 +395,8 @@ private:
     void rasterPress(QPointF pos) {
         if (!rasterBox()) return;
         BoxFrame f = frame();
-        QPointF d = view_.toDoc(pos);
-        auto handle = frameHandleAt(f, d, 6 / view_.screenRadius(1));
+        QPointF d = s_.view.toDoc(pos);
+        auto handle = frameHandleAt(f, d, 6 / s_.view.screenRadius(1));
         bool rotate = onRotateHandle(pos);
         if (!handle && !rotate && !f.rect.contains(f.toDoc().inverted().map(d))) return commitFloat();
         moveFrame_ = f;
@@ -400,7 +409,7 @@ private:
     // The piece's pixels are in the document again: one undo step, and the selection ends.
     void commitFloat() {
         if (!floating_) return;
-        doc_.transformRect(box_, floatM_);
+        s_.doc.transformRect(box_, floatM_);
         floating_ = false;
         floatM_ = {};
         frame_.reset();
@@ -410,23 +419,23 @@ private:
     }
     void cancelFloat() {
         if (!floating_) return;
-        doc_.cancelFloat();
+        s_.doc.cancelFloat();
         floating_ = false;
         floatM_ = {};
         frame_.reset();
         update();
     }
     // A Box Select rectangle on the current Raster Layer: Select's Transform box shows on it.
-    bool rasterBox() const { return hasDoc() && !doc_.vector(doc_.current()) && !box_.isEmpty() && boxLayer_ == doc_.current(); }
+    bool rasterBox() const { return hasDoc() && !s_.doc.vector(s_.doc.current()) && !box_.isEmpty() && boxLayer_ == s_.doc.current(); }
     // Box Select press: starts a drag; endBox makes it the rectangle, or a click outside the old one clears it.
     void boxPress(QPointF pos) {
         boxing_ = true;
-        boxStart_ = view_.toDoc(pos);
+        boxStart_ = s_.view.toDoc(pos);
         update();
     }
     // Delete in Box Select: clears the rectangle's pixels on its layer (transparent, white on the background) as one undo step.
     void deleteBox() {
-        if (box_.isEmpty() || boxLayer_ != doc_.current() || !doc_.clearRect(box_)) return;
+        if (box_.isEmpty() || boxLayer_ != s_.doc.current() || !s_.doc.clearRect(box_)) return;
         update();
         if (onLayersChange) onLayersChange();
     }
@@ -435,13 +444,13 @@ private:
         if (!boxing_) return;
         boxing_ = false;
         if (cursor_) {
-            QRectF box = QRectF(boxStart_, view_.toDoc(*cursor_)).normalized();
-            bool dragged = std::max(box.width(), box.height()) * view_.screenRadius(1) > 3;
+            QRectF box = QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized();
+            bool dragged = std::max(box.width(), box.height()) * s_.view.screenRadius(1) > 3;
             if (boxTool_) {
-                if (dragged) { box_ = box.toAlignedRect() & doc_.image(0).rect(); boxLayer_ = doc_.current(); frame_.reset(); }
+                if (dragged) { box_ = box.toAlignedRect() & s_.doc.image(0).rect(); boxLayer_ = s_.doc.current(); frame_.reset(); }
                 else if (!box_.contains(box.topLeft().toPoint())) box_ = QRect();
             } else if (dragged) {
-                auto in = doc_.pathsIn(doc_.current(), box);
+                auto in = s_.doc.pathsIn(s_.doc.current(), box);
                 picked_.insert(in.begin(), in.end());
             }
         }
@@ -449,7 +458,7 @@ private:
     }
     // Select: the Transform box (#206): a 1 px frame, eight 8 px squares on its corners and edge midpoints (grabbable, #231), and the rotate circle (5 px, 24 px up a stem).
     void drawTransformBox(QPainter& p, const BoxFrame& f) {
-        double px = 1 / view_.screenRadius(1);
+        double px = 1 / s_.view.screenRadius(1);
         QRectF b = f.rect;
         p.save();
         p.setTransform(f.toDoc(), true);
@@ -471,24 +480,24 @@ private:
     BoxFrame frame() const {
         if (rasterBox()) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : frame_ ? *frame_ : BoxFrame{QRectF(box_), 0};
         if (moveDrag_ && (rotating_ || frame_)) return frameAfter(moveFrame_, dragM_);
-        return frame_ ? *frame_ : BoxFrame{pickedBounds(doc_.paths(doc_.current()), picked()), 0};
+        return frame_ ? *frame_ : BoxFrame{pickedBounds(s_.doc.paths(s_.doc.current()), picked()), 0};
     }
     // Whether the screen point is within 6 px of the rotate circle, 24 px up the stem from the box's top edge midpoint.
     bool onRotateHandle(QPointF pos) const {
         BoxFrame f = frame();
-        QPointF c = f.toDoc().map(QPointF(f.rect.center().x(), f.rect.top() - 24 / view_.screenRadius(1))), d = view_.toDoc(pos) - c;
-        return std::hypot(d.x(), d.y()) <= 6 / view_.screenRadius(1);
+        QPointF c = f.toDoc().map(QPointF(f.rect.center().x(), f.rect.top() - 24 / s_.view.screenRadius(1))), d = s_.view.toDoc(pos) - c;
+        return std::hypot(d.x(), d.y()) <= 6 / s_.view.screenRadius(1);
     }
     // The picked paths follow the pointer live (no undo step yet).
     void dragMoveTo(QPointF pos, bool shift) {
         preview_ = [=, this] {
-            dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, view_.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, view_.toDoc(pos), shift) : QTransform::fromTranslate(view_.toDoc(pos).x() - moveStart_.x(), view_.toDoc(pos).y() - moveStart_.y());
+            dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, s_.view.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), shift) : QTransform::fromTranslate(s_.view.toDoc(pos).x() - moveStart_.x(), s_.view.toDoc(pos).y() - moveStart_.y());
             if (rasterBox()) {  // lift on the first drag; every drag resamples from the untouched pixels
-                floating_ = doc_.floatRect(box_, floatM_ * dragM_);
+                floating_ = s_.doc.floatRect(box_, floatM_ * dragM_);
                 return;
             }
             auto moved = transformPaths(pathsBefore_, picked_, dragM_);  // live preview moves nodes only; widths follow on release
-            for (int i : picked_) doc_.previewNodes(doc_.current(), i, moved[i].nodes, moved[i].closed);
+            for (int i : picked_) s_.doc.previewNodes(s_.doc.current(), i, moved[i].nodes, moved[i].closed);
         };
         update();
     }
@@ -502,8 +511,8 @@ private:
             return;
         }
         if (dragM_.isIdentity()) return;
-        for (int i : picked_) doc_.previewNodes(doc_.current(), i, pathsBefore_[i].nodes, pathsBefore_[i].closed);
-        doc_.setPaths(doc_.current(), transformPaths(pathsBefore_, picked_, dragM_, scaleWidths_));
+        for (int i : picked_) s_.doc.previewNodes(s_.doc.current(), i, pathsBefore_[i].nodes, pathsBefore_[i].closed);
+        s_.doc.setPaths(s_.doc.current(), transformPaths(pathsBefore_, picked_, dragM_, scaleWidths_));
         if (rotating_ || frame_) frame_ = frameAfter(moveFrame_, dragM_);  // once rotated the box stays so, through moves and scales, until the next pick
         update();
     }
@@ -519,20 +528,20 @@ private:
         QTransform m = flipMatrix(f.rect.center(), chosen == h);
         if (rasterBox()) {  // joins the floating piece; the commit is the one undo step
             floatM_ = floatM_ * m;
-            floating_ = doc_.floatRect(box_, floatM_);
+            floating_ = s_.doc.floatRect(box_, floatM_);
             frame_ = frameAfter(f, m);
             return update();
         }
-        if (!doc_.setPaths(doc_.current(), transformPaths(doc_.paths(doc_.current()), picked(), m, scaleWidths_))) return;
+        if (!s_.doc.setPaths(s_.doc.current(), transformPaths(s_.doc.paths(s_.doc.current()), picked(), m, scaleWidths_))) return;
         if (frame_) frame_ = frameAfter(f, m);
         update();
     }
     // Delete: removes the picked paths as one undo step.
     void deletePicked() {
-        auto& all = doc_.paths(doc_.current());
+        auto& all = s_.doc.paths(s_.doc.current());
         std::vector<Document::VPath> kept;
         for (int i = 0; i < int(all.size()); i++) if (!picked().count(i)) kept.push_back(all[i]);
-        if (picked().empty() || !doc_.setPaths(doc_.current(), kept)) return;
+        if (picked().empty() || !s_.doc.setPaths(s_.doc.current(), kept)) return;
         picked_.clear();
         update();
         if (onLayersChange) onLayersChange();
@@ -540,25 +549,25 @@ private:
     // The paths Select has picked, on the layer they were picked on; none once another layer is current or the list got shorter.
     const std::set<int>& picked() const {
         static const std::set<int> none;
-        bool ok = pickedLayer_ == doc_.current() && (picked_.empty() || *picked_.rbegin() < int(doc_.paths(pickedLayer_).size()));
+        bool ok = pickedLayer_ == s_.doc.current() && (picked_.empty() || *picked_.rbegin() < int(s_.doc.paths(pickedLayer_).size()));
         return ok ? picked_ : none;
     }
     // Replaces the selected path's nodes with one undo step; a set with no curve is refused and leaves the path as it was.
     void editNodes(const std::vector<SpiroNode>& nodes) {
-        doc_.setNodes(doc_.current(), selected_, nodes, doc_.paths(doc_.current())[selected_].closed);
+        s_.doc.setNodes(s_.doc.current(), selected_, nodes, s_.doc.paths(s_.doc.current())[selected_].closed);
         update();
     }
     // Delete: drops the selected nodes unless fewer than 2 would remain.
     void deleteSelectedNodes() {
         if (selected_ < 0 || nodeSel_.empty()) return;
-        if (auto kept = removeNodes(doc_.nodes(doc_.current(), selected_), nodeSel_)) {
+        if (auto kept = removeNodes(s_.doc.nodes(s_.doc.current(), selected_), nodeSel_)) {
             editNodes(*kept);
             nodeSel_.clear();
         }
     }
     // The selected nodes follow the pointer live (no undo step yet).
     void dragNodesTo(QPointF pos) {
-        preview_ = [=, this] { doc_.previewNodes(doc_.current(), selected_, moveNodes(pathBefore_.nodes, nodeSel_, view_.toDoc(pos) - nodeStart_), pathBefore_.closed); };
+        preview_ = [=, this] { s_.doc.previewNodes(s_.doc.current(), selected_, moveNodes(pathBefore_.nodes, nodeSel_, s_.view.toDoc(pos) - nodeStart_), pathBefore_.closed); };
         update();
     }
     // A pen sends far more moves than a re-rasterize can keep up with, so a drag only queues its preview and paint runs the latest one.
@@ -569,20 +578,20 @@ private:
     void endNodeDrag() {
         if (!nodeDrag_) return;
         flushPreview();
-        auto after = doc_.nodes(doc_.current(), selected_);
-        doc_.previewNodes(doc_.current(), selected_, pathBefore_.nodes, pathBefore_.closed);
+        auto after = s_.doc.nodes(s_.doc.current(), selected_);
+        s_.doc.previewNodes(s_.doc.current(), selected_, pathBefore_.nodes, pathBefore_.closed);
         auto& was = pathBefore_.nodes;
         if (!std::equal(after.begin(), after.end(), was.begin(), [](auto& a, auto& b) { return a.x == b.x && a.y == b.y; }))
-            doc_.setNodes(doc_.current(), selected_, after, pathBefore_.closed);
+            s_.doc.setNodes(s_.doc.current(), selected_, after, pathBefore_.closed);
         nodeDrag_ = false;
         update();
     }
     // Index of the selected path's Width Knot handle within 6 screen px of pos, -1 for none.
     int knotAt(QPointF pos) {
         if (!selectTool_ || selected_ < 0) return -1;
-        auto handles = doc_.knotHandles(doc_.current(), selected_);
+        auto handles = s_.doc.knotHandles(s_.doc.current(), selected_);
         for (int i = 0; i < int(handles.size()); i++)
-            if (QLineF(handles[i], view_.toDoc(pos)).length() * view_.screenRadius(1) <= 6) return i;
+            if (QLineF(handles[i], s_.view.toDoc(pos)).length() * s_.view.screenRadius(1) <= 6) return i;
         return -1;
     }
     // Ctrl+click on a Width Knot handle duplicates the knot, Ctrl+Alt+click deletes it, Ctrl+click on the selected path off a handle adds one,
@@ -590,25 +599,25 @@ private:
     bool editKnot(QPointF pos, Qt::KeyboardModifiers mods) {
         int i = knotAt(pos);
         if (i < 0) {
-            if (!selectTool_ || selected_ < 0 || (mods & Qt::AltModifier) || doc_.pathAt(doc_.current(), view_.toDoc(pos), 6 / view_.screenRadius(1)) != selected_) return false;
-            if (mods & Qt::ShiftModifier) doc_.addNode(doc_.current(), selected_, view_.toDoc(pos), editType_);
-            else doc_.addKnot(doc_.current(), selected_, view_.toDoc(pos));
+            if (!selectTool_ || selected_ < 0 || (mods & Qt::AltModifier) || s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1)) != selected_) return false;
+            if (mods & Qt::ShiftModifier) s_.doc.addNode(s_.doc.current(), selected_, s_.view.toDoc(pos), editType_);
+            else s_.doc.addKnot(s_.doc.current(), selected_, s_.view.toDoc(pos));
             update();
             return true;
         }
-        auto k = doc_.knots(doc_.current(), selected_);
-        doc_.setKnots(doc_.current(), selected_, (mods & Qt::AltModifier) ? deleteKnot(k, i) : duplicateKnot(k, i));
+        auto k = s_.doc.knots(s_.doc.current(), selected_);
+        s_.doc.setKnots(s_.doc.current(), selected_, (mods & Qt::AltModifier) ? deleteKnot(k, i) : duplicateKnot(k, i));
         update();
         return true;
     }
     // The dragged knot follows the pointer live (no undo step yet).
     void dragKnotTo(QPointF pos) {
         preview_ = [=, this] {
-            auto k = doc_.projectKnot(doc_.current(), selected_, view_.toDoc(pos));
+            auto k = s_.doc.projectKnot(s_.doc.current(), selected_, s_.view.toDoc(pos));
             if (!k) return;
             auto knots = knotsBefore_;
             knots[knotDrag_] = *k;
-            doc_.previewKnots(doc_.current(), selected_, knots);
+            s_.doc.previewKnots(s_.doc.current(), selected_, knots);
         };
         update();
     }
@@ -616,10 +625,10 @@ private:
     void endKnotDrag() {
         if (knotDrag_ < 0) return;
         flushPreview();
-        auto after = doc_.knots(doc_.current(), selected_);
-        doc_.previewKnots(doc_.current(), selected_, knotsBefore_);
+        auto after = s_.doc.knots(s_.doc.current(), selected_);
+        s_.doc.previewKnots(s_.doc.current(), selected_, knotsBefore_);
         if (after.size() == knotsBefore_.size() && !std::equal(after.begin(), after.end(), knotsBefore_.begin(), [](auto& a, auto& b) { return a.t == b.t && a.width == b.width; }))
-            doc_.setKnots(doc_.current(), selected_, after);
+            s_.doc.setKnots(s_.doc.current(), selected_, after);
         knotDrag_ = -1;
         update();
     }
@@ -630,8 +639,8 @@ private:
         if (onRadiusChange) onRadiusChange();
     }
     void pickAt(QPointF pos) {
-        QPointF d = view_.toDoc(pos);
-        QColor c = doc_.colorAt({int(std::floor(d.x())), int(std::floor(d.y()))});  // the pixel under the point, not the nearest corner
+        QPointF d = s_.view.toDoc(pos);
+        QColor c = s_.doc.colorAt({int(std::floor(d.x())), int(std::floor(d.y()))});  // the pixel under the point, not the nearest corner
         if (!c.isValid() || !brush_ || selectTool_) return;  // Node/Knot edit: a Ctrl+click no knot or node gesture took does nothing
         setColor(c);
         if (onColorPick) onColorPick(c);
@@ -640,7 +649,7 @@ private:
     void lassoAt(QPointF pos, bool eraser) {
         if (!lassoing_) lassoErase_ = eraser;
         lassoing_ = true;
-        lasso_.push_back(view_.toDoc(pos));
+        lasso_.push_back(s_.view.toDoc(pos));
         update();
     }
     void endLasso() {
@@ -648,22 +657,21 @@ private:
         lassoing_ = false;
         QColor c = color_;
         c.setAlphaF(lassoOpacity_);
-        if (lasso_.size() > 2) doc_.fill(c, {lasso_.begin(), lasso_.end()}, lassoErase_);
+        if (lasso_.size() > 2) s_.doc.fill(c, {lasso_.begin(), lasso_.end()}, lassoErase_);
         lasso_.clear();
         update();
     }
     void paintAt(QPointF pos, float pressure, float xtilt, float ytilt, ulong ms, bool eraser = false) {
         if (!brush_) return;
-        QPointF d = view_.toDoc(pos);
-        doc_.stroke(brush_, {{float(d.x()), float(d.y()), pressure, xtilt, ytilt, painting_ ? (ms - lastMs_) / 1000.0 : 0.0}}, painting_, eraser);
+        QPointF d = s_.view.toDoc(pos);
+        s_.doc.stroke(brush_, {{float(d.x()), float(d.y()), pressure, xtilt, ytilt, painting_ ? (ms - lastMs_) / 1000.0 : 0.0}}, painting_, eraser);
         painting_ = true;
         lastMs_ = ms;
         update();
     }
-    Document doc_{QSize()};
+    Session s_;
     std::shared_ptr<MyPaintBrush> brush_ = loadBrush(BRUSH_DIR "/pencil.myb");
     ulong lastMs_ = 0;
-    View view_;
     QPointF last_;
     QString hint_;
     std::optional<QPointF> cursor_;  // pointer position over the canvas, for the brush outline
@@ -1035,12 +1043,10 @@ int main(int argc, char** argv) {
     window.addDockWidget(Qt::LeftDockWidgetArea, brushDock);  // layout B: Brushes below Tools, bottom-left
 
     auto* fileMenu = window.menuBar()->addMenu("&File");
-    QString docPath;  // the open document's file, empty until opened or first saved (#277)
-    int savedStep = 0;  // Document::stepId() at the last open or save: the saved mark (#240)
     updateTitle = [&] {  // "name[*] - mydraw"; Qt shows the [*] as * while the window is modified (#278)
         if (!canvas->hasDoc()) { window.setWindowTitle("mydraw"); window.setWindowModified(false); return; }
-        window.setWindowTitle((docPath.isEmpty() ? QString("Untitled") : QFileInfo(docPath).fileName()) + "[*] - mydraw");
-        window.setWindowModified(canvas->doc().stepId() != savedStep);
+        window.setWindowTitle((canvas->session().path.isEmpty() ? QString("Untitled") : QFileInfo(canvas->session().path).fileName()) + "[*] - mydraw");
+        window.setWindowModified(canvas->doc().stepId() != canvas->session().saved);
     };
     auto* fileNew = fileMenu->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);
@@ -1068,13 +1074,11 @@ int main(int argc, char** argv) {
         });
 
         QObject::connect(Bbox, &QDialogButtonBox::accepted, NewDocWindow,
-        [NewDocWindow, &canvas, &docPath, &savedStep, &updateTitle, ww, hh] {
+        [NewDocWindow, &canvas, &updateTitle, ww, hh] {
             int w = ww->text().toInt();
             int h = hh->text().toInt();
             NewDocWindow->accept();
             canvas->setDocument(Document(QSize(w, h)));
-            docPath.clear();
-            savedStep = 0;
             updateTitle();
         });
         
@@ -1089,30 +1093,28 @@ int main(int argc, char** argv) {
         if (path.isEmpty()) return;
         auto doc = readOra(path);
         if (!doc) { QMessageBox::warning(&window, "Open", "Could not read " + path); return; }
-        canvas->setDocument(std::move(*doc));
-        docPath = path;
-        savedStep = canvas->doc().stepId();
+        canvas->setDocument(std::move(*doc), path);
         updateTitle();
     });
     auto saveTo = [&](QString path) {
         if (path.isEmpty()) return;
         if (!path.endsWith(".ora")) path += ".ora";
         if (!writeOra(canvas->doc(), path)) { QMessageBox::warning(&window, "Save", "Could not write " + path); return; }
-        docPath = path;
-        savedStep = canvas->doc().stepId();
+        canvas->session().path = path;
+        canvas->session().saved = canvas->doc().stepId();
         updateTitle();
     };
     auto* fileSave = fileMenu->addAction("&Save");
     docActions.push_back(fileSave);
     fileSave->setShortcut(QKeySequence::Save);
     QObject::connect(fileSave, &QAction::triggered, [&] {
-        saveTo(!docPath.isEmpty() ? docPath : QFileDialog::getSaveFileName(&window, "Save", {}, "OpenRaster (*.ora)"));
+        saveTo(!canvas->session().path.isEmpty() ? canvas->session().path : QFileDialog::getSaveFileName(&window, "Save", {}, "OpenRaster (*.ora)"));
     });
     auto* fileSaveAs = fileMenu->addAction("Save &As...");
     docActions.push_back(fileSaveAs);
     fileSaveAs->setShortcut(QKeySequence("Ctrl+Shift+S"));
     QObject::connect(fileSaveAs, &QAction::triggered, [&] {
-        saveTo(QFileDialog::getSaveFileName(&window, "Save As", docPath, "OpenRaster (*.ora)"));
+        saveTo(QFileDialog::getSaveFileName(&window, "Save As", canvas->session().path, "OpenRaster (*.ora)"));
     });
     auto* fileExport = fileMenu->addAction("&Export PNG...");
     docActions.push_back(fileExport);
