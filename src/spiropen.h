@@ -22,8 +22,8 @@ struct SpiroPen {
     void backspace() { if (!nodes.empty()) nodes.pop_back(); }
     void cancel() { nodes.clear(); }
     // One undo step. On false (not a Vector Layer, or no curve) the nodes stay, so the user can carry on or cancel.
-    bool finish(Document& doc, bool closed, const QColor& color, double width) {
-        if (!doc.addPath(nodes, closed, color, width)) return false;
+    bool finish(Document& doc, bool closed, const QColor& color, double width, Document::PaintMode mode = Document::PaintMode::Stroke) {
+        if (!doc.addPath(nodes, closed, color, width, mode)) return false;
         nodes.clear();
         return true;
     }

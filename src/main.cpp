@@ -121,9 +121,10 @@ public:
     void setErase(bool on) { if (!spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
     void setScaleWidths(bool on) { scaleWidths_ = on; }
     void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
+    void setPaintMode(Document::PaintMode m) { paintMode_ = m; }  // a new Vector Path's Paint mode, the Pen's own (#301)
     void finishPath(bool closed) {
         if (floating_) return commitFloat();
-        if (spiroTool_) pen_.finish(s_.doc, closed, color_, pathWidth_);  // refused on a Raster Layer
+        if (spiroTool_) pen_.finish(s_.doc, closed, color_, pathWidth_, paintMode_);  // refused on a Raster Layer
         update();
         if (onLayersChange) onLayersChange();
     }
@@ -763,6 +764,7 @@ private:
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false;
     double pathWidth_ = 10;  // px
+    Document::PaintMode paintMode_ = Document::PaintMode::Stroke;
     float lassoOpacity_ = 1;
     bool fillTool_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
 };
@@ -1173,6 +1175,21 @@ int main(int argc, char** argv) {
     widthRow->addWidget(new QLabel("Width"));
     widthRow->addWidget(pathWidth);
     widthRow->addWidget(pathWidthValue);
+    auto* paintBox = new QWidget;  // Paint mode of a new Vector Path, segmented (#323 take A)
+    auto* paintRow = new QHBoxLayout(paintBox);
+    paintRow->setContentsMargins(0, 0, 0, 0);
+    paintRow->setSpacing(0);
+    paintRow->addWidget(new QLabel("Paint"));
+    const std::pair<const char*, Document::PaintMode> kPaints[] = {{"Stroke", Document::PaintMode::Stroke}, {"Fill", Document::PaintMode::Fill}, {"Stroke+Fill", Document::PaintMode::Both}};
+    for (auto [name, mode] : kPaints) {
+        auto* b = new QToolButton;
+        b->setText(name);
+        b->setCheckable(true);
+        b->setAutoExclusive(true);
+        b->setChecked(mode == Document::PaintMode::Stroke);
+        QObject::connect(b, &QToolButton::toggled, [canvas, mode](bool on) { if (on) canvas->setPaintMode(mode); });
+        paintRow->addWidget(b);
+    }
     auto* penTypes = new QListWidget;  // the Spiro Pen's type for new nodes
     auto* editTypes = new QListWidget;  // retypes Node/Knot edit's selected nodes, apart from the pen's (#215)
     for (auto* l : {penTypes, editTypes}) for (const auto& t : kNodeTypes) l->addItem(t.name);
@@ -1187,6 +1204,7 @@ int main(int argc, char** argv) {
         brushBox->setVisible(tool == BrushTool);
         lassoBox->setVisible(tool == LassoFillTool);
         widthBox->setVisible(tool == SpiroPenTool);
+        paintBox->setVisible(tool == SpiroPenTool);
         penTypes->setVisible(tool == SpiroPenTool);
         editTypes->setVisible(tool == NodeKnotEditTool);
     };
@@ -1198,6 +1216,7 @@ int main(int argc, char** argv) {
     optionsCol->addWidget(brushBox);
     optionsCol->addWidget(lassoBox);
     optionsCol->addWidget(widthBox);
+    optionsCol->addWidget(paintBox);
     optionsCol->addWidget(scaleWidths);
     optionsCol->addWidget(penTypes);
     optionsCol->addWidget(editTypes);

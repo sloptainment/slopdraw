@@ -676,6 +676,20 @@ static bool svgFollowsPaintMode() {
     return true;
 }
 
+// The Pen's Paint mode goes on the next path: Fill fills the inside in the stroke color, the default stays Stroke (#301).
+static bool penPaintModeGoesOnNextPath() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    SpiroPen pen;
+    pen.nodes = {{10, 10, T::Corner}, {50, 10, T::Corner}, {50, 50, T::Corner}, {10, 50, T::Corner}};
+    if (!pen.finish(doc, true, QColor(10, 20, 30), 2) || doc.paths(1)[0].mode != Document::PaintMode::Stroke) return false;
+    pen.nodes = {{10, 10, T::Corner}, {50, 10, T::Corner}, {50, 50, T::Corner}, {10, 50, T::Corner}};
+    if (!pen.finish(doc, true, QColor(10, 20, 30), 2, Document::PaintMode::Fill)) return false;
+    auto v = doc.paths(1)[1];
+    return v.mode == Document::PaintMode::Fill && v.fillColor == QColor(10, 20, 30) && doc.colorAt({30, 30}) == QColor(10, 20, 30);
+}
+
 // Export PNG writes the visible composite: hidden layer left out, half-opacity layer blended, reloaded pixels equal render().
 static bool exportedPngEqualsRender() {
     Document doc(QSize(32, 32));
@@ -1281,6 +1295,7 @@ int main() {
         failed += !ok;
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
+    run("penPaintModeGoesOnNextPath", penPaintModeGoesOnNextPath);
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);
     run("viewOpsKeepAnchorFixed", viewOpsKeepAnchorFixed);
     run("viewScreenRadiusFollowsZoomOnly", viewScreenRadiusFollowsZoomOnly);

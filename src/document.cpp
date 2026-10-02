@@ -98,7 +98,7 @@ int Document::addVectorLayer() {
     return current_;
 }
 
-bool Document::addPath(const std::vector<SpiroNode>& nodes, bool closed, const QColor& color, double width) {
+bool Document::addPath(const std::vector<SpiroNode>& nodes, bool closed, const QColor& color, double width, PaintMode mode) {
     if (!layers_[current_].vector || !spiroToPath(nodes, closed)) return false;
     seal();
     Step s;
@@ -107,6 +107,8 @@ bool Document::addPath(const std::vector<SpiroNode>& nodes, bool closed, const Q
     std::vector<WidthKnot> knots{{0, width}};
     if (!closed) knots.push_back({double(skeletonOf({nodes, closed}).size()), width});
     s.paths = {{nodes, closed, color, width, knots}};
+    s.paths[0].mode = mode;
+    s.paths[0].fillColor = color;  // no Fill swatch yet: the fill takes the stroke color
     push(s);
     apply(s, false);
     return true;
