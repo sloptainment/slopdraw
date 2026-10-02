@@ -20,6 +20,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QToolButton>
 #include <QActionGroup>
 #include <QSlider>
@@ -59,9 +60,11 @@ struct Session {
 class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
-    void setDocument(Document doc, QString path = {}) { s_ = {std::move(doc), View(), path, 0}; s_.saved = s_.doc.stepId(); floating_ = false; floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
+    void setDocument(Document doc, QString path = {}) { Session s{std::move(doc), View(), path, 0}; s.saved = s.doc.stepId(); setSession(std::move(s)); }
+    void setSession(Session s) { s_ = std::move(s); floating_ = false; floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return s_.doc; }
     Session& session() { return s_; }
+    Session takeSession() { commitFloat(); pen_.cancel(); return std::move(s_); }  // the tab being left: a lifted piece lands, an unfinished path drops; setSession must follow
     bool hasDoc() const { return !s_.doc.image(0).isNull(); }  // the app starts on Document(QSize()), which has no pixels (#157)
     std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
     void setColor(const QColor& c) { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
@@ -790,7 +793,17 @@ int main(int argc, char** argv) {
 
     Window window;
     auto* canvas = new Canvas;
-    window.setCentralWidget(canvas);
+    // Tab bar over the canvas (#241): the Canvas holds the active tab's Session, tabs[] parks the rest; the active slot is empty.
+    auto* tabBar = new QTabBar;
+    auto* central = new QWidget;
+    auto* centralCol = new QVBoxLayout(central);
+    centralCol->setContentsMargins(0, 0, 0, 0);
+    centralCol->setSpacing(0);
+    centralCol->addWidget(tabBar);
+    centralCol->addWidget(canvas);
+    window.setCentralWidget(central);
+    std::vector<Session> tabs;
+    int active = -1;
     canvas->onHint = [&window](const QString& h) { window.statusBar()->showMessage(h); };
 
     auto* picker = new ColorPicker;
@@ -1047,7 +1060,23 @@ int main(int argc, char** argv) {
         if (!canvas->hasDoc()) { window.setWindowTitle("mydraw"); window.setWindowModified(false); return; }
         window.setWindowTitle((canvas->session().path.isEmpty() ? QString("Untitled") : QFileInfo(canvas->session().path).fileName()) + "[*] - mydraw");
         window.setWindowModified(canvas->doc().stepId() != canvas->session().saved);
+        tabBar->setTabText(active, canvas->session().path.isEmpty() ? QString("Untitled") : QFileInfo(canvas->session().path).fileName());
     };
+    auto openTab = [&](Document doc, QString path) {  // New and Open: a new tab, made active
+        if (active >= 0) tabs[active] = canvas->takeSession();
+        tabs.emplace_back();
+        active = int(tabs.size()) - 1;
+        { QSignalBlocker b(tabBar); tabBar->setCurrentIndex(tabBar->addTab({})); }
+        canvas->setDocument(std::move(doc), path);
+        updateTitle();
+    };
+    QObject::connect(tabBar, &QTabBar::currentChanged, [&](int i) {
+        if (i < 0 || i == active) return;
+        tabs[active] = canvas->takeSession();
+        active = i;
+        canvas->setSession(std::move(tabs[i]));
+        updateTitle();
+    });
     auto* fileNew = fileMenu->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);
     QObject::connect(fileNew, &QAction::triggered, [&] {
@@ -1074,12 +1103,11 @@ int main(int argc, char** argv) {
         });
 
         QObject::connect(Bbox, &QDialogButtonBox::accepted, NewDocWindow,
-        [NewDocWindow, &canvas, &updateTitle, ww, hh] {
+        [NewDocWindow, &openTab, ww, hh] {
             int w = ww->text().toInt();
             int h = hh->text().toInt();
             NewDocWindow->accept();
-            canvas->setDocument(Document(QSize(w, h)));
-            updateTitle();
+            openTab(Document(QSize(w, h)), {});
         });
         
         NewDocWindow->show();
@@ -1093,8 +1121,7 @@ int main(int argc, char** argv) {
         if (path.isEmpty()) return;
         auto doc = readOra(path);
         if (!doc) { QMessageBox::warning(&window, "Open", "Could not read " + path); return; }
-        canvas->setDocument(std::move(*doc), path);
-        updateTitle();
+        openTab(std::move(*doc), path);
     });
     auto saveTo = [&](QString path) {
         if (path.isEmpty()) return;
