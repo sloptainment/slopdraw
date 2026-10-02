@@ -3,6 +3,7 @@
 #include "tools.h"
 #include "view.h"
 #include "ora.h"
+#include "stabilizer.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -42,6 +43,7 @@
 #include <set>
 #include <optional>
 #include <QTabletEvent>
+#include <QTimer>
 #include <QWheelEvent>
 #include <cmath>
 
@@ -73,7 +75,8 @@ public:
     std::function<void(const QColor&)> onColorPick;  // fired after Ctrl+click so the Color dock can follow
     void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); update(); }
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
-    void setLassoOpacity(float o) { lassoOpacity_ = o; }  // Lasso Fill's own, apart from the Brush's (#213)
+    void setLassoOpacity(float o) { lassoOpacity_ = o; }
+    void setSmoothing(int n) { smooth_.n = n; }  // the Brush's Stabilizer, 0 = off (#292)  // Lasso Fill's own, apart from the Brush's (#213)
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
     void setNodeType(SpiroType t) { pen_.type = t; }  // the Spiro Pen's, for new nodes (#215)
@@ -670,12 +673,40 @@ private:
     void paintAt(QPointF pos, float pressure, float xtilt, float ytilt, ulong ms, bool eraser = false) {
         if (!brush_) return;
         QPointF d = s_.view.toDoc(pos);
+        if (smooth_.n > 0) {
+            // Smoothing: the pen only sets raw_; smoothTick paints the mean every 10 ms, so the line catches up while the pen holds still (/r/14).
+            raw_ = {float(d.x()), float(d.y()), pressure, xtilt, ytilt, 0.0};
+            smoothErase_ = eraser;
+            if (painting_) return;
+            smooth_.q.clear();
+            smooth_.push(raw_);
+            s_.doc.stroke(brush_, {smooth_.sample()}, false, eraser);  // no dead zone (#246)
+            painting_ = true;
+            if (!smoothTimer_) {
+                smoothTimer_ = new QTimer(this);
+                smoothTimer_->setInterval(10);
+                QObject::connect(smoothTimer_, &QTimer::timeout, [this] { smoothTick(); });
+            }
+            smoothTimer_->start();
+            return update();
+        }
         s_.doc.stroke(brush_, {{float(d.x()), float(d.y()), pressure, xtilt, ytilt, painting_ ? (ms - lastMs_) / 1000.0 : 0.0}}, painting_, eraser);
         painting_ = true;
         lastMs_ = ms;
         update();
     }
+    void smoothTick() {
+        if (!painting_) return smoothTimer_->stop();  // pen-up; Finish Line is not built yet
+        raw_.dt = 0.01;
+        smooth_.push(raw_);
+        s_.doc.stroke(brush_, {smooth_.sample()}, true, smoothErase_);
+        update();
+    }
     Session s_;
+    Stabilizer smooth_;
+    PenSample raw_{};  // the newest pen sample while smoothing, in document coordinates
+    bool smoothErase_ = false;
+    QTimer* smoothTimer_ = nullptr;
     std::shared_ptr<MyPaintBrush> brush_ = loadBrush(BRUSH_DIR "/pencil.myb");
     ulong lastMs_ = 0;
     QPointF last_;
@@ -1071,6 +1102,15 @@ int main(int argc, char** argv) {
     opacityRow->addWidget(opacity);
     opacityRow->addWidget(opacityValue);
     brushBoxCol->addLayout(opacityRow);
+    brushBoxCol->addWidget(new QLabel("Smoothing"));
+    auto* smoothRow = new QHBoxLayout;
+    auto* smoothing = new QSlider(Qt::Horizontal);  // samples averaged, 0 = off
+    smoothing->setRange(0, 50);
+    auto* smoothingValue = new QLabel("0");
+    QObject::connect(smoothing, &QSlider::valueChanged, [canvas, smoothingValue](int v) { canvas->setSmoothing(v); smoothingValue->setText(QString::number(v)); });
+    smoothRow->addWidget(smoothing);
+    smoothRow->addWidget(smoothingValue);
+    brushBoxCol->addLayout(smoothRow);
     auto* lassoBox = new QWidget;  // Lasso Fill's own Opacity (#212), starting solid
     auto* lassoRow = new QHBoxLayout(lassoBox);
     lassoRow->setContentsMargins(0, 0, 0, 0);
