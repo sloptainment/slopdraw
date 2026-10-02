@@ -886,13 +886,24 @@ int main(int argc, char** argv) {
     auto setZoom = [canvas](double pct) { canvas->session().view.setZoom(QRectF(canvas->rect()).center(), pct / 100); canvas->update(); };
     QObject::connect(zoom, &QSlider::valueChanged, [setZoom](int v) { setZoom(std::exp2(v / 100.0)); });
     zoom->onDoubleClick = [setZoom] { setZoom(100); };
-    canvas->onPaint = [nav, canvas, zoom, zoomValue] {
+    // Rotation slider (#290): -180..180 degrees as seen, so a mirrored view reads what the user sees (View::rotation).
+    auto* rot = new ZoomSlider(Qt::Horizontal);
+    rot->setRange(-180, 180);
+    auto* rotValue = new QLabel;
+    auto setRot = [canvas](int deg) { canvas->session().view.setRotation(QRectF(canvas->rect()).center(), deg); canvas->update(); };
+    QObject::connect(rot, &QSlider::valueChanged, setRot);
+    rot->onDoubleClick = [setRot] { setRot(0); };
+    canvas->onPaint = [nav, canvas, zoom, zoomValue, rot, rotValue] {
         nav->update();
         if (!canvas->hasDoc()) return;
         double pct = canvas->session().view.zoom() * 100;
         QSignalBlocker b(zoom);  // blocked so the slider's int doesn't round the zoom back
         zoom->setValue(std::lround(100 * std::log2(pct)));
         zoomValue->setText(QString("%1 %").arg(pct, 0, 'f', pct < 10 ? 1 : 0));
+        double deg = canvas->session().view.rotation();
+        QSignalBlocker rb(rot);
+        rot->setValue(std::lround(deg));
+        rotValue->setText(QString("%1°").arg(std::lround(deg)));
     };
     auto* navPanel = new QWidget;
     auto* navCol = new QVBoxLayout(navPanel);
@@ -901,6 +912,10 @@ int main(int argc, char** argv) {
     zoomRow->addWidget(zoom);
     zoomRow->addWidget(zoomValue);
     navCol->addLayout(zoomRow);
+    auto* rotRow = new QHBoxLayout;
+    rotRow->addWidget(rot);
+    rotRow->addWidget(rotValue);
+    navCol->addLayout(rotRow);
     auto* navDock = new QDockWidget("Navigation", &window);
     navDock->setWidget(navPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, navDock);
