@@ -55,6 +55,7 @@ struct Session {
     View view;
     QString path;  // the document's file, empty until opened or first saved (#277)
     int saved = 0;  // Document::stepId() at the last open or save (#240)
+    int untitled = 0;  // N of "Untitled N", the tab label until the first save (#282)
 };
 
 class Canvas : public QWidget {
@@ -1058,16 +1059,20 @@ int main(int argc, char** argv) {
     auto* fileMenu = window.menuBar()->addMenu("&File");
     updateTitle = [&] {  // "name[*] - mydraw"; Qt shows the [*] as * while the window is modified (#278)
         if (!canvas->hasDoc()) { window.setWindowTitle("mydraw"); window.setWindowModified(false); return; }
-        window.setWindowTitle((canvas->session().path.isEmpty() ? QString("Untitled") : QFileInfo(canvas->session().path).fileName()) + "[*] - mydraw");
-        window.setWindowModified(canvas->doc().stepId() != canvas->session().saved);
-        tabBar->setTabText(active, canvas->session().path.isEmpty() ? QString("Untitled") : QFileInfo(canvas->session().path).fileName());
+        QString name = canvas->session().path.isEmpty() ? QString("Untitled %1").arg(canvas->session().untitled) : QFileInfo(canvas->session().path).fileName();
+        bool dirty = canvas->doc().stepId() != canvas->session().saved;
+        window.setWindowTitle(name + "[*] - mydraw");
+        window.setWindowModified(dirty);
+        tabBar->setTabText(active, dirty ? name + "*" : name);
     };
+    int untitledCount = 0;
     auto openTab = [&](Document doc, QString path) {  // New and Open: a new tab, made active
         if (active >= 0) tabs[active] = canvas->takeSession();
         tabs.emplace_back();
         active = int(tabs.size()) - 1;
         { QSignalBlocker b(tabBar); tabBar->setCurrentIndex(tabBar->addTab({})); }
         canvas->setDocument(std::move(doc), path);
+        if (path.isEmpty()) canvas->session().untitled = ++untitledCount;
         updateTitle();
     };
     QObject::connect(tabBar, &QTabBar::currentChanged, [&](int i) {
