@@ -783,8 +783,9 @@ private:
 
 // The window saves its dock state in closeEvent: by aboutToQuit the floating docks are already hidden and would be saved closed.
 struct Window : QMainWindow {
+    std::function<bool()> canClose;  // false keeps the window open (the quit dialog was cancelled, #285)
     std::function<void()> onClose;
-    void closeEvent(QCloseEvent* e) override { if (onClose) onClose(); QMainWindow::closeEvent(e); }
+    void closeEvent(QCloseEvent* e) override { if (canClose && !canClose()) { e->ignore(); return; } if (onClose) onClose(); QMainWindow::closeEvent(e); }
 };
 
 int main(int argc, char** argv) {
@@ -1182,6 +1183,41 @@ int main(int argc, char** argv) {
     auto* fileQuit = fileMenu->addAction("&Quit");
     fileQuit->setShortcut(QKeySequence::Quit);
     QObject::connect(fileQuit, &QAction::triggered, &window, &QWidget::close);
+    window.canClose = [&] {  // dirty tabs are listed as a checklist, all checked: the default button saves the checked and discards the rest (#324)
+        auto session = [&](int i) -> Session& { return i == active ? canvas->session() : tabs[i]; };  // the active slot of tabs[] is empty
+        std::vector<int> dirty;
+        for (int i = 0; i < int(tabs.size()); ++i) if (session(i).doc.stepId() != session(i).saved) dirty.push_back(i);
+        if (dirty.empty()) return true;
+        QDialog dlg(&window);
+        dlg.setWindowTitle("Quit");
+        auto* col = new QVBoxLayout(&dlg);
+        col->addWidget(new QLabel("Save changes before quitting?\nUnchecked documents are closed without saving."));
+        auto* list = new QListWidget;
+        for (int i : dirty) {
+            QString path = session(i).path;
+            auto* it = new QListWidgetItem(tabBar->tabText(i).chopped(1) + "\n" + (path.isEmpty() ? "never saved: will ask where to save" : path), list);
+            it->setCheckState(Qt::Checked);
+        }
+        col->addWidget(list);
+        auto* btns = new QDialogButtonBox;
+        auto* go = btns->addButton("Save All", QDialogButtonBox::AcceptRole);
+        btns->addButton(QDialogButtonBox::Cancel);
+        go->setDefault(true);
+        col->addWidget(btns);
+        auto checked = [&] { std::vector<int> c; for (int r = 0; r < list->count(); ++r) if (list->item(r)->checkState() == Qt::Checked) c.push_back(dirty[r]); return c; };
+        QObject::connect(list, &QListWidget::itemChanged, [&] {
+            int n = int(checked().size()), m = int(dirty.size()) - n;
+            go->setText(!n ? "Discard All" : m ? QString("Save %1, Discard %2").arg(n).arg(m) : "Save All");
+        });
+        QObject::connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        QObject::connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        if (dlg.exec() != QDialog::Accepted) return false;
+        for (int i : checked()) {
+            tabBar->setCurrentIndex(i);  // the tab being saved is shown, and its Save path dialog asks over it
+            if (!saveActive()) return false;  // a cancelled path dialog stops the quit
+        }
+        return true;
+    };
 
     auto key = [&window, &docActions](QAction* a, QList<QKeySequence> keys) { a->setShortcuts(keys); window.addAction(a); docActions.push_back(a); return a; };  // window-wide, so it works whichever dock has focus
 
