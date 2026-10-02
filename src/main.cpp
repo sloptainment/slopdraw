@@ -83,6 +83,7 @@ public:
         if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(s_.doc.nodes(s_.doc.current(), selected_), nodeSel_, t));
     }
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
+    std::function<void()> onPaint;  // fired on every repaint, so the Navigation rectangle follows any view change
     std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
     // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_: picks and deletes whole paths), 5 Box Select (boxTool_).
     void setTool(int t) {
@@ -135,6 +136,7 @@ protected:
         if (penLayer_ != s_.doc.current()) { pen_.cancel(); penLayer_ = s_.doc.current(); }  // a layer switch drops the unfinished path
         QString h = hint();  // every tool or state change calls update(), so paint is where a change of hint is noticed
         if (h != hint_) { hint_ = h; if (onHint) onHint(h); }
+        if (onPaint) onPaint();
         QPainter p(this);
         if (!hasDoc()) {
             p.fillRect(rect(), QColor(90, 90, 90));
@@ -781,6 +783,48 @@ private:
     double h_ = 0, s_ = 0, v_ = 0;
 };
 
+// Navigation dock (#286): the composite render scaled to fit, outside the view dimmed, the view a white haloed outline turned and flipped as the view is (#322).
+class Navigator : public QWidget {
+public:
+    explicit Navigator(Canvas* c) : canvas_(c) { setMinimumSize(160, 120); }
+    void refresh() { thumb_ = {}; update(); }  // the drawing changed; the rectangle alone needs only update()
+
+protected:
+    void resizeEvent(QResizeEvent*) override { thumb_ = {}; }
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.fillRect(rect(), QColor(90, 90, 90));
+        if (!canvas_->hasDoc()) return;
+        QSizeF ds = canvas_->doc().image(0).size();
+        double k = std::min(width() / ds.width(), height() / ds.height());
+        QRectF r(0, 0, ds.width() * k, ds.height() * k);
+        r.moveCenter(QRectF(rect()).center());
+        if (thumb_.isNull()) thumb_ = canvas_->doc().render().scaled(r.size().toSize(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        p.fillRect(r, Qt::white);
+        p.drawImage(r.topLeft(), thumb_);
+        QTransform toThumb = QTransform::fromScale(k, k) * QTransform::fromTranslate(r.left(), r.top());
+        QTransform m = canvas_->session().view.matrix().inverted() * toThumb;  // canvas pixels -> thumbnail pixels
+        QRectF c = canvas_->rect();
+        QPolygonF view = m.map(QPolygonF(c));
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath outside;
+        outside.addRect(r);
+        outside.addPolygon(view);  // odd-even fill: the view's inside stays clear
+        p.fillPath(outside, QColor(0, 0, 0, 115));
+        QLineF tick(m.map(c.topLeft() + QPointF(c.width() / 4, 0)), m.map(c.topLeft() + QPointF(c.width() / 4, 1)));  // into the view from its top edge, a quarter in from the screen's left, so rotation and mirror show
+        tick.setLength(6);
+        for (auto [pen, w] : {std::pair{QColor(0, 0, 0, 160), 3.0}, {Qt::white, 1.0}}) {  // dark halo under the white line
+            p.setPen(QPen(pen, w));
+            p.drawPolygon(view);
+            p.drawLine(tick);
+        }
+    }
+
+private:
+    Canvas* canvas_;
+    QImage thumb_;  // the render at thumbnail size; null until the next paint rebuilds it
+};
+
 // The window saves its dock state in closeEvent: by aboutToQuit the floating docks are already hidden and would be saved closed.
 struct Window : QMainWindow {
     std::function<bool()> canClose;  // false keeps the window open (the quit dialog was cancelled, #285)
@@ -807,6 +851,12 @@ int main(int argc, char** argv) {
     std::vector<Session> tabs;
     int active = -1;
     canvas->onHint = [&window](const QString& h) { window.statusBar()->showMessage(h); };
+
+    auto* nav = new Navigator(canvas);
+    canvas->onPaint = [nav] { nav->update(); };
+    auto* navDock = new QDockWidget("Navigation", &window);
+    navDock->setWidget(nav);
+    window.addDockWidget(Qt::RightDockWidgetArea, navDock);
 
     auto* picker = new ColorPicker;
     picker->onChange = [canvas](const QColor& c) { canvas->setColor(c); };
@@ -854,8 +904,9 @@ int main(int argc, char** argv) {
     std::function<void()> kindChanged;  // set with the Tools dock below; refresh() runs on every current-layer change
     std::function<void()> updateTitle;  // set with the File menu below; refresh() runs it after every edit, undo and redo
     std::vector<QAction*> docActions;  // enabled only while a document is open (#173); filled as the menus are built
-    auto refresh = [canvas, layerList, layerOpacity, layerOpacityValue, &kindChanged, &updateTitle] {
+    auto refresh = [canvas, nav, layerList, layerOpacity, layerOpacityValue, &kindChanged, &updateTitle] {
         Document& d = canvas->doc();
+        nav->refresh();
         QSignalBlocker b1(layerList), b2(layerOpacity);
         layerList->clear();
         for (int i = d.layerCount() - 1; i >= 0; i--) {  // a row: eye, kind icon, thumbnail, name (#169)
@@ -1043,7 +1094,7 @@ int main(int argc, char** argv) {
     kindChanged = [&] {
         bool has = canvas->hasDoc(), vec = canvas->doc().vector(canvas->doc().current());
         canvas->setEnabled(has);  // a disabled widget gets no pointer or key events
-        for (auto* w : {colorDock->widget(), layerPanel, optionsPanel}) w->setEnabled(has);
+        for (auto* w : {colorDock->widget(), layerPanel, optionsPanel, (QWidget*)nav}) w->setEnabled(has);
         for (auto* a : docActions) a->setEnabled(has);
         auto tools = toolGroup->actions();
         for (int i = 0; i < 6; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i));
@@ -1228,7 +1279,7 @@ int main(int argc, char** argv) {
     auto* viewMenu = window.menuBar()->addMenu("&View");
     QObject::connect(key(viewMenu->addAction("&Mirror"), {QKeySequence("M")}), &QAction::triggered, [canvas] { canvas->mirror(); });
     viewMenu->addSeparator();
-    const QList<QDockWidget*> docks = {toolDock, colorDock, brushDock, layerDock, optionsDock};
+    const QList<QDockWidget*> docks = {toolDock, navDock, colorDock, brushDock, layerDock, optionsDock};
     for (auto* dock : docks) viewMenu->addAction(dock->toggleViewAction());
 
     // Tab hides every visible dock and remembers them; the next Tab shows those again (#52).
