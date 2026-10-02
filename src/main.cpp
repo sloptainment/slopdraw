@@ -1082,6 +1082,18 @@ int main(int argc, char** argv) {
         canvas->setSession(std::move(tabs[i]));
         updateTitle();
     });
+    auto closeTab = [&](int i) {  // no dirty check yet (#284); the last close returns to the no-document start (#157)
+        bool wasActive = i == active;
+        if (wasActive) canvas->takeSession();  // ends a lifted piece or unfinished path; the session itself is dropped
+        tabs.erase(tabs.begin() + i);
+        { QSignalBlocker b(tabBar); tabBar->removeTab(i); }
+        active = tabBar->currentIndex();
+        if (active < 0) canvas->setDocument(Document(QSize()));
+        else if (wasActive) canvas->setSession(std::move(tabs[active]));  // the bar's new current tab moves into the Canvas
+        updateTitle();
+    };
+    tabBar->setTabsClosable(true);
+    QObject::connect(tabBar, &QTabBar::tabCloseRequested, closeTab);
     auto* fileNew = fileMenu->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);
     QObject::connect(fileNew, &QAction::triggered, [&] {
@@ -1157,6 +1169,10 @@ int main(int argc, char** argv) {
         if (!exportPng(canvas->doc(), path)) QMessageBox::warning(&window, "Export PNG", "Could not write " + path);
     });
 
+    auto* fileClose = fileMenu->addAction("&Close");
+    docActions.push_back(fileClose);
+    fileClose->setShortcut(QKeySequence::Close);
+    QObject::connect(fileClose, &QAction::triggered, [&] { closeTab(active); });
     auto* fileQuit = fileMenu->addAction("&Quit");
     fileQuit->setShortcut(QKeySequence::Quit);
     QObject::connect(fileQuit, &QAction::triggered, &window, &QWidget::close);
