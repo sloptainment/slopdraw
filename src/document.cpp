@@ -32,7 +32,12 @@ void paste(QImage& dst, const QImage& src, QPoint at) {
 
 // The curve of a path, whose nodes must give one (see spiroToPath). Every caller goes through here, so another kind plugs in here alone.
 static QPainterPath curveOf(const Document::VPath& v) {
-    return *spiroToPath(v.nodes, v.closed);
+    if (v.kind == Document::PathKind::Spiro) return *spiroToPath(v.nodes, v.closed);
+    // one cubic per node-to-node segment, so knot t is a segment index (#252)
+    const std::vector<BezierNode>& b = v.bezier;
+    QPainterPath path(b[0].p);
+    for (size_t i = 1; i < b.size() + v.closed; i++) path.cubicTo(b[i - 1].out, b[i % b.size()].in, b[i % b.size()].p);
+    return path;
 }
 
 // The cubics of curveOf(v). A QPainterPath from spiroToPath is lines and cubics (several per Spiro segment); lines get p1=p0, p2=p3.

@@ -12,6 +12,10 @@
 #include "powerstroke.h"
 #include "spiro.h"
 
+// A Bezier path's node: its point, the handles before (in) and after (out) it, and how editing keeps the handles (#251).
+enum class BezierType { Cusp, Smooth, Symmetric };
+struct BezierNode { QPointF p, in, out; BezierType type; };
+
 class Document {
 public:
     enum class PathKind { Spiro, Bezier };
@@ -26,6 +30,7 @@ public:
         PathKind kind = PathKind::Spiro;
         PaintMode mode = PaintMode::Stroke;
         QColor fillColor = Qt::black;
+        std::vector<BezierNode> bezier;  // a Bezier path's nodes; nodes stays empty
     };
     // undoBudget caps the bytes of pixels the undo history keeps (#27); the oldest steps drop first, never the newest.
     explicit Document(QSize size, qsizetype undoBudget = qsizetype(1) << 30);

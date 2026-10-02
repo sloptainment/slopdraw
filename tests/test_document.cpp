@@ -1316,6 +1316,29 @@ static bool clearingARectangleUndoesOnce() {
     return cleared && undone && redone && white && refused;
 }
 
+// A Bezier path's skeleton is its node-to-node cubics (#306): a two-node S-curve with knots 4, 10, 4 at t 0, 0.5, 1 paints
+// across 10 px at the middle of the cubic but not 4 px off near its start, ends flat (nothing past an end along the tangent),
+// and pathAt hits it.
+static bool bezierPathRendersAsPowerStroke() {
+    QPointF p0(12, 48), c1(28, 0), c2(36, 64), p3(52, 16);
+    Document::VPath v{{}, false, Qt::black, 4, {{0, 4}, {0.5, 10}, {1, 4}}, Document::PathKind::Bezier};
+    v.bezier = {{p0, p0, c1, BezierType::Cusp}, {p3, c2, p3, BezierType::Cusp}};
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    bool set = doc.setPaths(1, {v});
+    auto at = [&](double t) { double u = 1 - t; return u * u * u * p0 + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * p3; };
+    auto normal = [&](double t) {
+        QPointF d = at(t + 0.001) - at(t - 0.001);
+        return QPointF(-d.y(), d.x()) / std::hypot(d.x(), d.y());
+    };
+    auto alpha = [&](QPointF p) { return doc.image(1).pixelColor(p.toPoint()).alpha(); };
+    bool mid = alpha(at(0.5) + 3.5 * normal(0.5)) > 128 && alpha(at(0.5) - 3.5 * normal(0.5)) > 128;
+    bool thin = alpha(at(0.1) + 4 * normal(0.1)) == 0 && alpha(at(0.1)) > 128;
+    QPointF back = p0 - c1;
+    bool flat = alpha(p0 + 3 * back / std::hypot(back.x(), back.y())) == 0;
+    return set && mid && thin && flat && doc.pathAt(1, at(0.5), 1) == 0;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1366,6 +1389,7 @@ int main() {
     run("svgFollowsPaintMode", svgFollowsPaintMode);
     run("exportedPngEqualsRender", exportedPngEqualsRender);
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
+    run("bezierPathRendersAsPowerStroke", bezierPathRendersAsPowerStroke);
     run("closedPathIsARing", closedPathIsARing);
     run("setKnotsRedrawsAndUndoes", setKnotsRedrawsAndUndoes);
     run("setNodesRedrawsAndUndoes", setNodesRedrawsAndUndoes);
