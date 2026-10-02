@@ -874,9 +874,35 @@ int main(int argc, char** argv) {
     canvas->onHint = [&window](const QString& h) { window.statusBar()->showMessage(h); };
 
     auto* nav = new Navigator(canvas);
-    canvas->onPaint = [nav] { nav->update(); };
+    // Zoom slider (#289): log scale, value = 100 * log2(percent), so 0..1164 spans 1..3200 %; it follows the view on every paint.
+    struct ZoomSlider : QSlider {
+        using QSlider::QSlider;
+        std::function<void()> onDoubleClick;
+        void mouseDoubleClickEvent(QMouseEvent*) override { if (onDoubleClick) onDoubleClick(); }
+    };
+    auto* zoom = new ZoomSlider(Qt::Horizontal);
+    zoom->setRange(0, std::lround(100 * std::log2(3200)));
+    auto* zoomValue = new QLabel;
+    auto setZoom = [canvas](double pct) { canvas->session().view.setZoom(QRectF(canvas->rect()).center(), pct / 100); canvas->update(); };
+    QObject::connect(zoom, &QSlider::valueChanged, [setZoom](int v) { setZoom(std::exp2(v / 100.0)); });
+    zoom->onDoubleClick = [setZoom] { setZoom(100); };
+    canvas->onPaint = [nav, canvas, zoom, zoomValue] {
+        nav->update();
+        if (!canvas->hasDoc()) return;
+        double pct = canvas->session().view.zoom() * 100;
+        QSignalBlocker b(zoom);  // blocked so the slider's int doesn't round the zoom back
+        zoom->setValue(std::lround(100 * std::log2(pct)));
+        zoomValue->setText(QString("%1 %").arg(pct, 0, 'f', pct < 10 ? 1 : 0));
+    };
+    auto* navPanel = new QWidget;
+    auto* navCol = new QVBoxLayout(navPanel);
+    navCol->addWidget(nav, 1);
+    auto* zoomRow = new QHBoxLayout;
+    zoomRow->addWidget(zoom);
+    zoomRow->addWidget(zoomValue);
+    navCol->addLayout(zoomRow);
     auto* navDock = new QDockWidget("Navigation", &window);
-    navDock->setWidget(nav);
+    navDock->setWidget(navPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, navDock);
 
     auto* picker = new ColorPicker;
@@ -1115,7 +1141,7 @@ int main(int argc, char** argv) {
     kindChanged = [&] {
         bool has = canvas->hasDoc(), vec = canvas->doc().vector(canvas->doc().current());
         canvas->setEnabled(has);  // a disabled widget gets no pointer or key events
-        for (auto* w : {colorDock->widget(), layerPanel, optionsPanel, (QWidget*)nav}) w->setEnabled(has);
+        for (auto* w : {colorDock->widget(), layerPanel, optionsPanel, navPanel}) w->setEnabled(has);
         for (auto* a : docActions) a->setEnabled(has);
         auto tools = toolGroup->actions();
         for (int i = 0; i < 6; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i));
