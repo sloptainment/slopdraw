@@ -72,6 +72,7 @@ public:
     std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
     // The Color dock and Ctrl+click set this: in the Pen and Select, the Pen's active swatch (#302, #303); elsewhere the brush color.
     void setColor(const QColor& c) {
+        if (editPicks([&](Document::VPath& p) { (fillActive_ ? p.fillColor : p.color) = c; })) return;
         if (spiroTool_ || objectTool_) (fillActive_ ? penFill_ : penStroke_) = c;
         else { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
     }
@@ -137,7 +138,17 @@ public:
     void setErase(bool on) { if (!spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
     void setScaleWidths(bool on) { scaleWidths_ = on; }
     void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
-    void setPaintMode(Document::PaintMode m) { paintMode_ = m; }  // a new Vector Path's Paint mode, the Pen's own (#301)
+    void setPaintMode(Document::PaintMode m) { if (!editPicks([m](Document::VPath& p) { p.mode = m; })) paintMode_ = m; }  // the picks' in Select (#304), else a new Vector Path's, the Pen's own (#301)
+    // Select with picks: f edits every picked path, as one undo step (#304). False, and nothing done, with no pick.
+    bool editPicks(const std::function<void(Document::VPath&)>& f) {
+        if (!objectTool_ || picked().empty()) return false;
+        auto ps = s_.doc.paths(s_.doc.current());
+        for (int i : picked()) f(ps[i]);
+        s_.doc.setPaths(s_.doc.current(), ps);
+        update();
+        if (onLayersChange) onLayersChange();
+        return true;
+    }
     void finishPath(bool closed) {
         if (floating_) return commitFloat();
         if (spiroTool_) pen_.finish(s_.doc, closed, penStroke_, pathWidth_, paintMode_, penFill_);  // refused on a Raster Layer
@@ -791,6 +802,7 @@ private:
 class ColorPicker : public QWidget {
 public:
     std::function<void(const QColor&)> onChange;
+    std::function<void()> onRelease;  // a drag ended
     ColorPicker() { setMinimumSize(180, 180); }
     void setColor(const QColor& c) {
         if (c.hsvHueF() >= 0) h_ = c.hsvHueF();  // grays have no hue: keep the last one
@@ -837,7 +849,7 @@ protected:
         update();
         if (onChange) onChange(QColor::fromHsvF(h_, s_, v_));
     }
-    void mouseReleaseEvent(QMouseEvent*) override { mode_ = None; }
+    void mouseReleaseEvent(QMouseEvent*) override { if (mode_ != None && onRelease) onRelease(); mode_ = None; }
 
 private:
     static constexpr int kN = 64;  // resolution of the square's image, scaled up to fit
@@ -1247,7 +1259,13 @@ int main(int argc, char** argv) {
     auto nameColorDock = [colorDock, swatches](int tool) { colorDock->setWindowTitle(tool != SpiroPenTool && tool != SelectTool ? "Color" : swatches[1]->isChecked() ? "Color: Fill" : "Color: Stroke"); };
     for (int i = 0; i < 2; i++)
         QObject::connect(swatches[i], &QToolButton::toggled, [=](bool on) { if (!on) return; canvas->setFillActive(i); picker->setColor(canvas->color()); nameColorDock(SpiroPenTool); });
-    picker->onChange = [canvas, paintSwatches](const QColor& c) { canvas->setColor(c); paintSwatches(); };
+    // With picks, a drag recolors them once on release, so the drag is one undo step (#304).
+    auto pending = std::make_shared<std::optional<QColor>>();
+    picker->onChange = [canvas, paintSwatches, pending](const QColor& c) {
+        if (canvas->selecting() && !canvas->pickedPaths().empty()) *pending = c;
+        else canvas->setColor(c), paintSwatches();
+    };
+    picker->onRelease = [canvas, pending] { if (*pending) canvas->setColor(**pending); pending->reset(); };
     canvas->onColorPick = [picker, paintSwatches](const QColor& c) { picker->setColor(c); paintSwatches(); };
     auto* penTypes = new QListWidget;  // the Spiro Pen's type for new nodes
     auto* editTypes = new QListWidget;  // retypes Node/Knot edit's selected nodes, apart from the pen's (#215)
@@ -1273,7 +1291,7 @@ int main(int argc, char** argv) {
     // Select shows its picks' Width, Paint and colors, display only and "mixed" where they differ; no pick shows the Pen's next path (#303).
     auto showPicks = [=] {
         auto ps = canvas->pickedPaths();
-        for (auto* w : {widthBox, paintBox, swatchBox}) w->setEnabled(ps.empty());
+        widthBox->setEnabled(ps.empty());  // a pick's Width is display only until #305
         double w = ps.empty() ? canvas->pathWidth() : ps[0].width;
         auto mode = ps.empty() ? canvas->paintMode() : ps[0].mode;
         bool wMixed = false, mMixed = false;
