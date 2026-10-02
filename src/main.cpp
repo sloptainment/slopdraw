@@ -77,6 +77,7 @@ public:
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
     void setLassoOpacity(float o) { lassoOpacity_ = o; }
     void setSmoothing(int n) { smooth_.n = n; }  // the Brush's Stabilizer, 0 = off (#292)  // Lasso Fill's own, apart from the Brush's (#213)
+    void setFinishLine(bool on) { finishLine_ = on; }  // pen-up flushes the Stabilizer to the pen (#293)
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
     void setNodeType(SpiroType t) { pen_.type = t; }  // the Spiro Pen's, for new nodes (#215)
@@ -696,7 +697,14 @@ private:
         update();
     }
     void smoothTick() {
-        if (!painting_) return smoothTimer_->stop();  // pen-up; Finish Line is not built yet
+        if (!painting_) {
+            if (finishLine_) {
+                auto tail = smooth_.finish();
+                if (!tail.empty()) s_.doc.stroke(brush_, tail, true, smoothErase_);
+                update();
+            }
+            return smoothTimer_->stop();
+        }
         raw_.dt = 0.01;
         smooth_.push(raw_);
         s_.doc.stroke(brush_, {smooth_.sample()}, true, smoothErase_);
@@ -705,7 +713,7 @@ private:
     Session s_;
     Stabilizer smooth_;
     PenSample raw_{};  // the newest pen sample while smoothing, in document coordinates
-    bool smoothErase_ = false;
+    bool smoothErase_ = false, finishLine_ = true;
     QTimer* smoothTimer_ = nullptr;
     std::shared_ptr<MyPaintBrush> brush_ = loadBrush(BRUSH_DIR "/pencil.myb");
     ulong lastMs_ = 0;
@@ -1111,6 +1119,10 @@ int main(int argc, char** argv) {
     smoothRow->addWidget(smoothing);
     smoothRow->addWidget(smoothingValue);
     brushBoxCol->addLayout(smoothRow);
+    auto* finishLine = new QCheckBox("Finish Line");
+    finishLine->setChecked(true);
+    QObject::connect(finishLine, &QCheckBox::toggled, canvas, &Canvas::setFinishLine);
+    brushBoxCol->addWidget(finishLine);
     auto* lassoBox = new QWidget;  // Lasso Fill's own Opacity (#212), starting solid
     auto* lassoRow = new QHBoxLayout(lassoBox);
     lassoRow->setContentsMargins(0, 0, 0, 0);
