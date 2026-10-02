@@ -78,6 +78,7 @@ public:
     void setLassoOpacity(float o) { lassoOpacity_ = o; }
     void setSmoothing(int n) { smooth_.n = n; }  // the Brush's Stabilizer, 0 = off (#292)  // Lasso Fill's own, apart from the Brush's (#213)
     void setFinishLine(bool on) { finishLine_ = on; }  // pen-up flushes the Stabilizer to the pen (#293)
+    void setStabilizeSensors(bool on) { smooth_.sensors = on; }  // pressure and tilt averaged too (#294)
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
     void setNodeType(SpiroType t) { pen_.type = t; }  // the Spiro Pen's, for new nodes (#215)
@@ -1123,6 +1124,9 @@ int main(int argc, char** argv) {
     finishLine->setChecked(true);
     QObject::connect(finishLine, &QCheckBox::toggled, canvas, &Canvas::setFinishLine);
     brushBoxCol->addWidget(finishLine);
+    auto* sensors = new QCheckBox("Stabilize Sensors");
+    QObject::connect(sensors, &QCheckBox::toggled, canvas, &Canvas::setStabilizeSensors);
+    brushBoxCol->addWidget(sensors);
     auto* lassoBox = new QWidget;  // Lasso Fill's own Opacity (#212), starting solid
     auto* lassoRow = new QHBoxLayout(lassoBox);
     lassoRow->setContentsMargins(0, 0, 0, 0);
