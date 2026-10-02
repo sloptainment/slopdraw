@@ -137,7 +137,8 @@ public:
     bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && eraseBrush_; }
     void setErase(bool on) { if (!spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
     void setScaleWidths(bool on) { scaleWidths_ = on; }
-    void setPathWidth(double w) { pathWidth_ = w; }  // a new Vector Path's width in px, from the Spiro Pen's Tool Options
+    // The picks' width in Select, knots scaled (#305), else a new Vector Path's width in px, from the Spiro Pen's Tool Options
+    void setPathWidth(double w) { if (!editPicks([w](Document::VPath& p) { p = rewidthPath(p, w); })) pathWidth_ = w; }
     void setPaintMode(Document::PaintMode m) { if (!editPicks([m](Document::VPath& p) { p.mode = m; })) paintMode_ = m; }  // the picks' in Select (#304), else a new Vector Path's, the Pen's own (#301)
     // Select with picks: f edits every picked path, as one undo step (#304). False, and nothing done, with no pick.
     bool editPicks(const std::function<void(Document::VPath&)>& f) {
@@ -1198,7 +1199,12 @@ int main(int argc, char** argv) {
     auto* pathWidth = new QSlider(Qt::Horizontal);  // px, of a new Vector Path
     pathWidth->setRange(kMinRadius, kMaxRadius);
     auto* pathWidthValue = new QLabel;
-    QObject::connect(pathWidth, &QSlider::valueChanged, [canvas, pathWidthValue](int v) { canvas->setPathWidth(v); pathWidthValue->setText(QString("%1 px").arg(v)); });
+    // On picks a drag applies once, on release: one undo step (#305)
+    QObject::connect(pathWidth, &QSlider::valueChanged, [canvas, pathWidth, pathWidthValue](int v) {
+        if (!pathWidth->isSliderDown() || canvas->pickedPaths().empty()) canvas->setPathWidth(v);
+        pathWidthValue->setText(QString("%1 px").arg(v));
+    });
+    QObject::connect(pathWidth, &QSlider::sliderReleased, [canvas, pathWidth] { canvas->setPathWidth(pathWidth->value()); });
     pathWidth->setValue(10);
     widthRow->addWidget(new QLabel("Width"));
     widthRow->addWidget(pathWidth);
@@ -1288,10 +1294,9 @@ int main(int argc, char** argv) {
         penTypes->setVisible(tool == SpiroPenTool);
         editTypes->setVisible(tool == NodeKnotEditTool);
     };
-    // Select shows its picks' Width, Paint and colors, display only and "mixed" where they differ; no pick shows the Pen's next path (#303).
+    // Select shows its picks' Width, Paint and colors, "mixed" where they differ; no pick shows the Pen's next path (#303).
     auto showPicks = [=] {
         auto ps = canvas->pickedPaths();
-        widthBox->setEnabled(ps.empty());  // a pick's Width is display only until #305
         double w = ps.empty() ? canvas->pathWidth() : ps[0].width;
         auto mode = ps.empty() ? canvas->paintMode() : ps[0].mode;
         bool wMixed = false, mMixed = false;

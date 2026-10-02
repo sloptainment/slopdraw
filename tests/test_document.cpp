@@ -1031,6 +1031,23 @@ static bool transformBoxRotatesAndScalesAlongItsAxes() {
     return turn && frame && hit && scale && follows;
 }
 
+// Width on picks (#305): rewidthPath scales every Width Knot by new/old width, t untouched. A tapered path of width 6 with knots
+// (0,2) (1,3) (2,1) at width 12 has knots (0,4) (1,6) (2,2); one undo of the setPaths restores the knots.
+static bool rewidthPathScalesKnots() {
+    using T = SpiroType;
+    Document::VPath p{{{10, 20, T::G2}, {30, 20, T::G2}, {50, 20, T::G2}}, false, Qt::red, 6, {{0, 2}, {1, 3}, {2, 1}}};
+    auto q = rewidthPath(p, 12);
+    bool scaled = q.width == 12 && q.knots.size() == 3 && q.knots[0].width == 4 && q.knots[1].width == 6 && q.knots[2].width == 2;
+    bool ts = q.knots[0].t == 0 && q.knots[1].t == 1 && q.knots[2].t == 2;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath(p.nodes, false, Qt::black, 6);
+    auto before = doc.paths(1)[0].knots;
+    bool set = doc.setPaths(1, std::vector<Document::VPath>{rewidthPath(doc.paths(1)[0], 12)}) && doc.paths(1)[0].knots[0].width == 2 * before[0].width;
+    bool undone = doc.undo() && doc.paths(1)[0].knots[0].width == before[0].width && doc.paths(1)[0].width == 6;
+    return scaled && ts && set && undone;
+}
+
 // Flip and Scale widths (#203): flipMatrix mirrors about a centre, horizontally (x) or vertically (y); transformNodes and transformPaths
 // scale each Width Knot by sqrt(|det|) of the transform only when asked. A path with knots (0,8) and (2,4) under a 0.5 scale gives 4 and 2
 // with it on and 8 and 4 with it off; a flip about x = 50 maps node x 10 to 90, its determinant -1 leaves widths as they are, and one undo restores it.
@@ -1365,6 +1382,7 @@ int main() {
     run("transformNodesMapsNodesAndKeepsTheRest", transformNodesMapsNodesAndKeepsTheRest);
     run("transformBoxRotatesAndScalesAlongItsAxes", transformBoxRotatesAndScalesAlongItsAxes);
     run("flipMirrorsAndScaleWidthsIsOptIn", flipMirrorsAndScaleWidthsIsOptIn);
+    run("rewidthPathScalesKnots", rewidthPathScalesKnots);
     run("transformRectMovesPixelsAndUndoesOnce", transformRectMovesPixelsAndUndoesOnce);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);

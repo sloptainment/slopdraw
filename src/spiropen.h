@@ -61,6 +61,14 @@ inline Document::VPath transformNodes(Document::VPath p, const QTransform& m, bo
     return p;
 }
 
+// The path at width w, every Width Knot scaled by w / its old width so the shape keeps its proportions (#256); knot t stays.
+inline Document::VPath rewidthPath(Document::VPath p, double w) {
+    if (p.width > 0)
+        for (auto& k : p.knots) k.width *= w / p.width;
+    p.width = w;
+    return p;
+}
+
 // The paths with those at the picked indexes mapped through m (Transform box, #230).
 inline std::vector<Document::VPath> transformPaths(std::vector<Document::VPath> paths, const std::set<int>& picked, const QTransform& m, bool scaleWidths = false) {
     for (int i : picked)
