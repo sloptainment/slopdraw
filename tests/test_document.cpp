@@ -735,7 +735,7 @@ static bool wideStrokeIsHitInsideItsBody() {
     return doc.pathAt(1, {30, 47}, 3) == 0 && doc.pathAt(1, {30, 60}, 3) == -1;
 }
 
-// A closed 4-node square (8 wide, the Spiro curve bulging round it) is hit deep inside it, where the ring is not drawn; a thin open path (width 2) is still hit
+// A closed 4-node Fill square (8 wide, the Spiro curve bulging round it) is hit deep inside it, where the ring is not drawn; a thin open path (width 2) is still hit
 // within 3 px of its centre line, and a point clear of both is not.
 static bool closedPathIsHitInsideAndThinPathStaysHittable() {
     using T = SpiroType;
@@ -743,6 +743,9 @@ static bool closedPathIsHitInsideAndThinPathStaysHittable() {
     doc.addVectorLayer();
     doc.addPath({{10, 10, T::G2}, {40, 10, T::G2}, {40, 40, T::G2}, {10, 40, T::G2}}, true, Qt::black, 8);
     doc.addPath({{8, 60, T::G2}, {32, 60, T::G2}, {56, 60, T::G2}}, false, Qt::black, 2);
+    auto ps = doc.paths(1);
+    ps[0].mode = Document::PaintMode::Fill;
+    doc.setPaths(1, ps);
     return doc.pathAt(1, {25, 25}, 3) == 0 && doc.pathAt(1, {30, 62}, 3) == 1 && doc.pathAt(1, {30, 54}, 3) == -1 && doc.pathAt(1, {2, 2}, 3) == -1;
 }
 
@@ -1133,6 +1136,33 @@ static bool pathsPaintByMode() {
     return ok && at(open, 24, 40).alpha() == 0;
 }
 
+// Hit tests follow the mode (#299): inside a closed square, a Stroke path misses and Fill and Both hit, in pathAt and pathsIn
+// alike; the stroke band hits in every mode. An open Fill path hits inside its closing diagonal.
+static bool hitsFollowMode() {
+    using T = SpiroType;
+    using M = Document::PaintMode;
+    auto make = [](bool closed, M mode) {
+        Document doc(QSize(64, 64));
+        doc.addVectorLayer();
+        std::vector<SpiroNode> nodes{{16, 16, T::Corner}, {48, 16, T::Corner}, {48, 48, T::Corner}};
+        if (closed) nodes.push_back({16, 48, T::Corner});
+        doc.addPath(nodes, closed, Qt::black, 4);
+        auto paths = doc.paths(1);
+        paths[0].mode = mode;
+        doc.setPaths(1, paths);
+        return doc;
+    };
+    QRectF inside(38, 22, 4, 4);
+    bool ok = true;
+    for (M m : {M::Stroke, M::Fill, M::Both}) {
+        Document d = make(true, m);
+        bool fill = m != M::Stroke;
+        ok = ok && (d.pathAt(1, {40, 24}, 3) == 0) == fill && d.pathsIn(1, inside).empty() != fill && d.pathAt(1, {32, 16}, 3) == 0;
+    }
+    Document open = make(false, M::Fill);
+    return ok && open.pathAt(1, {40, 24}, 3) == 0 && open.pathsIn(1, inside).size() == 1 && open.pathAt(1, {24, 40}, 3) == -1;
+}
+
 // rasterizeLayer turns a Vector Layer into a Raster Layer with the same pixels, name, visibility and opacity and no paths; one undo
 // gives back the editable Vector Layer, redo rasterizes again; a Raster Layer or bad index is refused.
 static bool rasterizingAVectorLayerUndoesOnce() {
@@ -1277,6 +1307,7 @@ int main() {
     run("settingPathsUndoesOnce", settingPathsUndoesOnce);
     run("rasterizingAVectorLayerUndoesOnce", rasterizingAVectorLayerUndoesOnce);
     run("pathsPaintByMode", pathsPaintByMode);
+    run("hitsFollowMode", hitsFollowMode);
     run("boxPicksThePathsItTouches", boxPicksThePathsItTouches);
     run("clearingARectangleUndoesOnce", clearingARectangleUndoesOnce);
     run("transformBoxBoundsAndMovesPickedPaths", transformBoxBoundsAndMovesPickedPaths);

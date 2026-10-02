@@ -174,7 +174,7 @@ int Document::pathAt(int layer, QPointF p, double tol) const {
         QPainterPath curve = curveOf(v);
         QPainterPathStroker stroker;
         stroker.setWidth(2 * tol);
-        if (stroker.createStroke(curve).contains(p) || outline(v).contains(p) || (v.closed && curve.contains(p))) return i;
+        if (stroker.createStroke(curve).contains(p) || outline(v).contains(p) || (v.mode != PaintMode::Stroke && curve.contains(p))) return i;
     }
     return -1;
 }
@@ -184,7 +184,7 @@ std::vector<int> Document::pathsIn(int layer, const QRectF& box) const {
     if (!layers_[layer].vector) return hit;
     for (int i = 0; i < int(layers_[layer].paths.size()); i++) {
         const VPath& v = layers_[layer].paths[i];
-        if (outline(v).intersects(box) || (v.closed && curveOf(v).intersects(box))) hit.push_back(i);
+        if (outline(v).intersects(box) || (v.mode != PaintMode::Stroke && curveOf(v).intersects(box))) hit.push_back(i);
     }
     return hit;
 }
