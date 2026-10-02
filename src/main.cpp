@@ -77,7 +77,9 @@ public:
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
     void setLassoOpacity(float o) { lassoOpacity_ = o; }
     void setSmoothing(int n) { smooth_.n = n; }  // the Brush's Stabilizer, 0 = off (#292)  // Lasso Fill's own, apart from the Brush's (#213)
-    void setFinishLine(bool on) { finishLine_ = on; }  // pen-up flushes the Stabilizer to the pen (#293)
+    void setFinishLine(bool on) { finishLine_ = on; }
+    void setLassoSmoothing(int n) { lassoSmooth_.n = n; }  // Lasso Fill's own Stabilizer, apart from the Brush's (#261)
+    void setLassoFinishLine(bool on) { lassoFinish_ = on; }  // pen-up flushes the Stabilizer to the pen (#293)
     void setStabilizeSensors(bool on) { smooth_.sensors = on; }  // pressure and tilt averaged too (#294)
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
@@ -658,14 +660,19 @@ private:
     }
     // Lasso Fill: collect the outline in document coordinates; the fill lands in endLasso. The eraser end is per stroke: its press decides.
     void lassoAt(QPointF pos, bool eraser) {
-        if (!lassoing_) lassoErase_ = eraser;
+        if (!lassoing_) lassoErase_ = eraser, lassoSmooth_.q.clear();
         lassoing_ = true;
-        lasso_.push_back(s_.view.toDoc(pos));
+        QPointF d = s_.view.toDoc(pos);
+        // ponytail: smoothed per pen event, no timer like the Brush's; the outline waits while the pen holds still
+        lassoSmooth_.push({float(d.x()), float(d.y()), 1, 0, 0, 0.0});
+        auto m = lassoSmooth_.sample();
+        lasso_.push_back({m.x, m.y});
         update();
     }
     void endLasso() {
         if (!lassoing_) return;
         lassoing_ = false;
+        if (lassoFinish_) for (auto& m : lassoSmooth_.finish()) lasso_.push_back({m.x, m.y});  // the shape closes at the pen-up point
         QColor c = color_;
         c.setAlphaF(lassoOpacity_);
         if (lasso_.size() > 2) s_.doc.fill(c, {lasso_.begin(), lasso_.end()}, lassoErase_);
@@ -724,6 +731,8 @@ private:
     bool dragging_ = false, space_ = false, painting_ = false, resizing_ = false;
     QColor color_ = Qt::black;  // matches pencil.myb and the Color dock's start
     QPolygonF lasso_;
+    Stabilizer lassoSmooth_;
+    bool lassoFinish_ = true;
     SpiroPen pen_;
     std::function<void()> preview_;  // the latest queued drag preview, run by flushPreview
     int knotDrag_ = -1;  // index of the Width Knot being dragged on the selected path, -1 for none
@@ -1128,8 +1137,10 @@ int main(int argc, char** argv) {
     QObject::connect(sensors, &QCheckBox::toggled, canvas, &Canvas::setStabilizeSensors);
     brushBoxCol->addWidget(sensors);
     auto* lassoBox = new QWidget;  // Lasso Fill's own Opacity (#212), starting solid
-    auto* lassoRow = new QHBoxLayout(lassoBox);
-    lassoRow->setContentsMargins(0, 0, 0, 0);
+    auto* lassoCol = new QVBoxLayout(lassoBox);
+    lassoCol->setContentsMargins(0, 0, 0, 0);
+    auto* lassoRow = new QHBoxLayout;
+    lassoCol->addLayout(lassoRow);
     auto* lassoOpacity = new QSlider(Qt::Horizontal);  // percent
     lassoOpacity->setRange(1, 100);
     auto* lassoOpacityValue = new QLabel;
@@ -1138,6 +1149,19 @@ int main(int argc, char** argv) {
     lassoRow->addWidget(new QLabel("Opacity"));
     lassoRow->addWidget(lassoOpacity);
     lassoRow->addWidget(lassoOpacityValue);
+    lassoCol->addWidget(new QLabel("Smoothing"));  // Lasso Fill's own Smoothing and Finish Line (#264)
+    auto* lassoSmoothRow = new QHBoxLayout;
+    auto* lassoSmoothing = new QSlider(Qt::Horizontal);
+    lassoSmoothing->setRange(0, 50);
+    auto* lassoSmoothingValue = new QLabel("0");
+    QObject::connect(lassoSmoothing, &QSlider::valueChanged, [canvas, lassoSmoothingValue](int v) { canvas->setLassoSmoothing(v); lassoSmoothingValue->setText(QString::number(v)); });
+    lassoSmoothRow->addWidget(lassoSmoothing);
+    lassoSmoothRow->addWidget(lassoSmoothingValue);
+    lassoCol->addLayout(lassoSmoothRow);
+    auto* lassoFinish = new QCheckBox("Finish Line");
+    lassoFinish->setChecked(true);
+    QObject::connect(lassoFinish, &QCheckBox::toggled, canvas, &Canvas::setLassoFinishLine);
+    lassoCol->addWidget(lassoFinish);
     auto* widthBox = new QWidget;
     auto* widthRow = new QHBoxLayout(widthBox);
     widthRow->setContentsMargins(0, 0, 0, 0);
