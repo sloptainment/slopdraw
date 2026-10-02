@@ -10,6 +10,7 @@
 #include "powerstroke.h"
 #include "spiro.h"
 #include "spiropen.h"
+#include "stabilizer.h"
 #include "tools.h"
 #include "powerstroke_fixtures.h"
 #include "powerstroke_body_fixtures.h"
@@ -49,6 +50,24 @@ static bool viewOpsKeepAnchorFixed() {
 }
 
 // zoom() and rotation() read back composed ops, mirrored too; setZoom/setRotation hold the point and the other quantity.
+static bool stabilizerAveragesAndFinishesAtThePen() {
+    auto eq = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+    // A zigzag: x 0,4,8, y 0,6,0, pressure 0.2,0.5,0.8.
+    PenSample zig[] = {{0, 0, 0.2f, 0, 0, 0.01}, {4, 6, 0.5f, 0, 0, 0.01}, {8, 0, 0.8f, 0, 0, 0.01}};
+    Stabilizer off{3, false}, on{3, true}, pass{0, false};
+    for (auto& s : zig) off.push(s), on.push(s), pass.push(s);
+    PenSample m = off.sample();
+    bool ok = eq(m.x, 4) && eq(m.y, 2) && eq(m.pressure, 0.8);
+    ok = ok && eq(on.sample().pressure, 0.5);
+    PenSample p = pass.sample();
+    ok = ok && eq(p.x, 8) && eq(p.y, 0) && eq(p.pressure, 0.8) && pass.finish().empty();
+    auto tail = off.finish();
+    ok = ok && !tail.empty() && eq(tail.back().x, 8) && eq(tail.back().y, 0);
+    // Each finishing sample moves toward the pen, never past it.
+    for (size_t i = 1; i < tail.size(); ++i) ok = ok && tail[i].x >= tail[i - 1].x && tail[i].x <= 8;
+    return ok;
+}
+
 static bool viewReportsAndSetsZoomRotation() {
     auto eq = [](double a, double b) { return std::abs(a - b) < 1e-6; };
     View v;
@@ -1142,6 +1161,7 @@ int main() {
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);
     run("viewOpsKeepAnchorFixed", viewOpsKeepAnchorFixed);
     run("viewScreenRadiusFollowsZoomOnly", viewScreenRadiusFollowsZoomOnly);
+    run("stabilizerAveragesAndFinishesAtThePen", stabilizerAveragesAndFinishesAtThePen);
     run("viewReportsAndSetsZoomRotation", viewReportsAndSetsZoomRotation);
     run("spiroMatchesReference", spiroMatchesReference);
     run("spiroFailsInsteadOfGarbage", spiroFailsInsteadOfGarbage);
