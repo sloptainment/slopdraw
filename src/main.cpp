@@ -795,14 +795,11 @@ protected:
         QPainter p(this);
         p.fillRect(rect(), QColor(90, 90, 90));
         if (!canvas_->hasDoc()) return;
-        QSizeF ds = canvas_->doc().image(0).size();
-        double k = std::min(width() / ds.width(), height() / ds.height());
-        QRectF r(0, 0, ds.width() * k, ds.height() * k);
-        r.moveCenter(QRectF(rect()).center());
+        QTransform toThumb = fit();
+        QRectF r = toThumb.mapRect(QRectF(QPointF(), QSizeF(canvas_->doc().image(0).size())));
         if (thumb_.isNull()) thumb_ = canvas_->doc().render().scaled(r.size().toSize(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
         p.fillRect(r, Qt::white);
         p.drawImage(r.topLeft(), thumb_);
-        QTransform toThumb = QTransform::fromScale(k, k) * QTransform::fromTranslate(r.left(), r.top());
         QTransform m = canvas_->session().view.matrix().inverted() * toThumb;  // canvas pixels -> thumbnail pixels
         QRectF c = canvas_->rect();
         QPolygonF view = m.map(QPolygonF(c));
@@ -820,8 +817,32 @@ protected:
         }
     }
 
+    // Dragging inside the view rectangle pans the canvas by the same document distance (#287).
+    void mousePressEvent(QMouseEvent* e) override {
+        if (!canvas_->hasDoc()) return;
+        QTransform m = canvas_->session().view.matrix().inverted() * fit();
+        dragging_ = m.map(QPolygonF(QRectF(canvas_->rect()))).containsPoint(e->position(), Qt::OddEvenFill);
+        last_ = e->position();
+    }
+    void mouseMoveEvent(QMouseEvent* e) override {
+        if (!dragging_) return;
+        QTransform toDoc = fit().inverted();
+        View& v = canvas_->session().view;
+        v.pan(v.toView(toDoc.map(last_)) - v.toView(toDoc.map(e->position())));  // the dragged doc point lands where the last one was
+        last_ = e->position();
+        canvas_->update();
+    }
+    void mouseReleaseEvent(QMouseEvent*) override { dragging_ = false; }
+
 private:
+    QTransform fit() const {  // document pixels -> thumbnail pixels: scaled to fit, centred
+        QSizeF ds = canvas_->doc().image(0).size();
+        double k = std::min(width() / ds.width(), height() / ds.height());
+        return QTransform::fromScale(k, k) * QTransform::fromTranslate((width() - ds.width() * k) / 2, (height() - ds.height() * k) / 2);
+    }
     Canvas* canvas_;
+    bool dragging_ = false;
+    QPointF last_;
     QImage thumb_;  // the render at thumbnail size; null until the next paint rebuilds it
 };
 
