@@ -7,6 +7,7 @@
 #include "document.h"
 #include "ora.h"
 #include <QTemporaryDir>
+#include <QXmlStreamReader>
 #include "powerstroke.h"
 #include "spiro.h"
 #include "spiropen.h"
@@ -637,6 +638,42 @@ static bool oraRoundTripsPaintMode() {
     if (b.kind != Document::PathKind::Spiro || b.mode != Document::PaintMode::Both || b.fillColor != QColor(200, 100, 50, 128)) return false;
     auto old = readVectorSvg(R"(<svg xmlns="http://www.w3.org/2000/svg" xmlns:mydraw="urn:mydraw"><path d="M0 0Z" fill="#0a141e" fill-opacity="1" mydraw:nodes="8,50,v 56,50,v" mydraw:closed="0" mydraw:width="6" mydraw:knots="0,6 1,6"/></svg>)");
     return old.size() == 1 && old[0].kind == Document::PathKind::Spiro && old[0].mode == Document::PaintMode::Stroke && old[0].color == QColor(10, 20, 30);
+}
+
+// The written SVG draws what the mode draws: Stroke and Both write the outline in the stroke color, Fill the curve in the fill color (#300).
+static bool svgFollowsPaintMode() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{10, 10, T::G2}, {30, 10, T::G2}, {30, 25, T::G2}, {10, 25, T::G2}}, true, QColor(10, 20, 30), 4);
+    QTemporaryDir dir;
+    QString path = dir.filePath("t.ora");
+    for (auto m : {Document::PaintMode::Stroke, Document::PaintMode::Fill, Document::PaintMode::Both}) {
+        auto ps = doc.paths(1);
+        ps[0].mode = m;
+        ps[0].fillColor = QColor(200, 100, 50, 128);
+        doc.setPaths(1, ps);
+        if (!writeOra(doc, path)) return false;
+        mz_zip_archive z{};
+        if (!mz_zip_reader_init_file(&z, path.toUtf8().constData(), 0)) return false;
+        size_t n = 0;
+        void* raw = mz_zip_reader_extract_file_to_heap(&z, "data/layer1.svg", &n, 0);
+        QByteArray svg(static_cast<const char*>(raw), qsizetype(n));
+        mz_free(raw); mz_zip_reader_end(&z);
+        QXmlStreamReader r(svg);
+        while (!r.atEnd() && !(r.readNext() == QXmlStreamReader::StartElement && r.name() == u"path")) {}
+        auto a = r.attributes();
+        bool fill = m == Document::PaintMode::Fill;
+        QPainterPath expect = fill ? *spiroToPath(ps[0].nodes, true) : Document::outline(ps[0]);
+        QString c = (fill ? ps[0].fillColor : ps[0].color).name();
+        double op = (fill ? ps[0].fillColor : ps[0].color).alphaF();
+        // d's first point is the path's first element.
+        QString start = QString("M%1 %2").arg(expect.elementAt(0).x, 0, 'g', 17).arg(expect.elementAt(0).y, 0, 'g', 17);
+        if (!a.value("d").startsWith(start) || a.value("fill") != c || std::abs(a.value("fill-opacity").toDouble() - op) > 1e-9) return false;
+        auto back = readOra(path);
+        if (!back || back->paths(1)[0].mode != m) return false;
+    }
+    return true;
 }
 
 // Export PNG writes the visible composite: hidden layer left out, half-opacity layer blended, reloaded pixels equal render().
@@ -1281,6 +1318,7 @@ int main() {
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);
+    run("svgFollowsPaintMode", svgFollowsPaintMode);
     run("exportedPngEqualsRender", exportedPngEqualsRender);
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
     run("closedPathIsARing", closedPathIsARing);

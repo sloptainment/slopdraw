@@ -322,6 +322,8 @@ void Document::rasterize(Layer& l) {
     }
 }
 
+QPainterPath Document::curve(const VPath& v) { return curveOf(v); }
+
 QPainterPath Document::outline(const VPath& v) {
     return expandPowerStroke(skeletonOf(v), v.closed, v.knots);
 }

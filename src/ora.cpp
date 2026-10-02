@@ -36,7 +36,8 @@ QString pathData(const QPainterPath& p) {
     return d + "Z";
 }
 
-// data/layerN.svg: one <path> per Vector Path, d = its outline so any viewer draws it; the rest is mydraw's own attributes.
+// data/layerN.svg: one <path> per Vector Path that any viewer draws: d = its outline in the stroke color when the mode strokes,
+// else its curve in the fill color. The rest is mydraw's own attributes.
 QByteArray svg(const Document& doc, int layer) {
     QByteArray out;
     QXmlStreamWriter w(&out);
@@ -48,9 +49,11 @@ QByteArray svg(const Document& doc, int layer) {
     w.writeAttribute("height", QString::number(doc.image(0).height()));
     for (const Document::VPath& v : doc.paths(layer)) {
         w.writeEmptyElement("path");
-        w.writeAttribute("d", pathData(Document::outline(v)));
-        w.writeAttribute("fill", v.color.name());
-        w.writeAttribute("fill-opacity", num(v.color.alphaF()));
+        bool fill = v.mode == Document::PaintMode::Fill;
+        QColor c = fill ? v.fillColor : v.color;
+        w.writeAttribute("d", pathData(fill ? Document::curve(v) : Document::outline(v)));
+        w.writeAttribute("fill", c.name());
+        w.writeAttribute("fill-opacity", num(c.alphaF()));
         QStringList nodes, knots;
         for (const SpiroNode& n : v.nodes) nodes << QString("%1,%2,%3").arg(num(n.x), num(n.y), QChar(char(n.type)));
         for (const WidthKnot& k : v.knots) knots << QString("%1,%2").arg(num(k.t), num(k.width));
