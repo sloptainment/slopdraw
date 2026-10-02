@@ -631,7 +631,7 @@ private:
     void pickAt(QPointF pos) {
         QPointF d = view_.toDoc(pos);
         QColor c = doc_.colorAt({int(std::floor(d.x())), int(std::floor(d.y()))});  // the pixel under the point, not the nearest corner
-        if (!c.isValid() || !brush_) return;
+        if (!c.isValid() || !brush_ || selectTool_) return;  // Node/Knot edit: a Ctrl+click no knot or node gesture took does nothing
         setColor(c);
         if (onColorPick) onColorPick(c);
     }
