@@ -8,6 +8,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QDockWidget>
+#include <QFileInfo>
 #include <QFileDialog>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -828,8 +829,9 @@ int main(int argc, char** argv) {
     auto* layerOpacityValue = new QLabel;
     QObject::connect(layerOpacity, &QSlider::valueChanged, [layerOpacityValue](int v) { layerOpacityValue->setText(QString("%1 %").arg(v)); });
     std::function<void()> kindChanged;  // set with the Tools dock below; refresh() runs on every current-layer change
+    std::function<void()> updateTitle;  // set with the File menu below; refresh() runs it after every edit, undo and redo
     std::vector<QAction*> docActions;  // enabled only while a document is open (#173); filled as the menus are built
-    auto refresh = [canvas, layerList, layerOpacity, layerOpacityValue, &kindChanged] {
+    auto refresh = [canvas, layerList, layerOpacity, layerOpacityValue, &kindChanged, &updateTitle] {
         Document& d = canvas->doc();
         QSignalBlocker b1(layerList), b2(layerOpacity);
         layerList->clear();
@@ -867,6 +869,7 @@ int main(int argc, char** argv) {
         layerOpacityValue->setText(QString("%1 %").arg(layerOpacity->value()));
         canvas->update();
         if (kindChanged) kindChanged();
+        if (updateTitle) updateTitle();
     };
     canvas->onLayersChange = refresh;
     QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
@@ -1034,6 +1037,11 @@ int main(int argc, char** argv) {
     auto* fileMenu = window.menuBar()->addMenu("&File");
     QString docPath;  // the open document's file, empty until opened or first saved (#277)
     int savedStep = 0;  // Document::stepId() at the last open or save: the saved mark (#240)
+    updateTitle = [&] {  // "name[*] - mydraw"; Qt shows the [*] as * while the window is modified (#278)
+        if (!canvas->hasDoc()) { window.setWindowTitle("mydraw"); window.setWindowModified(false); return; }
+        window.setWindowTitle((docPath.isEmpty() ? QString("Untitled") : QFileInfo(docPath).fileName()) + "[*] - mydraw");
+        window.setWindowModified(canvas->doc().stepId() != savedStep);
+    };
     auto* fileNew = fileMenu->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);
     QObject::connect(fileNew, &QAction::triggered, [&] {
@@ -1060,13 +1068,14 @@ int main(int argc, char** argv) {
         });
 
         QObject::connect(Bbox, &QDialogButtonBox::accepted, NewDocWindow,
-        [NewDocWindow, &canvas, &docPath, &savedStep, ww, hh] {
+        [NewDocWindow, &canvas, &docPath, &savedStep, &updateTitle, ww, hh] {
             int w = ww->text().toInt();
             int h = hh->text().toInt();
             NewDocWindow->accept();
             canvas->setDocument(Document(QSize(w, h)));
             docPath.clear();
             savedStep = 0;
+            updateTitle();
         });
         
         NewDocWindow->show();
@@ -1083,6 +1092,7 @@ int main(int argc, char** argv) {
         canvas->setDocument(std::move(*doc));
         docPath = path;
         savedStep = canvas->doc().stepId();
+        updateTitle();
     });
     auto saveTo = [&](QString path) {
         if (path.isEmpty()) return;
@@ -1090,6 +1100,7 @@ int main(int argc, char** argv) {
         if (!writeOra(canvas->doc(), path)) { QMessageBox::warning(&window, "Save", "Could not write " + path); return; }
         docPath = path;
         savedStep = canvas->doc().stepId();
+        updateTitle();
     };
     auto* fileSave = fileMenu->addAction("&Save");
     docActions.push_back(fileSave);
