@@ -56,6 +56,10 @@ QByteArray svg(const Document& doc, int layer) {
         w.writeAttribute("fill-opacity", num(c.alphaF()));
         QStringList nodes, knots;
         for (const SpiroNode& n : v.nodes) nodes << QString("%1,%2,%3").arg(num(n.x), num(n.y), QChar(char(n.type)));
+        // A Bezier node is "x,y,ix,iy,ox,oy,type", type c(usp), s(mooth) or y (symmetric) (#307).
+        for (const BezierNode& n : v.bezier)
+            nodes << QStringList{num(n.p.x()), num(n.p.y()), num(n.in.x()), num(n.in.y()), num(n.out.x()), num(n.out.y()),
+                                 QString("csy"[int(n.type)])}.join(',');
         for (const WidthKnot& k : v.knots) knots << QString("%1,%2").arg(num(k.t), num(k.width));
         w.writeAttribute(kNs, "nodes", nodes.join(' '));
         w.writeAttribute(kNs, "closed", v.closed ? "1" : "0");
@@ -82,6 +86,11 @@ std::vector<Document::VPath> readVectorSvg(const QByteArray& data) {
         v.color.setAlphaF(a.value("fill-opacity").toDouble());
         for (const auto& n : a.value(kNs, "nodes").split(' ', Qt::SkipEmptyParts)) {
             auto f = n.split(',');
+            if (f.size() == 7) {
+                v.bezier.push_back({{f[0].toDouble(), f[1].toDouble()}, {f[2].toDouble(), f[3].toDouble()},
+                                    {f[4].toDouble(), f[5].toDouble()}, BezierType(QString("csy").indexOf(f[6]))});
+                continue;
+            }
             v.nodes.push_back({f[0].toDouble(), f[1].toDouble(), SpiroType(f[2].at(0).toLatin1())});
         }
         for (const auto& k : a.value(kNs, "knots").split(' ', Qt::SkipEmptyParts)) {

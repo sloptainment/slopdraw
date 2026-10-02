@@ -640,6 +640,34 @@ static bool oraRoundTripsPaintMode() {
     return old.size() == 1 && old[0].kind == Document::PathKind::Spiro && old[0].mode == Document::PaintMode::Stroke && old[0].color == QColor(10, 20, 30);
 }
 
+// A Bezier path round-trips through .ora with its handles and node types exact, beside a Spiro path (#307).
+static bool oraRoundTripsBezier() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{10, 10, T::G2}, {30, 10, T::G2}, {30, 25, T::G2}, {10, 25, T::G2}}, true, QColor(10, 20, 30), 4);
+    Document::VPath v{{}, false, Qt::black, 4, {{0, 4}, {1.5, 7}, {2, 4}}, Document::PathKind::Bezier};
+    v.bezier = {{{12, 48}, {12, 48}, {28.25, 0.5}, BezierType::Cusp},
+                {{30, 30}, {25, 35}, {35, 25}, BezierType::Smooth},
+                {{52, 16}, {50.125, 10}, {52, 16}, BezierType::Symmetric}};
+    auto ps = doc.paths(1);
+    ps.push_back(v);
+    doc.setPaths(1, ps);
+    QTemporaryDir dir;
+    QString path = dir.filePath("t.ora");
+    if (!writeOra(doc, path)) return false;
+    auto back = readOra(path);
+    if (!back || back->paths(1).size() != 2) return false;
+    const auto& s = back->paths(1)[0];
+    const auto& b = back->paths(1)[1];
+    if (s.kind != Document::PathKind::Spiro || s.nodes.size() != 4 || !s.bezier.empty()) return false;
+    if (b.kind != Document::PathKind::Bezier || !b.nodes.empty() || b.bezier.size() != 3 || b.knots.size() != 3) return false;
+    for (size_t i = 0; i < 3; ++i)
+        if (b.bezier[i].p != v.bezier[i].p || b.bezier[i].in != v.bezier[i].in || b.bezier[i].out != v.bezier[i].out
+            || b.bezier[i].type != v.bezier[i].type) return false;
+    return back->render() == doc.render();
+}
+
 // The written SVG draws what the mode draws: Stroke and Both write the outline in the stroke color, Fill the curve in the fill color (#300).
 static bool svgFollowsPaintMode() {
     using T = SpiroType;
@@ -1386,6 +1414,7 @@ int main() {
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);
+    run("oraRoundTripsBezier", oraRoundTripsBezier);
     run("svgFollowsPaintMode", svgFollowsPaintMode);
     run("exportedPngEqualsRender", exportedPngEqualsRender);
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
