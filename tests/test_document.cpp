@@ -618,6 +618,27 @@ static bool oraRoundTripsVectorLayer() {
     return hasSvg && back->render() == doc.render() && back->image(2) == doc.image(2);
 }
 
+// A path with mode Both and a fill color round-trips through .ora; an SVG written before kind/mode/fillcolor existed reads as Spiro, Stroke (#296).
+static bool oraRoundTripsPaintMode() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{10, 10, T::G2}, {30, 10, T::G2}, {30, 25, T::G2}, {10, 25, T::G2}}, true, QColor(10, 20, 30), 4);
+    auto ps = doc.paths(1);
+    ps[0].mode = Document::PaintMode::Both;
+    ps[0].fillColor = QColor(200, 100, 50, 128);
+    doc.setPaths(1, ps);
+    QTemporaryDir dir;
+    QString path = dir.filePath("t.ora");
+    if (!writeOra(doc, path)) return false;
+    auto back = readOra(path);
+    if (!back || back->paths(1).size() != 1) return false;
+    const auto& b = back->paths(1)[0];
+    if (b.kind != Document::PathKind::Spiro || b.mode != Document::PaintMode::Both || b.fillColor != QColor(200, 100, 50, 128)) return false;
+    auto old = readVectorSvg(R"(<svg xmlns="http://www.w3.org/2000/svg" xmlns:mydraw="urn:mydraw"><path d="M0 0Z" fill="#0a141e" fill-opacity="1" mydraw:nodes="8,50,v 56,50,v" mydraw:closed="0" mydraw:width="6" mydraw:knots="0,6 1,6"/></svg>)");
+    return old.size() == 1 && old[0].kind == Document::PathKind::Spiro && old[0].mode == Document::PaintMode::Stroke && old[0].color == QColor(10, 20, 30);
+}
+
 // Export PNG writes the visible composite: hidden layer left out, half-opacity layer blended, reloaded pixels equal render().
 static bool exportedPngEqualsRender() {
     Document doc(QSize(32, 32));
@@ -1194,6 +1215,7 @@ int main() {
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
+    run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);
     run("exportedPngEqualsRender", exportedPngEqualsRender);
     run("vectorPathRendersAsPowerStroke", vectorPathRendersAsPowerStroke);
     run("closedPathIsARing", closedPathIsARing);

@@ -58,12 +58,17 @@ QByteArray svg(const Document& doc, int layer) {
         w.writeAttribute(kNs, "closed", v.closed ? "1" : "0");
         w.writeAttribute(kNs, "width", num(v.width));
         w.writeAttribute(kNs, "knots", knots.join(' '));
+        w.writeAttribute(kNs, "kind", v.kind == Document::PathKind::Bezier ? "bezier" : "spiro");
+        w.writeAttribute(kNs, "mode", v.mode == Document::PaintMode::Both ? "both" : v.mode == Document::PaintMode::Fill ? "fill" : "stroke");
+        w.writeAttribute(kNs, "fillcolor", v.fillColor.name(QColor::HexArgb));
     }
     w.writeEndDocument();
     return out;
 }
 
-std::vector<Document::VPath> readSvg(const QByteArray& data) {
+}  // namespace
+
+std::vector<Document::VPath> readVectorSvg(const QByteArray& data) {
     std::vector<Document::VPath> paths;
     QXmlStreamReader r(data);
     while (!r.atEnd()) {
@@ -80,12 +85,16 @@ std::vector<Document::VPath> readSvg(const QByteArray& data) {
             auto f = k.split(',');
             v.knots.push_back({f[0].toDouble(), f[1].toDouble()});
         }
+        // Files from before #296 lack these: Spiro, Stroke.
+        if (a.value(kNs, "kind") == u"bezier") v.kind = Document::PathKind::Bezier;
+        if (a.value(kNs, "mode") == u"fill") v.mode = Document::PaintMode::Fill;
+        if (a.value(kNs, "mode") == u"both") v.mode = Document::PaintMode::Both;
+        if (a.hasAttribute(kNs, "fillcolor")) v.fillColor = QColor(a.value(kNs, "fillcolor").toString());
         paths.push_back(v);
     }
     return paths;
 }
 
-}  // namespace
 
 bool writeOra(const Document& doc, const QString& path) {
     QByteArray xml;
@@ -162,7 +171,7 @@ std::optional<Document> readOra(const QString& path) {
             if (!img.loadFromData(entry(l.src)) || img.size() != size) { doc.reset(); break; }
             if (i > 0) doc->addLayer();
             doc->restoreLayer(i, img, l.name, l.visible, l.opacity);
-            if (!l.svg.isEmpty()) doc->restorePaths(i, readSvg(entry(l.svg)));
+            if (!l.svg.isEmpty()) doc->restorePaths(i, readVectorSvg(entry(l.svg)));
         }
     }
     mz_zip_reader_end(&z);

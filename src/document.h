@@ -14,12 +14,18 @@
 
 class Document {
 public:
+    enum class PathKind { Spiro, Bezier };
+    enum class PaintMode { Stroke, Fill, Both };
     struct VPath {
         std::vector<SpiroNode> nodes;
         bool closed;
         QColor color;
         double width;
         std::vector<WidthKnot> knots;
+        // color is the stroke color; fillColor paints the inside when mode is Fill or Both (#272).
+        PathKind kind = PathKind::Spiro;
+        PaintMode mode = PaintMode::Stroke;
+        QColor fillColor = Qt::black;
     };
     // undoBudget caps the bytes of pixels the undo history keeps (#27); the oldest steps drop first, never the newest.
     explicit Document(QSize size, qsizetype undoBudget = qsizetype(1) << 30);
