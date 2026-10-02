@@ -55,7 +55,7 @@ public:
     int addVectorLayer();
     // Appends a Spiro path to the current Vector Layer, drawn as a Power Stroke `width` wide (flat ends), antialiased, in color.
     // One undo step. Returns false, changing nothing, when the current layer is a Raster Layer or the nodes give no curve (see spiroToPath).
-    bool addPath(const std::vector<SpiroNode>& nodes, bool closed, const QColor& color, double width, PaintMode mode = PaintMode::Stroke);
+    bool addPath(const std::vector<SpiroNode>& nodes, bool closed, const QColor& color, double width, PaintMode mode = PaintMode::Stroke, const QColor& fillColor = {});
     // Replaces path `path` of Vector Layer `layer` with these Width Knots (t = cubic index + fraction, full width) and redraws it; one undo step.
     // Returns false, changing nothing, for a Raster Layer, a bad path index or an empty knot list.
     bool setKnots(int layer, int path, const std::vector<WidthKnot>& knots);

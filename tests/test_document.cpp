@@ -690,6 +690,18 @@ static bool penPaintModeGoesOnNextPath() {
     return v.mode == Document::PaintMode::Fill && v.fillColor == QColor(10, 20, 30) && doc.colorAt({30, 30}) == QColor(10, 20, 30);
 }
 
+// The Fill swatch is the next path's fill color, apart from its stroke color (#302).
+static bool penFillSwatchGoesOnNextPath() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    SpiroPen pen;
+    pen.nodes = {{10, 10, T::Corner}, {50, 10, T::Corner}, {50, 50, T::Corner}, {10, 50, T::Corner}};
+    if (!pen.finish(doc, true, QColor(10, 20, 30), 2, Document::PaintMode::Both, QColor(200, 0, 0))) return false;
+    auto v = doc.paths(1)[0];
+    return v.color == QColor(10, 20, 30) && v.fillColor == QColor(200, 0, 0) && doc.colorAt({30, 30}) == QColor(200, 0, 0);
+}
+
 // Export PNG writes the visible composite: hidden layer left out, half-opacity layer blended, reloaded pixels equal render().
 static bool exportedPngEqualsRender() {
     Document doc(QSize(32, 32));
@@ -1296,6 +1308,7 @@ int main() {
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("penPaintModeGoesOnNextPath", penPaintModeGoesOnNextPath);
+    run("penFillSwatchGoesOnNextPath", penFillSwatchGoesOnNextPath);
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);
     run("viewOpsKeepAnchorFixed", viewOpsKeepAnchorFixed);
     run("viewScreenRadiusFollowsZoomOnly", viewScreenRadiusFollowsZoomOnly);
