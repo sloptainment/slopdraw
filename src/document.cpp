@@ -30,10 +30,14 @@ void paste(QImage& dst, const QImage& src, QPoint at) {
         std::memcpy(dst.scanLine(at.y() + y) + 4 * at.x(), src.constScanLine(y), 4 * size_t(src.width()));
 }
 
-// The cubics of the Spiro curve through nodes, which must give one (see spiroToPath). A QPainterPath from spiroToPath is lines and
-// cubics (several per Spiro segment); lines get p1=p0, p2=p3.
-std::vector<Cubic> skeletonOf(const std::vector<SpiroNode>& nodes, bool closed) {
-    QPainterPath curve = *spiroToPath(nodes, closed);
+// The curve of a path, whose nodes must give one (see spiroToPath). Every caller goes through here, so another kind plugs in here alone.
+static QPainterPath curveOf(const Document::VPath& v) {
+    return *spiroToPath(v.nodes, v.closed);
+}
+
+// The cubics of curveOf(v). A QPainterPath from spiroToPath is lines and cubics (several per Spiro segment); lines get p1=p0, p2=p3.
+static std::vector<Cubic> skeletonOf(const Document::VPath& v) {
+    QPainterPath curve = curveOf(v);
     std::vector<Cubic> skeleton;
     QPointF at = curve.elementAt(0);
     for (int i = 1; i < curve.elementCount();) {
@@ -101,7 +105,7 @@ bool Document::addPath(const std::vector<SpiroNode>& nodes, bool closed, const Q
     s.kind = PathAdd;
     s.layer = current_;
     std::vector<WidthKnot> knots{{0, width}};
-    if (!closed) knots.push_back({double(skeletonOf(nodes, closed).size()), width});
+    if (!closed) knots.push_back({double(skeletonOf({nodes, closed}).size()), width});
     s.paths = {{nodes, closed, color, width, knots}};
     push(s);
     apply(s, false);
@@ -167,7 +171,7 @@ int Document::pathAt(int layer, QPointF p, double tol) const {
     if (!layers_[layer].vector) return -1;
     for (int i = int(layers_[layer].paths.size()); i-- > 0;) {
         const VPath& v = layers_[layer].paths[i];
-        QPainterPath curve = *spiroToPath(v.nodes, v.closed);
+        QPainterPath curve = curveOf(v);
         QPainterPathStroker stroker;
         stroker.setWidth(2 * tol);
         if (stroker.createStroke(curve).contains(p) || outline(v).contains(p) || (v.closed && curve.contains(p))) return i;
@@ -180,7 +184,7 @@ std::vector<int> Document::pathsIn(int layer, const QRectF& box) const {
     if (!layers_[layer].vector) return hit;
     for (int i = 0; i < int(layers_[layer].paths.size()); i++) {
         const VPath& v = layers_[layer].paths[i];
-        if (outline(v).intersects(box) || (v.closed && spiroToPath(v.nodes, v.closed)->intersects(box))) hit.push_back(i);
+        if (outline(v).intersects(box) || (v.closed && curveOf(v).intersects(box))) hit.push_back(i);
     }
     return hit;
 }
@@ -219,7 +223,7 @@ static QPointF leftNormal(const std::vector<Cubic>& skeleton, double t) {
 std::vector<QPointF> Document::knotHandles(int layer, int path) const {
     if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return {};
     const VPath& v = layers_[layer].paths[path];
-    std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
+    std::vector<Cubic> skeleton = skeletonOf(v);
     std::vector<QPointF> out;
     for (const WidthKnot& k : v.knots) out.push_back(skeletonAt(skeleton, k.t) + leftNormal(skeleton, k.t) * (k.width / 2));
     return out;
@@ -249,7 +253,7 @@ static double projectT(const std::vector<Cubic>& skeleton, QPointF p) {
 std::optional<WidthKnot> Document::projectKnot(int layer, int path, QPointF p) const {
     if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return std::nullopt;
     const VPath& v = layers_[layer].paths[path];
-    std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
+    std::vector<Cubic> skeleton = skeletonOf(v);
     double t = projectT(skeleton, p);
     QPointF d = p - skeletonAt(skeleton, t), nrm = leftNormal(skeleton, t);
     return WidthKnot{t, 2 * (d.x() * nrm.x() + d.y() * nrm.y())};
@@ -260,7 +264,7 @@ bool Document::addKnot(int layer, int path, QPointF p) {
     if (!k || !layers_[layer].vector) return false;
     const VPath& v = layers_[layer].paths[path];
     auto knots = v.knots;
-    k->width = widthAt(knots, k->t, int(skeletonOf(v.nodes, v.closed).size()), v.closed);
+    k->width = widthAt(knots, k->t, int(skeletonOf(v).size()), v.closed);
     knots.insert(std::upper_bound(knots.begin(), knots.end(), *k, [](auto& a, auto& b) { return a.t < b.t; }), *k);
     return setKnots(layer, path, knots);
 }
@@ -271,7 +275,7 @@ bool Document::addNode(int layer, int path, QPointF p, SpiroType type) {
     auto k = projectKnot(layer, path, p);
     if (!k) return false;
     const VPath& v = layers_[layer].paths[path];
-    std::vector<Cubic> skeleton = skeletonOf(v.nodes, v.closed);
+    std::vector<Cubic> skeleton = skeletonOf(v);
     std::vector<int> at{0};  // at[j]: the cubic index where node j sits
     for (int c = 0; c < int(skeleton.size()) && at.size() < v.nodes.size(); c++)
         if (QLineF(skeleton[c][3], QPointF(v.nodes[at.size()].x, v.nodes[at.size()].y)).length() < 1e-6) at.push_back(c + 1);
@@ -282,7 +286,7 @@ bool Document::addNode(int layer, int path, QPointF p, SpiroType type) {
     auto nodes = v.nodes;
     nodes.insert(nodes.begin() + s + 1, {pt.x(), pt.y(), type});
     if (!spiroToPath(nodes, v.closed)) return false;
-    std::vector<Cubic> fresh = skeletonOf(nodes, v.closed);
+    std::vector<Cubic> fresh = skeletonOf({nodes, v.closed});
     auto knots = v.knots;
     for (WidthKnot& w : knots)
         w.t = w.t <= 0 ? 0 : w.t >= skeleton.size() ? double(fresh.size()) : projectT(fresh, skeletonAt(skeleton, w.t));
@@ -313,7 +317,7 @@ void Document::rasterize(Layer& l) {
 }
 
 QPainterPath Document::outline(const VPath& v) {
-    return expandPowerStroke(skeletonOf(v.nodes, v.closed), v.closed, v.knots);
+    return expandPowerStroke(skeletonOf(v), v.closed, v.knots);
 }
 
 void Document::restorePaths(int layer, const std::vector<VPath>& paths) {
