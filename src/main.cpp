@@ -1032,6 +1032,8 @@ int main(int argc, char** argv) {
     window.addDockWidget(Qt::LeftDockWidgetArea, brushDock);  // layout B: Brushes below Tools, bottom-left
 
     auto* fileMenu = window.menuBar()->addMenu("&File");
+    QString docPath;  // the open document's file, empty until opened or first saved (#277)
+    int savedStep = 0;  // Document::stepId() at the last open or save: the saved mark (#240)
     auto* fileNew = fileMenu->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);
     QObject::connect(fileNew, &QAction::triggered, [&] {
@@ -1058,11 +1060,13 @@ int main(int argc, char** argv) {
         });
 
         QObject::connect(Bbox, &QDialogButtonBox::accepted, NewDocWindow,
-        [NewDocWindow, &canvas, ww, hh] {
+        [NewDocWindow, &canvas, &docPath, &savedStep, ww, hh] {
             int w = ww->text().toInt();
             int h = hh->text().toInt();
             NewDocWindow->accept();
             canvas->setDocument(Document(QSize(w, h)));
+            docPath.clear();
+            savedStep = 0;
         });
         
         NewDocWindow->show();
@@ -1077,15 +1081,27 @@ int main(int argc, char** argv) {
         auto doc = readOra(path);
         if (!doc) { QMessageBox::warning(&window, "Open", "Could not read " + path); return; }
         canvas->setDocument(std::move(*doc));
+        docPath = path;
+        savedStep = canvas->doc().stepId();
     });
-    auto* fileSave = fileMenu->addAction("&Save...");
+    auto saveTo = [&](QString path) {
+        if (path.isEmpty()) return;
+        if (!path.endsWith(".ora")) path += ".ora";
+        if (!writeOra(canvas->doc(), path)) { QMessageBox::warning(&window, "Save", "Could not write " + path); return; }
+        docPath = path;
+        savedStep = canvas->doc().stepId();
+    };
+    auto* fileSave = fileMenu->addAction("&Save");
     docActions.push_back(fileSave);
     fileSave->setShortcut(QKeySequence::Save);
     QObject::connect(fileSave, &QAction::triggered, [&] {
-        QString path = QFileDialog::getSaveFileName(&window, "Save", {}, "OpenRaster (*.ora)");
-        if (path.isEmpty()) return;
-        if (!path.endsWith(".ora")) path += ".ora";
-        if (!writeOra(canvas->doc(), path)) QMessageBox::warning(&window, "Save", "Could not write " + path);
+        saveTo(!docPath.isEmpty() ? docPath : QFileDialog::getSaveFileName(&window, "Save", {}, "OpenRaster (*.ora)"));
+    });
+    auto* fileSaveAs = fileMenu->addAction("Save &As...");
+    docActions.push_back(fileSaveAs);
+    fileSaveAs->setShortcut(QKeySequence("Ctrl+Shift+S"));
+    QObject::connect(fileSaveAs, &QAction::triggered, [&] {
+        saveTo(QFileDialog::getSaveFileName(&window, "Save As", docPath, "OpenRaster (*.ora)"));
     });
     auto* fileExport = fileMenu->addAction("&Export PNG...");
     docActions.push_back(fileExport);
