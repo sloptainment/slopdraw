@@ -48,6 +48,25 @@ static bool viewOpsKeepAnchorFixed() {
     return near(v.toDoc(a), under);
 }
 
+// zoom() and rotation() read back composed ops, mirrored too; setZoom/setRotation hold the point and the other quantity.
+static bool viewReportsAndSetsZoomRotation() {
+    auto eq = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+    View v;
+    v.pan({-7, 13});
+    v.zoomAt({3, 4}, 2.5);
+    v.rotateAt({5, 1}, 30);
+    bool ok = eq(v.zoom(), 2.5) && eq(v.rotation(), 30);
+    v.mirrorAt({2, 2});
+    ok = ok && eq(v.zoom(), 2.5) && eq(v.rotation(), -30);
+    v.rotateAt({0, 0}, 20);
+    ok = ok && eq(v.rotation(), -10);
+    QPointF a(100, 80), under = v.toDoc(a);
+    v.setZoom(a, 4);
+    ok = ok && eq(v.zoom(), 4) && eq(v.rotation(), -10) && near(v.toDoc(a), under);
+    v.setRotation(a, 170);
+    return ok && eq(v.rotation(), 170) && eq(v.zoom(), 4) && near(v.toDoc(a), under);
+}
+
 // A brush radius on screen scales with zoom only: rotation and mirror leave it unchanged.
 static bool viewScreenRadiusFollowsZoomOnly() {
     View v;
@@ -1123,6 +1142,7 @@ int main() {
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);
     run("viewOpsKeepAnchorFixed", viewOpsKeepAnchorFixed);
     run("viewScreenRadiusFollowsZoomOnly", viewScreenRadiusFollowsZoomOnly);
+    run("viewReportsAndSetsZoomRotation", viewReportsAndSetsZoomRotation);
     run("spiroMatchesReference", spiroMatchesReference);
     run("spiroFailsInsteadOfGarbage", spiroFailsInsteadOfGarbage);
     run("bundledPencilLoads", bundledPencilLoads);
