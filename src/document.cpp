@@ -312,7 +312,13 @@ void Document::rasterize(Layer& l) {
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
     for (const VPath& v : l.paths) {
-        p.fillPath(outline(v), v.color);
+        if (v.mode != PaintMode::Stroke) {
+            // QPainterPath fills an open subpath as if closed by a straight line (#258)
+            QPainterPath inside = curveOf(v);
+            inside.setFillRule(Qt::WindingFill);
+            p.fillPath(inside, v.fillColor);
+        }
+        if (v.mode != PaintMode::Fill) p.fillPath(outline(v), v.color);
     }
 }
 

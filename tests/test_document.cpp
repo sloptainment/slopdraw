@@ -1098,6 +1098,41 @@ static bool toolFollowsLayerKind() {
         && toolForLayer(true, BoxSelectTool, BrushTool, NodeKnotEditTool) == NodeKnotEditTool;
 }
 
+// A path paints by its mode (#298): Stroke the Power Stroke in color, Fill only the inside in fillColor, Both fill under stroke. An
+// open path's fill closes with a straight line from its last node to its first. Rasterize keeps the pixels.
+static bool pathsPaintByMode() {
+    using T = SpiroType;
+    using M = Document::PaintMode;
+    QColor red(255, 0, 0), blue(0, 0, 255);
+    auto draw = [&](bool closed, M mode) {
+        Document doc(QSize(64, 64));
+        doc.addVectorLayer();
+        // A square when closed; open, the L along its top and right whose closing diagonal runs (16,16)-(48,48)
+        std::vector<SpiroNode> nodes{{16, 16, T::Corner}, {48, 16, T::Corner}, {48, 48, T::Corner}};
+        if (closed) nodes.push_back({16, 48, T::Corner});
+        doc.addPath(nodes, closed, red, 4);
+        auto paths = doc.paths(1);
+        paths[0].mode = mode;
+        paths[0].fillColor = blue;
+        doc.setPaths(1, paths);
+        return doc;
+    };
+    auto at = [](Document& d, int x, int y) { return d.image(1).pixelColor(x, y); };
+    bool ok = true;
+    for (bool closed : {true, false}) {
+        Document s = draw(closed, M::Stroke), f = draw(closed, M::Fill), b = draw(closed, M::Both);
+        // (40,24) is inside both shapes; (32,16) is on the top edge's stroke
+        ok = ok && at(s, 40, 24).alpha() == 0 && at(s, 32, 16) == red;
+        ok = ok && at(f, 40, 24) == blue && at(f, 32, 14).alpha() == 0;
+        ok = ok && at(b, 40, 24) == blue && at(b, 32, 16) == red;
+        QImage before = b.image(1);
+        ok = ok && b.rasterizeLayer(1) && b.image(1) == before;
+    }
+    // Open: (24,40) is below the closing diagonal, so outside the fill
+    Document open = draw(false, M::Fill);
+    return ok && at(open, 24, 40).alpha() == 0;
+}
+
 // rasterizeLayer turns a Vector Layer into a Raster Layer with the same pixels, name, visibility and opacity and no paths; one undo
 // gives back the editable Vector Layer, redo rasterizes again; a Raster Layer or bad index is refused.
 static bool rasterizingAVectorLayerUndoesOnce() {
@@ -1241,6 +1276,7 @@ int main() {
     run("toolFollowsLayerKind", toolFollowsLayerKind);
     run("settingPathsUndoesOnce", settingPathsUndoesOnce);
     run("rasterizingAVectorLayerUndoesOnce", rasterizingAVectorLayerUndoesOnce);
+    run("pathsPaintByMode", pathsPaintByMode);
     run("boxPicksThePathsItTouches", boxPicksThePathsItTouches);
     run("clearingARectangleUndoesOnce", clearingARectangleUndoesOnce);
     run("transformBoxBoundsAndMovesPickedPaths", transformBoxBoundsAndMovesPickedPaths);
