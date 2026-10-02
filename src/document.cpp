@@ -545,6 +545,7 @@ void Document::seal() {
 
 void Document::push(Step s) {
     history_.resize(applied_);  // a new edit discards the redo branch
+    s.id = ++lastId_;
     history_.push_back(std::move(s));
     applied_++;
     auto bytes = [&] {
@@ -553,9 +554,15 @@ void Document::push(Step s) {
         return n;
     };
     while (history_.size() > 1 && bytes() > budget_) {
+        baseId_ = history_.front().id;
         history_.erase(history_.begin());
         applied_--;
     }
+}
+
+int Document::stepId() {
+    seal();
+    return applied_ ? history_[applied_ - 1].id : baseId_;
 }
 
 bool Document::undo() {

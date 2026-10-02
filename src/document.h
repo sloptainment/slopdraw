@@ -113,6 +113,9 @@ public:
     // Each returns false when there is nothing to undo / redo.
     bool undo();
     bool redo();
+    // The id of the undo step the history stands on, 0 for none: every new step gets a fresh, increasing id (#240's dirty marker).
+    // Seals a stroke in progress first, as undo does, so call it between strokes, not during one.
+    int stepId();
 
 private:
     // Pixels: before/after pixels of the rect a stroke changed. The layer ops keep what undo needs: Add nothing (its layer is blank
@@ -122,6 +125,7 @@ private:
     enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, PathAdd, Knots, Nodes, Rasterize, Paths };
     struct Step {
         Kind kind = Pixels;
+        int id = 0;
         int layer = 0;
         QRect rect;
         QImage before, after;
@@ -155,6 +159,8 @@ private:
     qsizetype budget_;
     std::vector<Step> history_;  // history_[0, applied_) are applied; the rest can be redone
     size_t applied_ = 0;
+    int lastId_ = 0;  // the newest id handed out
+    int baseId_ = 0;  // the id of the newest step dropped past the budget: what applied_ == 0 stands on
     // The current layer as it was when the stroke in progress began; null when none is in progress.
     // Shares pixels with that layer until the first dab detaches it, so starting a stroke copies once.
     QImage strokeStart_;

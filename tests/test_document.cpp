@@ -207,6 +207,33 @@ static bool budgetDropsOldestKeepsNewest() {
     return doc.undo() && doc.render() == first && !doc.undo();
 }
 
+// Undo step ids (#240's dirty marker): 0 when fresh, a new id per edit, undo/redo walk them, a budget drop keeps the current one.
+static bool stepIdsTrackTheHistory() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    int fresh = doc.stepId();
+    doc.stroke(pencil, waveAt(16));
+    int a = doc.stepId();
+    doc.stroke(pencil, waveAt(48));
+    int b = doc.stepId();
+    doc.undo();
+    int undone = doc.stepId();
+    doc.redo();
+    int redone = doc.stepId();
+    doc.undo();
+    doc.stroke(pencil, waveAt(32));
+    int c = doc.stepId();
+    Document tiny(QSize(64, 64), 1);
+    tiny.stroke(pencil, waveAt(16));
+    tiny.stroke(pencil, waveAt(48));
+    int last = tiny.stepId();
+    tiny.undo();
+    int dropped = tiny.stepId();
+    return fresh == 0 && a != 0 && b != a && undone == a && redone == b && c != a && c != b && c != 0 &&
+           tiny.stepId() == dropped && dropped != 0 && dropped != last;
+}
+
 // After the pencil wave, colorAt reads the golden's gray at a painted pixel (53,34), white elsewhere, and invalid off the canvas.
 static bool colorAtReadsCompositePixel() {
     auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
@@ -1106,6 +1133,7 @@ int main() {
     run("newStrokeAfterUndoDiscardsRedo", newStrokeAfterUndoDiscardsRedo);
     run("liveFedStrokeIsOneUndoStep", liveFedStrokeIsOneUndoStep);
     run("budgetDropsOldestKeepsNewest", budgetDropsOldestKeepsNewest);
+    run("stepIdsTrackTheHistory", stepIdsTrackTheHistory);
     run("colorAtReadsCompositePixel", colorAtReadsCompositePixel);
     run("eraserStrokeErasesAndUndoes", eraserStrokeErasesAndUndoes);
     run("brushColorPaintsInThatColor", brushColorPaintsInThatColor);
