@@ -969,6 +969,15 @@ static bool pickerRowsSetTheNextNodeType() {
     return true;
 }
 
+// Shift+click in the Pen (#274): a click with the corner flag places a Corner whatever the picker holds; a plain click still uses it.
+static bool cornerClickIgnoresThePickerType() {
+    SpiroPen pen;
+    pen.type = SpiroType::G4;
+    pen.click({0, 0}, true);
+    pen.click({1, 0});
+    return pen.nodes[0].type == SpiroType::Corner && pen.nodes[1].type == SpiroType::G4 && pen.type == SpiroType::G4;
+}
+
 // On a half circle through 3 nodes (two 90-degree segments, which Spiro splits into several cubics each), addNode at the lower-right
 // quarter puts the new node at index 2 on the click, a click on an existing node adds nothing, every knot stays where it was on the path,
 // and one undo restores nodes and knots together.
@@ -1138,6 +1147,7 @@ int main() {
     run("transformRectMovesPixelsAndUndoesOnce", transformRectMovesPixelsAndUndoesOnce);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
+    run("cornerClickIgnoresThePickerType", cornerClickIgnoresThePickerType);
     run("toolFollowsLayerKind", toolFollowsLayerKind);
     run("settingPathsUndoesOnce", settingPathsUndoesOnce);
     run("rasterizingAVectorLayerUndoesOnce", rasterizingAVectorLayerUndoesOnce);

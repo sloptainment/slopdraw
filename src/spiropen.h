@@ -16,7 +16,7 @@ struct SpiroPen {
     SpiroType type = SpiroType::G2;  // what Inkscape's Spiro mode makes for a smooth node
     std::vector<SpiroNode> nodes;
 
-    void click(QPointF p) { nodes.push_back({p.x(), p.y(), type}); }
+    void click(QPointF p, bool corner = false) { nodes.push_back({p.x(), p.y(), corner ? SpiroType::Corner : type}); }  // Shift+click places a Corner (#274)
     // True when p is within tol of the first node: clicking there closes the path.
     bool onFirst(QPointF p, double tol) const { return !nodes.empty() && std::hypot(p.x() - nodes[0].x, p.y() - nodes[0].y) <= tol; }
     void backspace() { if (!nodes.empty()) nodes.pop_back(); }
