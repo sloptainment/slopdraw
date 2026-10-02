@@ -70,15 +70,23 @@ public:
     Session takeSession() { commitFloat(); pen_.cancel(); return std::move(s_); }  // the tab being left: a lifted piece lands, an unfinished path drops; setSession must follow
     bool hasDoc() const { return !s_.doc.image(0).isNull(); }  // the app starts on Document(QSize()), which has no pixels (#157)
     std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
-    // The Color dock and Ctrl+click set this: in the Pen, its active swatch (#302); elsewhere the brush color.
+    // The Color dock and Ctrl+click set this: in the Pen and Select, the Pen's active swatch (#302, #303); elsewhere the brush color.
     void setColor(const QColor& c) {
-        if (spiroTool_) (fillActive_ ? penFill_ : penStroke_) = c;
+        if (spiroTool_ || objectTool_) (fillActive_ ? penFill_ : penStroke_) = c;
         else { color_ = c; if (brush_) setBrushColor(brush_.get(), c); }
     }
-    QColor color() const { return spiroTool_ ? (fillActive_ ? penFill_ : penStroke_) : color_; }
+    QColor color() const { return spiroTool_ || objectTool_ ? (fillActive_ ? penFill_ : penStroke_) : color_; }
     void setFillActive(bool on) { fillActive_ = on; }  // which Pen swatch setColor targets
     QColor penStroke() const { return penStroke_; }
     QColor penFill() const { return penFill_; }
+    double pathWidth() const { return pathWidth_; }
+    Document::PaintMode paintMode() const { return paintMode_; }
+    bool selecting() const { return objectTool_; }
+    std::vector<Document::VPath> pickedPaths() const {  // Select's picks, for Tool Options to show (#303)
+        std::vector<Document::VPath> ps;
+        for (int i : picked()) ps.push_back(s_.doc.paths(s_.doc.current())[i]);
+        return ps;
+    }
     std::function<void()> onRadiusChange;  // fired after a drag resize so the Size slider can follow
     std::function<void(const QColor&)> onColorPick;  // fired after Ctrl+click so the Color dock can follow
     void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); update(); }
@@ -1189,8 +1197,10 @@ int main(int argc, char** argv) {
     paintRow->setSpacing(0);
     paintRow->addWidget(new QLabel("Paint"));
     const std::pair<const char*, Document::PaintMode> kPaints[] = {{"Stroke", Document::PaintMode::Stroke}, {"Fill", Document::PaintMode::Fill}, {"Stroke+Fill", Document::PaintMode::Both}};
-    for (auto [name, mode] : kPaints) {
-        auto* b = new QToolButton;
+    QToolButton* paintButtons[3];
+    for (int k = 0; k < 3; k++) {
+        auto [name, mode] = kPaints[k];
+        auto* b = paintButtons[k] = new QToolButton;
         b->setText(name);
         b->setCheckable(true);
         b->setAutoExclusive(true);
@@ -1214,16 +1224,27 @@ int main(int argc, char** argv) {
         swatchRow->addWidget(b);
     }
     swatchRow->addStretch();
+    // In Select with paths picked the swatches show theirs, hatched where they differ (#303); otherwise the Pen's.
     auto paintSwatches = [canvas, swatches] {
+        auto ps = canvas->selecting() ? canvas->pickedPaths() : std::vector<Document::VPath>{};
         for (int i = 0; i < 2; i++) {
+            QColor c = i ? canvas->penFill() : canvas->penStroke();
+            bool mixed = false;
+            if (!ps.empty()) c = i ? ps[0].fillColor : ps[0].color;
+            for (const auto& p : ps) mixed |= (i ? p.fillColor : p.color) != c;
             QPixmap px(24, 24);
-            px.fill(i ? canvas->penFill() : canvas->penStroke());
-            QPainter(&px).drawRect(0, 0, 23, 23);
-            swatches[i]->setIcon(px);
+            px.fill(mixed ? Qt::white : c);
+            QPainter painter(&px);
+            if (mixed) painter.fillRect(px.rect(), Qt::BDiagPattern);
+            painter.drawRect(0, 0, 23, 23);
+            painter.end();
+            QIcon icon(px);
+            icon.addPixmap(px, QIcon::Disabled);  // a pick's colors stay readable while the box is display only
+            swatches[i]->setIcon(icon);
         }
     };
     paintSwatches();
-    auto nameColorDock = [colorDock, swatches](int tool) { colorDock->setWindowTitle(tool != SpiroPenTool ? "Color" : swatches[1]->isChecked() ? "Color: Fill" : "Color: Stroke"); };
+    auto nameColorDock = [colorDock, swatches](int tool) { colorDock->setWindowTitle(tool != SpiroPenTool && tool != SelectTool ? "Color" : swatches[1]->isChecked() ? "Color: Fill" : "Color: Stroke"); };
     for (int i = 0; i < 2; i++)
         QObject::connect(swatches[i], &QToolButton::toggled, [=](bool on) { if (!on) return; canvas->setFillActive(i); picker->setColor(canvas->color()); nameColorDock(SpiroPenTool); });
     picker->onChange = [canvas, paintSwatches](const QColor& c) { canvas->setColor(c); paintSwatches(); };
@@ -1241,16 +1262,38 @@ int main(int argc, char** argv) {
         eraseBox->setVisible(tool <= LassoFillTool);
         brushBox->setVisible(tool == BrushTool);
         lassoBox->setVisible(tool == LassoFillTool);
-        widthBox->setVisible(tool == SpiroPenTool);
-        paintBox->setVisible(tool == SpiroPenTool);
-        swatchBox->setVisible(tool == SpiroPenTool);
+        widthBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
+        paintBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
+        swatchBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
         picker->setColor(canvas->color());  // the Pen's active swatch or the brush color
         nameColorDock(tool);
         penTypes->setVisible(tool == SpiroPenTool);
         editTypes->setVisible(tool == NodeKnotEditTool);
     };
-    canvas->onToolChange = showOptions;
+    // Select shows its picks' Width, Paint and colors, display only and "mixed" where they differ; no pick shows the Pen's next path (#303).
+    auto showPicks = [=] {
+        auto ps = canvas->pickedPaths();
+        for (auto* w : {widthBox, paintBox, swatchBox}) w->setEnabled(ps.empty());
+        double w = ps.empty() ? canvas->pathWidth() : ps[0].width;
+        auto mode = ps.empty() ? canvas->paintMode() : ps[0].mode;
+        bool wMixed = false, mMixed = false;
+        for (const auto& p : ps) { wMixed |= p.width != w; mMixed |= p.mode != mode; }
+        QSignalBlocker b(pathWidth);
+        pathWidth->setValue(std::lround(w));
+        pathWidthValue->setText(wMixed ? "mixed" : QString("%1 px").arg(std::lround(w)));
+        for (int k = 0; k < 3; k++) {
+            QSignalBlocker bb(paintButtons[k]);
+            paintButtons[k]->setAutoExclusive(false);  // so a mixed pick can leave all three unchecked
+            paintButtons[k]->setChecked(!mMixed && kPaints[k].second == mode);
+            paintButtons[k]->setAutoExclusive(true);
+        }
+        paintSwatches();
+    };
+    canvas->onToolChange = [=](int tool) { showOptions(tool); showPicks(); };  // setTool has cleared the picks, so leaving Select shows the Pen's again
     showOptions(BrushTool);
+    auto onPaintBefore = canvas->onPaint;
+    // ponytail: re-reads the picks on every repaint; a pick-changed signal if drags ever stutter
+    canvas->onPaint = [=] { onPaintBefore(); if (canvas->selecting()) showPicks(); };
     auto* optionsPanel = new QWidget;
     auto* optionsCol = new QVBoxLayout(optionsPanel);
     optionsCol->addWidget(eraseBox);
