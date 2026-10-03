@@ -5,7 +5,7 @@
 #include <vector>
 
 // A Width Knot: path time t (segment index + fraction) and the FULL width there.
-struct WidthKnot { double t, width; };
+struct WidthKnot { double t, width; bool operator==(const WidthKnot&) const = default; };
 using Cubic = std::array<QPointF, 4>;
 
 // The interpolated (path time, half-width) curve as cubic spans, x increasing span to span. Cubic interpolator, zero caps:

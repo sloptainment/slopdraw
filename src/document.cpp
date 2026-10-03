@@ -382,8 +382,15 @@ Document::VPath Document::toBezier(const VPath& v) {
     return b;
 }
 
+// Memoized: the Transform box and picked outlines ask on every paint and pointer move, while the paths rarely change.
 QPainterPath Document::outline(const VPath& v) {
-    return expandPowerStroke(skeletonOf(v), v.closed, v.knots);
+    struct Entry { VPath v; QPainterPath outline; };
+    thread_local std::vector<Entry> cache;  // ponytail: last 32 shapes, linear scan; a keyed map if far more get picked at once
+    auto same = [&](const VPath& c) { return c.kind == v.kind && c.closed == v.closed && c.nodes == v.nodes && c.bezier == v.bezier && c.knots == v.knots; };
+    for (auto& e : cache) if (same(e.v)) return e.outline;
+    if (cache.size() >= 32) cache.erase(cache.begin());
+    cache.push_back({v, expandPowerStroke(skeletonOf(v), v.closed, v.knots)});
+    return cache.back().outline;
 }
 
 void Document::restorePaths(int layer, const std::vector<VPath>& paths) {

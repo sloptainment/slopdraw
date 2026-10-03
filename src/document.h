@@ -14,7 +14,7 @@
 
 // A Bezier path's node: its point, the handles before (in) and after (out) it, and how editing keeps the handles (#251).
 enum class BezierType { Cusp, Smooth, Symmetric };
-struct BezierNode { QPointF p, in, out; BezierType type; };
+struct BezierNode { QPointF p, in, out; BezierType type; bool operator==(const BezierNode&) const = default; };
 
 class Document {
 public:
