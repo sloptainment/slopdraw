@@ -583,6 +583,37 @@ static bool oraRoundTripsThreeLayers() {
     return back->render() == doc.render() && !back->undo() && !readOra(dir.filePath("missing.ora"));
 }
 
+// #538: two references round-trip through .ora (pixels, transform, crop, order, opacity) with nothing to undo;
+// stack.xml is byte-identical with and without them, and a file without them opens with none.
+static bool oraRoundTripsReferences() {
+    Document doc(QSize(32, 32));
+    QImage a(4, 3, QImage::Format_ARGB32_Premultiplied), b(5, 5, QImage::Format_ARGB32_Premultiplied);
+    a.fill(Qt::red); b.fill(QColor(0, 0, 255, 128));
+    QTemporaryDir dir;
+    QString plain = dir.filePath("plain.ora"), path = dir.filePath("t.ora");
+    if (!writeOra(doc, plain)) return false;
+    doc.addReference({a, QTransform(0.5, 0.25, -0.25, 0.5, 2.125, 3), QRectF(1, 0, 3, 2.5), 0.75});
+    doc.addReference({b, QTransform::fromTranslate(-7, 40).scale(-1, 2), QRectF(0, 0, 5, 5), 1});
+    if (!writeOra(doc, path)) return false;
+    auto back = readOra(path), none = readOra(plain);
+    if (!back || !none || !none->references().empty() || back->undo() || back->references().size() != 2) return false;
+    for (int i = 0; i < 2; i++) {
+        const Reference &x = doc.references()[i], &y = back->references()[i];
+        if (y.image.convertToFormat(x.image.format()) != x.image || y.transform != x.transform || y.crop != x.crop || y.opacity != x.opacity)
+            return false;
+    }
+    auto stack = [](const QString& f) {
+        QFile file(f); file.open(QIODevice::ReadOnly); QByteArray zip = file.readAll();
+        mz_zip_archive z{}; size_t n = 0;
+        mz_zip_reader_init_mem(&z, zip.constData(), size_t(zip.size()), 0);
+        void* p = mz_zip_reader_extract_file_to_heap(&z, "stack.xml", &n, 0);
+        QByteArray out(static_cast<const char*>(p), qsizetype(n));
+        mz_free(p); mz_zip_reader_end(&z);
+        return out;
+    };
+    return !stack(plain).isEmpty() && stack(plain) == stack(path);
+}
+
 // Alpha Lock on a Raster Layer and Inherit Alpha on another saved to .ora read back set, the rest off, with nothing to undo.
 static bool oraRoundTripsAlphaFlags() {
     Document doc(QSize(64, 64));
@@ -1784,6 +1815,7 @@ int main() {
     run("layerNamesAreStoredAndUndoable", layerNamesAreStoredAndUndoable);
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
+    run("oraRoundTripsReferences", oraRoundTripsReferences);
     run("oraRoundTripsAlphaFlags", oraRoundTripsAlphaFlags);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);

@@ -73,6 +73,27 @@ QByteArray svg(const Document& doc, int layer) {
     return out;
 }
 
+// mydraw/references.xml (#538): one <reference> per Reference, bottom first; src is its PNG beside it, transform the 9 QTransform
+// entries row by row, crop x y w h in image pixels.
+QByteArray referencesXml(const Document& doc) {
+    QByteArray out;
+    QXmlStreamWriter w(&out);
+    w.writeStartDocument();
+    w.writeStartElement("references");
+    for (int i = 0; i < int(doc.references().size()); i++) {
+        const Reference& r = doc.references()[i];
+        const QTransform& t = r.transform;
+        w.writeEmptyElement("reference");
+        w.writeAttribute("src", QString("reference%1.png").arg(i));
+        w.writeAttribute("transform", QStringList{num(t.m11()), num(t.m12()), num(t.m13()), num(t.m21()), num(t.m22()), num(t.m23()),
+                                                  num(t.m31()), num(t.m32()), num(t.m33())}.join(' '));
+        w.writeAttribute("crop", QStringList{num(r.crop.x()), num(r.crop.y()), num(r.crop.width()), num(r.crop.height())}.join(' '));
+        w.writeAttribute("opacity", num(r.opacity));
+    }
+    w.writeEndDocument();
+    return out;
+}
+
 }  // namespace
 
 std::vector<Document::VPath> readVectorSvg(const QByteArray& data) {
@@ -138,6 +159,9 @@ bool writeOra(const Document& doc, const QString& path) {
     for (int i = 0; ok && i < doc.layerCount(); i++)
         ok = add(z, QString("data/layer%1.png").arg(i).toUtf8().constData(), png(doc.image(i)), MZ_DEFAULT_COMPRESSION)
           && (!doc.vector(i) || add(z, QString("data/layer%1.svg").arg(i).toUtf8().constData(), svg(doc, i), MZ_DEFAULT_COMPRESSION));
+    for (int i = 0; ok && i < int(doc.references().size()); i++)
+        ok = add(z, QString("mydraw/reference%1.png").arg(i).toUtf8().constData(), png(doc.references()[i].image), MZ_DEFAULT_COMPRESSION);
+    if (ok && !doc.references().empty()) ok = add(z, "mydraw/references.xml", referencesXml(doc), MZ_DEFAULT_COMPRESSION);
     QImage merged = doc.render();
     ok = ok && add(z, "mergedimage.png", png(merged), MZ_DEFAULT_COMPRESSION)
             && add(z, "Thumbnails/thumbnail.png", png(merged.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation)), MZ_DEFAULT_COMPRESSION);
@@ -187,6 +211,25 @@ std::optional<Document> readOra(const QString& path) {
             doc->restoreLayer(i, img, l.name, l.visible, l.opacity, l.alphaLock, l.inheritAlpha);
             if (!l.svg.isEmpty()) doc->restorePaths(i, readVectorSvg(entry(l.svg)));
         }
+    }
+    if (doc) {  // files from before #538 have no mydraw/references.xml: no references
+        std::vector<Reference> refs;
+        QXmlStreamReader rr(entry("mydraw/references.xml"));
+        while (!rr.atEnd()) {
+            rr.readNext();
+            if (!rr.isStartElement() || rr.name() != u"reference") continue;
+            auto a = rr.attributes();
+            auto t = a.value("transform").split(' ');
+            auto c = a.value("crop").split(' ');
+            Reference ref;
+            if (t.size() != 9 || c.size() != 4 || !ref.image.loadFromData(entry("mydraw/" + a.value("src").toString()))) continue;
+            ref.transform = QTransform(t[0].toDouble(), t[1].toDouble(), t[2].toDouble(), t[3].toDouble(), t[4].toDouble(), t[5].toDouble(),
+                                       t[6].toDouble(), t[7].toDouble(), t[8].toDouble());
+            ref.crop = QRectF(c[0].toDouble(), c[1].toDouble(), c[2].toDouble(), c[3].toDouble());
+            ref.opacity = a.value("opacity").toDouble();
+            refs.push_back(ref);
+        }
+        doc->previewReferences(refs);  // no undo step
     }
     mz_zip_reader_end(&z);
     return doc;
