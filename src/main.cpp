@@ -1364,18 +1364,18 @@ int main(int argc, char** argv) {
     auto* brushBox = new QWidget;  // the global Size and Opacity sliders (#209), for the Brush only
     auto* brushBoxCol = new QVBoxLayout(brushBox);
     brushBoxCol->setContentsMargins(0, 0, 0, 0);
-    brushBoxCol->addWidget(new QLabel("Size"));
     auto* sizeRow = new QHBoxLayout;
+    sizeRow->addWidget(new QLabel("Size"));
     sizeRow->addWidget(size);
     sizeRow->addWidget(sizeValue);
     brushBoxCol->addLayout(sizeRow);
-    brushBoxCol->addWidget(new QLabel("Opacity"));
     auto* opacityRow = new QHBoxLayout;
+    opacityRow->addWidget(new QLabel("Opacity"));
     opacityRow->addWidget(opacity);
     opacityRow->addWidget(opacityValue);
     brushBoxCol->addLayout(opacityRow);
-    brushBoxCol->addWidget(new QLabel("Smoothing"));
     auto* smoothRow = new QHBoxLayout;
+    smoothRow->addWidget(new QLabel("Smoothing"));
     auto* smoothing = new QSlider(Qt::Horizontal);  // samples averaged, 0 = off
     smoothing->setRange(0, 50);
     auto* smoothingValue = new QLabel("0");
@@ -1589,6 +1589,7 @@ int main(int argc, char** argv) {
     optionsCol->addWidget(penTypes);
     optionsCol->addWidget(editTypes);
     optionsCol->addWidget(bezierTypes);
+    optionsCol->addStretch();  // spare height goes below the options, not between them
     auto* optionsDock = new QDockWidget("Tool Options", &window);
     optionsDock->setWidget(optionsPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, optionsDock);
