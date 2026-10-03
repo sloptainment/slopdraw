@@ -24,7 +24,7 @@ std::vector<BrushEntry> listBrushes(const QString& dir) {
 namespace {
 
 // A MyPaintSurface over a QImage; the layer is opaque, so alpha_eraser, lock_alpha and colorize are ignored.
-// eraser blends dabs toward white instead of their color (#79; transparent once #44's layers exist).
+// eraser takes dabs out of the alpha (white under alpha lock, which keeps alpha).
 struct ImageSurface : MyPaintSurface {
     QImage* img;
     bool eraser, alphaLock;
@@ -61,6 +61,7 @@ int drawDab(MyPaintSurface* s, float x, float y, float radius, float r, float g,
             for (int c = 0; c < 3; c++) p[c] = uchar(std::lround(a * rgb[c] * 255 + (1 - a) * p[c]));
             return;
         }
+        if (eraser) { p[3] = uchar(std::lround((1 - a) * p[3])); return; }  // destination-out
         const float dstA = p[3] / 255.f, outA = a + (1 - a) * dstA;  // non-premultiplied source-over, so a transparent layer takes paint
         if (outA <= 0) return;
         for (int c = 0; c < 3; c++) p[c] = uchar(std::lround((a * rgb[c] * 255 + (1 - a) * dstA * p[c]) / outA));

@@ -588,6 +588,7 @@ void Document::fill(const QColor& color, const std::vector<QPointF>& points, boo
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
     if (layers_[current_].alphaLock) p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
+    else if (eraser) p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
     p.fillPath(path, eraser ? QColor(255, 255, 255, color.alpha()) : color);
     p.end();
     seal();  // its own step, so a live stroke after it starts fresh

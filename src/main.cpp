@@ -384,7 +384,7 @@ protected:
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), erase() || eraser);
         else if (!objectTool_ && !boxTool_ && (e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
-                    eraser);  // the flag is per call (b20)
+                    erase() || eraser);  // the flag is per call (b20)
     }
     void leaveEvent(QEvent*) override { cursor_.reset(); update(); }
     // panels showing/hiding move the canvas origin: pan back so the drawing stays put on screen

@@ -283,7 +283,7 @@ static bool colorAtReadsCompositePixel() {
            !doc.colorAt({-1, 0}).isValid() && !doc.colorAt({64, 0}).isValid() && !doc.colorAt({0, 64}).isValid();
 }
 
-// Replaying the pencil wave's samples with the eraser flag lightens the painted stroke (golden), and undo restores the painted-only image.
+// Replaying the pencil wave's samples with the eraser flag takes the painted stroke's alpha down (golden), and undo restores the painted-only image.
 static bool eraserStrokeErasesAndUndoes() {
     auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
@@ -294,7 +294,8 @@ static bool eraserStrokeErasesAndUndoes() {
     doc.stroke(pencil, samples);
     QImage painted = doc.render().copy();
     doc.stroke(pencil, samples, false, true);
-    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage got = doc.render().convertToFormat(QImage::Format_Alpha8);  // erase lives in the alpha; the golden is that channel
+    got.reinterpretAsFormat(QImage::Format_Grayscale8);
     QImage golden(GOLDEN_DIR "/pencil_wave_erased_64x64.pgm");
     bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
     if (!same) {  // write plain-text PGM to eyeball and copy into golden/
@@ -305,7 +306,7 @@ static bool eraserStrokeErasesAndUndoes() {
             std::fclose(f);
         }
     }
-    bool lighter = doc.colorAt({53, 34}).red() > 137;  // the pixel colorAtReadsCompositePixel finds at 137 after painting
+    bool lighter = doc.colorAt({53, 34}).alpha() < 255;  // the pixel colorAtReadsCompositePixel finds painted
     return same && lighter && doc.undo() && doc.render() == painted;
 }
 
@@ -411,8 +412,9 @@ static bool dragResizesRadiusWithinRange() {
 // A figure-eight point list fills both loops solid black, antialiased, matching a golden; erase mode cuts a square out of it
 // (golden); undo restores each; a pentagram's doubly-wound center is filled (non-zero, not even-odd).
 static bool fillsFigureEightAndErases() {
-    auto grayGolden = [](const Document& doc, const char* name, const char* actual) {
-        QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    auto grayGolden = [](const Document& doc, const char* name, const char* actual, bool alpha = false) {
+        QImage got = doc.render().convertToFormat(alpha ? QImage::Format_Alpha8 : QImage::Format_Grayscale8);  // erase lives in the alpha
+        got.reinterpretAsFormat(QImage::Format_Grayscale8);
         QImage golden(QString(GOLDEN_DIR "/") + name);
         bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
         if (!same) {  // write plain-text PGM to eyeball and copy into golden/
@@ -435,7 +437,7 @@ static bool fillsFigureEightAndErases() {
     bool same = grayGolden(doc, "fill_figure_eight_64x64.pgm", "actual_fill_figure_eight.pgm");
     doc.fill(Qt::black, {{24, 24}, {40, 24}, {40, 40}, {24, 40}}, true);  // cuts a square out
     QImage cut = doc.render().copy();
-    bool erased = doc.colorAt({32, 30}) == Qt::white && doc.colorAt({50, 32}) == Qt::black && grayGolden(doc, "fill_figure_eight_erased_64x64.pgm", "actual_fill_figure_eight_erased.pgm");
+    bool erased = doc.colorAt({32, 30}).alpha() == 0 && doc.colorAt({50, 32}) == Qt::black && grayGolden(doc, "fill_figure_eight_erased_64x64.pgm", "actual_fill_figure_eight_erased.pgm", true);
     bool undone = doc.undo() && doc.render() == filled && doc.redo() && doc.render() == cut && doc.undo() && doc.undo() && doc.render() == blank;
     Document star(QSize(64, 64));
     star.fill(Qt::black, {{32, 4}, {46, 58}, {6, 22}, {58, 22}, {18, 58}});

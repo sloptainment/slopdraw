@@ -41,7 +41,7 @@ public:
     // One stroke (a non-continuing call plus the continuing ones after it) is one undo step.
     void stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vector<PenSample>& samples, bool continuing = false, bool eraser = false);
     // Fills the closed polygon through points on the current Raster Layer: antialiased, non-zero winding, solid color.
-    // eraser = true cuts the shape out instead (to white). One call is one undo step.
+    // eraser = true cuts the shape out of the alpha instead (to white under alpha lock). One call is one undo step.
     void fill(const QColor& color, const std::vector<QPointF>& points, bool eraser = false);
     // Clears a rectangle of the current Raster Layer: transparent, white on the background (layer 0). One undo step.
     // Returns false, changing nothing, for a Vector Layer.
