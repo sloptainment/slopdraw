@@ -4,6 +4,7 @@
 #include <QPainterPath>
 #include <QPainterPathStroker>
 #include "powerstroke.h"
+#include "spiropen.h"
 #include <cstring>
 
 namespace {
@@ -797,7 +798,68 @@ bool Document::transformRect(const QRect& rect, const QTransform& m) {
     return true;
 }
 
+bool Document::floatGroup(int group, const QTransform& m, bool scaleWidths) {
+    if (group < 1 || group >= int(layers_.size()) || !layers_[group].group || blockStart(group) == group) return false;
+    if (groupStart_.empty()) {
+        seal();
+        history_.resize(applied_);  // a new edit discards the redo branch
+        groupStart_ = layers_;
+        pasting_ = true;  // not a step yet: stepId must not seal it
+    }
+    layers_ = groupStart_;
+    for (int i = blockStart(group); i < group; i++) {
+        Layer& l = layers_[i];
+        if (l.group) continue;
+        if (l.vector) {
+            for (VPath& v : l.paths) v = transformNodes(v, m, scaleWidths);
+            rasterize(l);
+        } else {
+            QImage out(l.image.size(), l.image.format());
+            out.fill(Qt::transparent);
+            QPainter p(&out);
+            p.setRenderHint(QPainter::SmoothPixmapTransform);
+            p.setTransform(m);
+            p.drawImage(0, 0, l.image);
+            l.image = out;
+        }
+    }
+    return true;
+}
+
+bool Document::transformGroup(int group, const QTransform& m, bool scaleWidths) {
+    if (!floatGroup(group, m, scaleWidths)) return false;
+    seal();
+    return true;
+}
+
+QRectF Document::groupBounds(int group) const {
+    QRectF box;
+    if (group < 1 || group >= int(layers_.size()) || !layers_[group].group) return box;
+    for (int i = blockStart(group); i < group; i++) {
+        const Layer& l = layers_[i];
+        if (l.group) continue;
+        if (l.vector) {
+            for (const VPath& v : l.paths) box |= outline(v).boundingRect();
+            continue;
+        }
+        QRect r;
+        for (int y = 0; y < l.image.height(); y++) {
+            auto* p = reinterpret_cast<const QRgb*>(l.image.constScanLine(y));
+            for (int x = 0; x < l.image.width(); x++)
+                if (qAlpha(p[x])) r |= QRect(x, y, 1, 1);
+        }
+        box |= QRectF(r);
+    }
+    return box;
+}
+
 void Document::cancelFloat() {
+    if (!groupStart_.empty()) {
+        layers_ = groupStart_;
+        groupStart_.clear();
+        pasting_ = false;
+        return;
+    }
     if (strokeStart_.isNull()) return;
     layers_[current_].image = strokeStart_;
     strokeStart_ = QImage();
@@ -837,6 +899,17 @@ bool Document::pasteImage(const QImage& img, const QTransform& m, bool newLayer)
 }
 
 void Document::seal() {
+    if (!groupStart_.empty()) {
+        Step s;
+        s.kind = Tree;
+        s.items = std::move(groupStart_);
+        s.newItems = layers_;
+        s.to = s.layer = current_;
+        groupStart_.clear();
+        pasting_ = false;
+        push(s);
+        return;
+    }
     if (strokeStart_.isNull()) return;
     pasting_ = false;
     if (floatFrom_ >= 0) {  // a paste into a layer it added: the layer, pixels and all, is one Add step

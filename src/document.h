@@ -61,6 +61,13 @@ public:
     // Both refuse a Vector Layer (false) unless newLayer. Pixels past the document edge are cropped.
     bool floatImage(const QImage& img, const QTransform& m, bool newLayer = false);
     bool pasteImage(const QImage& img, const QTransform& m, bool newLayer = false);
+    // Select on a group (#461): floatGroup draws every raster item of the group's block (whole layers, smooth) and maps every vector item's paths through m,
+    // live with no undo step; each call starts again from the items as they were before the first, so resampling never compounds. scaleWidths scales Width Knots too (#203).
+    // transformGroup is floatGroup plus the one undo step; cancelFloat restores. Both refuse (false) a non-group or an empty one.
+    bool floatGroup(int group, const QTransform& m, bool scaleWidths = false);
+    bool transformGroup(int group, const QTransform& m, bool scaleWidths = false);
+    // What a group draws: its raster items' non-transparent pixels united with its vector items' path outlines; null if nothing.
+    QRectF groupBounds(int group) const;
     // The visible (composite) color at a document pixel; an invalid QColor when p is off the canvas.
     QColor colorAt(QPoint p) const;
     // Adds a transparent Raster Layer on top and makes it current; returns its index (0 is the white background).
@@ -236,6 +243,7 @@ private:
     // The current layer as it was when the stroke in progress began; null when none is in progress.
     // Shares pixels with that layer until the first dab detaches it, so starting a stroke copies once.
     QImage strokeStart_;
+    std::vector<Layer> groupStart_;  // while a group floats: the items as they were, for seal to push as one Tree step
     bool pasting_ = false;  // a floatImage is in progress (strokeStart_ alone can't tell it from an unsealed stroke)
     int floatFrom_ = -1;  // while a paste floats in a layer it added: the layer that was current before; seal turns that layer into one Add step
 };

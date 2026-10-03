@@ -2009,6 +2009,35 @@ static bool wrapStepAndMoveReshapeTheTree() {
     return e.current() == 1 && e.layerCount() == 4;
 }
 
+// #461: a group floats as one piece: its raster children's pixels and vector children's paths go through one matrix, live from a snapshot,
+// committed as one undo step or cancelled with none. Items: 0 Background, 1 vector (path y=10), 2 raster (red square), 3 group over both.
+static bool groupFloatsCommitsAndCancels() {
+    using T = SpiroType;
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    doc.addPath({{8, 10, T::G2}, {32, 10, T::G2}, {56, 10, T::G2}}, false, Qt::black, 6);
+    doc.wrap(1);
+    doc.setCurrent(1);
+    doc.addLayer();
+    doc.fill(Qt::red, {{10, 30}, {20, 30}, {20, 40}, {10, 40}});
+    doc.setCurrent(3);
+    if (!doc.isGroup(3) || doc.layerCount() != 4) return false;
+    QImage before = doc.render();
+    int id = doc.stepId();
+    QRectF b = doc.groupBounds(3);  // 5
+    if (!b.contains(QRectF(10, 30, 10, 10)) || !b.contains(Document::outline(doc.paths(1)[0]).boundingRect()) || b.top() < 5 || b.top() > 8 || b.bottom() > 41) return false;
+    QTransform shift = QTransform::fromTranslate(5, 0);
+    if (!doc.floatGroup(3, shift)) return false;  // 1: both children move by the same offset
+    if (doc.image(2).pixelColor(17, 35) != QColor(Qt::red) || doc.image(2).pixelColor(12, 35).alpha() != 0 || doc.paths(1)[0].nodes[0].x != 13) return false;
+    QImage moved = doc.render();
+    if (!doc.floatGroup(3, QTransform().scale(2, 2)) || !doc.floatGroup(3, shift) || doc.render() != moved) return false;  // 2: no compounding
+    if (!doc.floatGroup(3, shift) || doc.stepId() != id) return false;  // still live: no step yet
+    doc.cancelFloat();
+    if (doc.render() != before || doc.paths(1)[0].nodes[0].x != 8 || doc.stepId() != id) return false;  // 4
+    if (!doc.transformGroup(3, shift) || doc.render() != moved || doc.stepId() != id + 1) return false;  // 3
+    return doc.undo() && doc.render() == before && doc.paths(1)[0].nodes[0].x == 8 && doc.redo() && doc.render() == moved;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -2119,5 +2148,6 @@ int main() {
     run("splitBezierKeepsTheShape", splitBezierKeepsTheShape);
     run("groupsCompositeIsolatedAndUndoAsOne", groupsCompositeIsolatedAndUndoAsOne);
     run("wrapStepAndMoveReshapeTheTree", wrapStepAndMoveReshapeTheTree);
+    run("groupFloatsCommitsAndCancels", groupFloatsCommitsAndCancels);
     return failed != 0;
 }
