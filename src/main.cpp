@@ -824,10 +824,17 @@ private:
         if (!brush_) return;
         QPointF d = s_.view.toDoc(pos);
         if (smooth_.n > 0) {
-            // Smoothing: the pen only sets raw_; smoothTick paints the mean every 10 ms, so the line catches up while the pen holds still (/r/14).
-            raw_ = {float(d.x()), float(d.y()), pressure, xtilt, ytilt, 0.0};
+            // Smoothing: each pen event paints the mean; smoothTick repeats raw_ every 10 ms while the pen holds still, so the line catches up (/r/14).
+            raw_ = {float(d.x()), float(d.y()), pressure, xtilt, ytilt, painting_ ? (ms - lastMs_) / 1000.0 : 0.0};
             smoothErase_ = eraser;
-            if (painting_) return;
+            lastMs_ = ms;
+            if (painting_) {
+                // Every pen event is smoothed and painted; the timer only fires once the pen holds still for 10 ms.
+                smooth_.push(raw_);
+                s_.doc.stroke(brush_, {smooth_.sample()}, true, eraser);
+                smoothTimer_->start();
+                return update();
+            }
             smooth_.q.clear();
             smooth_.push(raw_);
             s_.doc.stroke(brush_, {smooth_.sample()}, false, eraser);  // no dead zone (#246)
