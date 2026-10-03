@@ -761,7 +761,7 @@ void Document::fill(const QColor& color, const std::vector<QPointF>& points, boo
 }
 
 bool Document::bucketFill(const QPoint& at, const QColor& color, int threshold, int expand, bool antialiased, bool sampleMerged, bool eraser) {
-    Q_UNUSED(expand) Q_UNUSED(antialiased) Q_UNUSED(sampleMerged)
+    Q_UNUSED(sampleMerged)
     Layer& l = layers_[current_];
     if (l.vector || l.group || !l.image.rect().contains(at)) return false;
     seal();
@@ -769,26 +769,52 @@ bool Document::bucketFill(const QPoint& at, const QColor& color, int threshold, 
     strokeStart_ = l.image;
     const QImage src = l.image.convertToFormat(QImage::Format_ARGB32);
     const QRgb target = src.pixel(at);
-    auto near = [&](int x, int y) {
+    auto diff = [&](int x, int y) {
         QRgb c = src.pixel(x, y);
-        return std::max({std::abs(qRed(c) - qRed(target)), std::abs(qGreen(c) - qGreen(target)), std::abs(qBlue(c) - qBlue(target)), std::abs(qAlpha(c) - qAlpha(target))}) <= threshold;
+        return std::max({std::abs(qRed(c) - qRed(target)), std::abs(qGreen(c) - qGreen(target)), std::abs(qBlue(c) - qBlue(target)), std::abs(qAlpha(c) - qAlpha(target))});
     };
-    QImage mask(src.size(), QImage::Format_ARGB32_Premultiplied);
-    mask.fill(Qt::transparent);
-    const QRgb paint = qPremultiply((eraser ? QColor(255, 255, 255, color.alpha()) : color).rgba());
-    std::vector<bool> seen(size_t(src.width()) * src.height());  // not mask: a fully transparent color leaves it 0
-    auto visit = [&](QPoint q) { seen[size_t(q.y()) * src.width() + q.x()] = true; mask.setPixel(q, paint); };
+    const int w = src.width(), h = src.height();
+    auto at_ = [&](int x, int y) { return size_t(y) * w + x; };
+    std::vector<float> cover(size_t(w) * h);  // 0 outside the region
+    std::vector<bool> seen(cover.size());
+    auto visit = [&](QPoint q) {
+        seen[at_(q.x(), q.y())] = true;
+        cover[at_(q.x(), q.y())] = antialiased ? 1.f - 0.5f * diff(q.x(), q.y()) / std::max(threshold, 1) : 1.f;  // ponytail: GIMP's ramp halved so halfway to Threshold is partial
+    };
     std::vector<QPoint> todo = {at};
     visit(at);
     while (!todo.empty()) {
         QPoint p = todo.back();
         todo.pop_back();
         for (QPoint q : {p + QPoint(1, 0), p + QPoint(-1, 0), p + QPoint(0, 1), p + QPoint(0, -1)})
-            if (src.rect().contains(q) && !seen[size_t(q.y()) * src.width() + q.x()] && near(q.x(), q.y())) {
+            if (src.rect().contains(q) && !seen[at_(q.x(), q.y())] && diff(q.x(), q.y()) <= threshold) {
                 visit(q);
                 todo.push_back(q);
             }
     }
+    // one pixel per pass: dilate sets any neighbour of the region to full coverage, erode drops region pixels that touch outside it
+    for (int i = 0; i < std::abs(expand); ++i) {
+        std::vector<float> next = cover;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
+                for (QPoint d : {QPoint(1, 0), QPoint(-1, 0), QPoint(0, 1), QPoint(0, -1)}) {
+                    int nx = x + d.x(), ny = y + d.y();
+                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;  // the document edge neither grows nor erodes
+                    if (expand > 0 && cover[at_(nx, ny)] > 0) next[at_(x, y)] = std::max(next[at_(x, y)], 1.f);
+                    if (expand < 0 && cover[at_(x, y)] > 0 && cover[at_(nx, ny)] == 0) next[at_(x, y)] = 0;
+                }
+        cover = next;
+    }
+    QImage mask(src.size(), QImage::Format_ARGB32_Premultiplied);
+    mask.fill(Qt::transparent);
+    QColor paint = eraser ? QColor(255, 255, 255, color.alpha()) : color;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            if (cover[at_(x, y)] > 0) {
+                QColor c = paint;
+                c.setAlphaF(paint.alphaF() * cover[at_(x, y)]);
+                mask.setPixel(x, y, qPremultiply(c.rgba()));
+            }
     QPainter p(&l.image);
     if (l.alphaLock) p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
     else if (eraser) p.setCompositionMode(QPainter::CompositionMode_DestinationOut);

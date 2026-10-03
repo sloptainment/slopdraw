@@ -2055,7 +2055,7 @@ static bool bucketFillObeysItsRules() {
     t.fill(QColor(240, 250, 255), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 15 off white in red
     Document t16(QSize(32, 32));
     t16.fill(QColor(239, 255, 255), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 16 off
-    bool threshold = t.bucketFill({30, 16}, red, 15) && t.colorAt({2, 16}) == red && t16.bucketFill({30, 16}, red, 15) && t16.colorAt({2, 16}) == QColor(239, 255, 255) && t16.colorAt({20, 16}) == red;
+    bool threshold = t.bucketFill({30, 16}, red, 15, 0, false) && t.colorAt({2, 16}) == red && t16.bucketFill({30, 16}, red, 15, 0, false) && t16.colorAt({2, 16}) == QColor(239, 255, 255) && t16.colorAt({20, 16}) == red;
 
     Document layer(QSize(32, 32));
     layer.addLayer();
@@ -2089,6 +2089,25 @@ static bool bucketFillObeysItsRules() {
     return threshold && alpha && opacity && locked && undo && refused;
 }
 
+// Bucket Fill Expand/shrink and Antialiased (#605).
+static bool bucketFillGrowsAndSmooths() {
+    QColor red(255, 0, 0);
+    Document ring(QSize(32, 32));
+    ring.fill(Qt::black, {{8, 8}, {24, 8}, {24, 24}, {8, 24}});
+    ring.fill(Qt::white, {{10, 10}, {22, 10}, {22, 22}, {10, 22}});  // a black ring two pixels thick
+    Document shrunk = ring;
+    bool expand = ring.bucketFill({16, 16}, red, 0, 2) && ring.colorAt({8, 16}) == red && ring.colorAt({9, 16}) == red && ring.colorAt({7, 16}) == Qt::white;
+    bool shrink = shrunk.bucketFill({16, 16}, red, 0, -2) && shrunk.colorAt({10, 16}) == Qt::white && shrunk.colorAt({11, 16}) == Qt::white && shrunk.colorAt({12, 16}) == red;
+
+    Document soft(QSize(32, 32));
+    soft.fill(QColor(245, 245, 245), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 10 off white, halfway to Threshold 20
+    Document hard = soft;
+    QColor mid = soft.bucketFill({30, 16}, red, 20, 0, true) ? soft.colorAt({2, 16}) : QColor();
+    bool partial = mid != red && mid != QColor(245, 245, 245) && soft.colorAt({30, 16}) == red;  // exact matches get full coverage
+    bool all = hard.bucketFill({30, 16}, red, 20, 0, false) && hard.colorAt({2, 16}) == red;
+    return expand && shrink && partial && all;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -2099,6 +2118,7 @@ int main() {
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("bucketFillStopsAtARing", bucketFillStopsAtARing);
     run("bucketFillObeysItsRules", bucketFillObeysItsRules);
+    run("bucketFillGrowsAndSmooths", bucketFillGrowsAndSmooths);
     run("referencesDrawFromTheOriginal", referencesDrawFromTheOriginal);
     run("referencesAreOneUndoStepEachAndNeverRendered", referencesAreOneUndoStepEachAndNeverRendered);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);
