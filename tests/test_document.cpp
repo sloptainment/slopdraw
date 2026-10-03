@@ -1565,6 +1565,24 @@ static bool splitBezierKeepsTheShape() {
     return !splitBezier(v, 0) && !splitBezier(v, 1);  // on a node: refused
 }
 
+// Alpha Lock (#427): set, undo/redo, a same-value call and a Vector Layer push no step, and a locked layer deleted then undone is locked.
+static bool alphaLockFlagIsOneUndoStep() {
+    Document doc(QSize(16, 16));
+    doc.addLayer();
+    int v = doc.addVectorLayer();
+    if (doc.alphaLock(1) || !doc.setAlphaLock(1, true) || !doc.alphaLock(1)) return false;
+    int id = doc.stepId();
+    doc.setAlphaLock(1, true);
+    if (doc.stepId() != id || doc.setAlphaLock(v, true) || doc.alphaLock(v) || doc.stepId() != id) return false;
+    doc.undo();
+    if (doc.alphaLock(1)) return false;
+    doc.redo();
+    if (!doc.alphaLock(1)) return false;
+    doc.deleteLayer(1);
+    doc.undo();
+    return doc.alphaLock(1);
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1573,6 +1591,7 @@ int main() {
         failed += !ok;
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
+    run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);
     run("bezierNodesDragWithHandles", bezierNodesDragWithHandles);
     run("bezierHandleMovesPerType", bezierHandleMovesPerType);
     run("bezierRetypeAlignsHandles", bezierRetypeAlignsHandles);
