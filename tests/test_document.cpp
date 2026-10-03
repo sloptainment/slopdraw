@@ -582,6 +582,21 @@ static bool oraRoundTripsThreeLayers() {
     return back->render() == doc.render() && !back->undo() && !readOra(dir.filePath("missing.ora"));
 }
 
+// Alpha Lock on a Raster Layer and Inherit Alpha on another saved to .ora read back set, the rest off, with nothing to undo.
+static bool oraRoundTripsAlphaFlags() {
+    Document doc(QSize(64, 64));
+    doc.addLayer(); doc.addLayer();
+    doc.setAlphaLock(1, true); doc.setInheritAlpha(2, true);
+    QTemporaryDir dir;
+    QString path = dir.filePath("t.ora");
+    if (!writeOra(doc, path)) return false;
+    auto back = readOra(path);
+    if (!back || back->layerCount() != 3) return false;
+    for (int i = 0; i < 3; i++)
+        if (back->alphaLock(i) != (i == 1) || back->inheritAlpha(i) != (i == 2)) return false;
+    return !back->undo();
+}
+
 // A Raster and a Vector Layer (two paths: open with every Spiro Node type and edited knots, closed with a translucent color) saved to .ora
 // and read back hold the same nodes, types, closed flags, colors, widths and knots, and render the same; the layer's SVG is in the zip.
 static bool oraRoundTripsVectorLayer() {
@@ -1711,6 +1726,7 @@ int main() {
     run("layerNamesAreStoredAndUndoable", layerNamesAreStoredAndUndoable);
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
+    run("oraRoundTripsAlphaFlags", oraRoundTripsAlphaFlags);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);
     run("oraRoundTripsBezier", oraRoundTripsBezier);

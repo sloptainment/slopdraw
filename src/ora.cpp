@@ -127,6 +127,8 @@ bool writeOra(const Document& doc, const QString& path) {
         w.writeAttribute("x", "0");
         w.writeAttribute("y", "0");
         if (doc.vector(i)) w.writeAttribute(kNs, "svg", QString("data/layer%1.svg").arg(i));
+        if (doc.alphaLock(i)) w.writeAttribute(kNs, "alpha-lock", "true");
+        if (doc.inheritAlpha(i)) w.writeAttribute(kNs, "inherit-alpha", "true");
     }
     w.writeEndDocument();
 
@@ -163,7 +165,7 @@ std::optional<Document> readOra(const QString& path) {
         mz_free(p);
         return out;
     };
-    struct L { QString name, src, svg; bool visible; double opacity; };
+    struct L { QString name, src, svg; bool visible; double opacity; bool alphaLock, inheritAlpha; };
     std::vector<L> layers;  // top first, as in stack.xml
     QSize size;
     QXmlStreamReader r(entry("stack.xml"));
@@ -172,7 +174,7 @@ std::optional<Document> readOra(const QString& path) {
         if (!r.isStartElement()) continue;
         auto a = r.attributes();
         if (r.name() == u"image") size = QSize(a.value("w").toInt(), a.value("h").toInt());
-        else if (r.name() == u"layer") layers.push_back({a.value("name").toString(), a.value("src").toString(), a.value(kNs, "svg").toString(), a.value("visibility") != u"hidden", a.value("opacity").isEmpty() ? 1.0 : a.value("opacity").toDouble()});
+        else if (r.name() == u"layer") layers.push_back({a.value("name").toString(), a.value("src").toString(), a.value(kNs, "svg").toString(), a.value("visibility") != u"hidden", a.value("opacity").isEmpty() ? 1.0 : a.value("opacity").toDouble(), a.value(kNs, "alpha-lock") == u"true", a.value(kNs, "inherit-alpha") == u"true"});
     }
     std::optional<Document> doc;
     if (!r.hasError() && !layers.empty() && !size.isEmpty()) {
@@ -182,7 +184,7 @@ std::optional<Document> readOra(const QString& path) {
             QImage img;
             if (!img.loadFromData(entry(l.src)) || img.size() != size) { doc.reset(); break; }
             if (i > 0) doc->addLayer();
-            doc->restoreLayer(i, img, l.name, l.visible, l.opacity);
+            doc->restoreLayer(i, img, l.name, l.visible, l.opacity, l.alphaLock, l.inheritAlpha);
             if (!l.svg.isEmpty()) doc->restorePaths(i, readVectorSvg(entry(l.svg)));
         }
     }

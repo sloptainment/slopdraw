@@ -394,8 +394,10 @@ void Document::restorePaths(int layer, const std::vector<VPath>& paths) {
     applied_ = 0;
 }
 
-void Document::restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity) {
+void Document::restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity, bool alphaLock, bool inheritAlpha) {
     layers_[layer] = {visible, opacity, image.convertToFormat(QImage::Format_RGBA8888), name};
+    layers_[layer].alphaLock = alphaLock;
+    layers_[layer].inheritAlpha = inheritAlpha;
     history_.clear();
     applied_ = 0;
     strokeStart_ = QImage();

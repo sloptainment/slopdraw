@@ -125,7 +125,7 @@ public:
     void restorePaths(int layer, const std::vector<VPath>& paths);
     const QImage& image(int layer) const { return layers_[layer].image; }
     // For loading a file into a fresh Document: replaces a layer's contents outright and drops the undo history.
-    void restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity);
+    void restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity, bool alphaLock = false, bool inheritAlpha = false);
     void setCurrent(int layer);
     void setVisible(int layer, bool visible);
     void setOpacity(int layer, double opacity);
