@@ -94,6 +94,27 @@ QByteArray referencesXml(const Document& doc) {
     return out;
 }
 
+// The items at depth d from index i down, top first; a group is a <stack> holding the deeper run below it (#456).
+void stackItems(QXmlStreamWriter& w, const Document& doc, int& i, int d) {
+    while (i >= 0 && doc.depth(i) == d) {
+        int k = i--;
+        w.writeStartElement(doc.isGroup(k) ? "stack" : "layer");
+        w.writeAttribute("name", doc.name(k));
+        if (!doc.isGroup(k)) w.writeAttribute("src", QString("data/layer%1.png").arg(k));
+        else w.writeAttribute("isolation", "isolate");
+        w.writeAttribute("visibility", doc.visible(k) ? "visible" : "hidden");
+        w.writeAttribute("opacity", QString::number(doc.opacity(k), 'g', 17));
+        if (!doc.isGroup(k)) {
+            w.writeAttribute("x", "0");
+            w.writeAttribute("y", "0");
+            if (doc.vector(k)) w.writeAttribute(kNs, "svg", QString("data/layer%1.svg").arg(k));
+            if (doc.alphaLock(k)) w.writeAttribute(kNs, "alpha-lock", "true");
+            if (doc.inheritAlpha(k)) w.writeAttribute(kNs, "inherit-alpha", "true");
+        } else stackItems(w, doc, i, d + 1);
+        w.writeEndElement();
+    }
+}
+
 }  // namespace
 
 std::vector<Document::VPath> readVectorSvg(const QByteArray& data) {
@@ -139,25 +160,15 @@ bool writeOra(const Document& doc, const QString& path) {
     w.writeAttribute("w", QString::number(doc.image(0).width()));
     w.writeAttribute("h", QString::number(doc.image(0).height()));
     w.writeStartElement("stack");
-    for (int i = doc.layerCount() - 1; i >= 0; i--) {  // stack.xml lists the top layer first
-        w.writeEmptyElement("layer");
-        w.writeAttribute("name", doc.name(i));
-        w.writeAttribute("src", QString("data/layer%1.png").arg(i));
-        w.writeAttribute("visibility", doc.visible(i) ? "visible" : "hidden");
-        w.writeAttribute("opacity", QString::number(doc.opacity(i), 'g', 17));
-        w.writeAttribute("x", "0");
-        w.writeAttribute("y", "0");
-        if (doc.vector(i)) w.writeAttribute(kNs, "svg", QString("data/layer%1.svg").arg(i));
-        if (doc.alphaLock(i)) w.writeAttribute(kNs, "alpha-lock", "true");
-        if (doc.inheritAlpha(i)) w.writeAttribute(kNs, "inherit-alpha", "true");
-    }
+    int top = doc.layerCount() - 1;
+    stackItems(w, doc, top, 0);
     w.writeEndDocument();
 
     mz_zip_archive z{};
     if (!mz_zip_writer_init_heap(&z, 0, 0)) return false;
     bool ok = add(z, "mimetype", "image/openraster", MZ_NO_COMPRESSION) && add(z, "stack.xml", xml, MZ_DEFAULT_COMPRESSION);
     for (int i = 0; ok && i < doc.layerCount(); i++)
-        ok = add(z, QString("data/layer%1.png").arg(i).toUtf8().constData(), png(doc.image(i)), MZ_DEFAULT_COMPRESSION)
+        ok = doc.isGroup(i) || add(z, QString("data/layer%1.png").arg(i).toUtf8().constData(), png(doc.image(i)), MZ_DEFAULT_COMPRESSION)
           && (!doc.vector(i) || add(z, QString("data/layer%1.svg").arg(i).toUtf8().constData(), svg(doc, i), MZ_DEFAULT_COMPRESSION));
     for (int i = 0; ok && i < int(doc.references().size()); i++)
         ok = add(z, QString("mydraw/reference%1.png").arg(i).toUtf8().constData(), png(doc.references()[i].image), MZ_DEFAULT_COMPRESSION);
@@ -189,16 +200,21 @@ std::optional<Document> readOra(const QString& path) {
         mz_free(p);
         return out;
     };
-    struct L { QString name, src, svg; bool visible; double opacity; bool alphaLock, inheritAlpha; };
+    struct L { QString name, src, svg; bool visible; double opacity; bool alphaLock, inheritAlpha, group; int depth; };
     std::vector<L> layers;  // top first, as in stack.xml
     QSize size;
     QXmlStreamReader r(entry("stack.xml"));
+    int nest = 0;  // <stack>s open: the root is 1, so an item's depth is nest - 1
     while (!r.atEnd()) {
         r.readNext();
+        if (r.isEndElement() && r.name() == u"stack") nest--;
         if (!r.isStartElement()) continue;
         auto a = r.attributes();
+        bool vis = a.value("visibility") != u"hidden";
+        double op = a.value("opacity").isEmpty() ? 1.0 : a.value("opacity").toDouble();
         if (r.name() == u"image") size = QSize(a.value("w").toInt(), a.value("h").toInt());
-        else if (r.name() == u"layer") layers.push_back({a.value("name").toString(), a.value("src").toString(), a.value(kNs, "svg").toString(), a.value("visibility") != u"hidden", a.value("opacity").isEmpty() ? 1.0 : a.value("opacity").toDouble(), a.value(kNs, "alpha-lock") == u"true", a.value(kNs, "inherit-alpha") == u"true"});
+        else if (r.name() == u"stack" && nest++ > 0) layers.push_back({a.value("name").toString(), {}, {}, vis, op, false, false, true, nest - 2});
+        else if (r.name() == u"layer") layers.push_back({a.value("name").toString(), a.value("src").toString(), a.value(kNs, "svg").toString(), vis, op, a.value(kNs, "alpha-lock") == u"true", a.value(kNs, "inherit-alpha") == u"true", false, nest - 1});
     }
     std::optional<Document> doc;
     if (!r.hasError() && !layers.empty() && !size.isEmpty()) {
@@ -206,9 +222,9 @@ std::optional<Document> readOra(const QString& path) {
         for (int i = 0; i < int(layers.size()); i++) {
             const L& l = layers[layers.size() - 1 - i];
             QImage img;
-            if (!img.loadFromData(entry(l.src)) || img.size() != size) { doc.reset(); break; }
+            if ((i == 0 && (l.group || l.depth)) || (!l.group && (!img.loadFromData(entry(l.src)) || img.size() != size))) { doc.reset(); break; }
             if (i > 0) doc->addLayer();
-            doc->restoreLayer(i, img, l.name, l.visible, l.opacity, l.alphaLock, l.inheritAlpha);
+            doc->restoreLayer(i, img, l.name, l.visible, l.opacity, l.alphaLock, l.inheritAlpha, l.depth, l.group);
             if (!l.svg.isEmpty()) doc->restorePaths(i, readVectorSvg(entry(l.svg)));
         }
     }

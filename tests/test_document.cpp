@@ -583,6 +583,45 @@ static bool oraRoundTripsThreeLayers() {
     return back->render() == doc.render() && !back->undo() && !readOra(dir.filePath("missing.ora"));
 }
 
+// #456: GroupA(GroupB(L1 L2) L3) plus a root layer round-trips through .ora as nested <stack>s: names, depths, flags, opacity, pixels and render();
+// a file without groups has one <stack>.
+static bool oraRoundTripsGroups() {
+    Document doc(QSize(32, 32));
+    struct Item { const char* name; int depth; bool group; QColor c; };
+    // bottom first: Background, L3, L2, L1, GroupB, GroupA, R
+    const Item items[] = {{"L3", 1, false, Qt::red}, {"L2", 2, false, Qt::green}, {"L1", 2, false, Qt::blue},
+                          {"GroupB", 1, true, {}}, {"GroupA", 0, true, {}}, {"R", 0, false, Qt::black}};
+    for (int i = 0; i < 6; i++) {
+        doc.addLayer();
+        QImage img(32, 32, QImage::Format_RGBA8888);
+        img.fill(Qt::transparent);
+        if (!items[i].group) QPainter(&img).fillRect(2 + 4 * i, 2 + 4 * i, 8, 8, items[i].c);
+        doc.restoreLayer(i + 1, img, items[i].name, i != 1, 0.5 + 0.1 * i, false, false, items[i].depth, items[i].group);
+    }
+    QTemporaryDir dir;
+    QString path = dir.filePath("g.ora");
+    if (!writeOra(doc, path)) return false;
+    auto back = readOra(path);
+    if (!back || back->layerCount() != doc.layerCount()) return false;
+    for (int i = 0; i < doc.layerCount(); i++)
+        if (back->name(i) != doc.name(i) || back->depth(i) != doc.depth(i) || back->isGroup(i) != doc.isGroup(i) || back->visible(i) != doc.visible(i)
+            || back->opacity(i) != doc.opacity(i) || (!doc.isGroup(i) && back->image(i) != doc.image(i)))
+            return false;
+    QFile file(path); file.open(QIODevice::ReadOnly); QByteArray zip = file.readAll();
+    mz_zip_archive z{}; size_t n = 0;
+    mz_zip_reader_init_mem(&z, zip.constData(), size_t(zip.size()), 0);
+    void* p = mz_zip_reader_extract_file_to_heap(&z, "stack.xml", &n, 0);
+    QByteArray xml(static_cast<const char*>(p), qsizetype(n));
+    mz_free(p); mz_zip_reader_end(&z);
+    int open = 0, deepest = 0, stacks = 0;
+    for (QXmlStreamReader r(xml); !r.atEnd();) {
+        r.readNext();
+        if (r.isStartElement() && r.name() == u"stack") { stacks++; deepest = std::max(deepest, ++open); }
+        else if (r.isEndElement() && r.name() == u"stack") open--;
+    }
+    return back->render() == doc.render() && stacks == 3 && deepest == 3;
+}
+
 // #538: two references round-trip through .ora (pixels, transform, crop, order, opacity) with nothing to undo;
 // stack.xml is byte-identical with and without them, and a file without them opens with none.
 static bool oraRoundTripsReferences() {
@@ -1996,6 +2035,7 @@ int main() {
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("oraRoundTripsReferences", oraRoundTripsReferences);
+    run("oraRoundTripsGroups", oraRoundTripsGroups);
     run("importedReferenceFitsTheView", importedReferenceFitsTheView);
     run("referencesPickAndMove", referencesPickAndMove);
     run("cropEdgesMoveWithinThePicture", cropEdgesMoveWithinThePicture);
