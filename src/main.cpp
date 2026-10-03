@@ -32,6 +32,7 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QWidgetAction>
 #include <QPainter>
 #include <QConicalGradient>
 #include <QPainterPath>
@@ -202,11 +203,12 @@ public:
         update();
         if (onLayersChange) onLayersChange();
     }
-    // Edit > Paste (#508): img floats in a new Raster Layer, centred on the document point at, under Select's Transform box (the shell has switched to Select).
-    void paste(const QImage& img, QPointF at) {
+    // Edit > Paste (#508): img floats in a new Raster Layer, or on the current one (#509), centred on the document point at, under Select's Transform box (the shell has switched to Select).
+    void paste(const QImage& img, QPointF at, bool newLayer) {
         commitFloat();
         endCrop();
         pasted_ = img;
+        pasteNew_ = newLayer;
         box_ = QRect(QPoint(int(at.x() - img.width() / 2.0), int(at.y() - img.height() / 2.0)), img.size());
         floating_ = floatPiece({});
         boxLayer_ = s_.doc.current();
@@ -215,6 +217,8 @@ public:
     }
     // Where Ctrl+V centres a paste: the pointer over the canvas, else (menu Paste, pointer elsewhere) the Document centre.
     QPointF pastePoint() const { return cursor_ ? s_.view.toDoc(*cursor_) : QRectF(s_.doc.image(0).rect()).center(); }
+    // Where the paste menu opens (#509): at the pointer over the canvas, else the canvas centre; global coordinates.
+    QPoint pasteMenuPoint() const { return mapToGlobal(cursor_ ? cursor_->toPoint() : rect().center()); }
     std::function<void()> onPasteEnd;  // a paste ended by Enter or a click outside: the shell gives the previous tool back
     void mirror() { s_.view.mirrorAt(rect().center()); update(); }
     // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
@@ -771,7 +775,7 @@ private:
     bool floatPiece(const QTransform& m, bool commit = false) {
         if (pasted_.isNull()) return commit ? s_.doc.transformRect(box_, m) : s_.doc.floatRect(box_, m);
         QTransform at = QTransform::fromTranslate(box_.left(), box_.top()) * m;
-        return commit ? s_.doc.pasteImage(pasted_, at, true) : s_.doc.floatImage(pasted_, at, true);
+        return commit ? s_.doc.pasteImage(pasted_, at, pasteNew_) : s_.doc.floatImage(pasted_, at, pasteNew_);
     }
     // Enter or a click outside: commit, and a paste gives the tool before it back (onPasteEnd).
     void endPaste() {
@@ -1195,6 +1199,7 @@ private:
     BoxFrame moveFrame_;  // the box when a drag began
     std::optional<BoxFrame> frame_;  // the box a rotate left, until the next pick
     QImage pasted_;  // the image a paste floats (#508); null when the floating piece is a lifted Box Select rectangle
+    bool pasteNew_ = true;  // pasted_ floats in a layer of its own, not the current one
     bool floating_ = false;  // a raster selection's piece is lifted: the layer shows box_'s pixels moved through floatM_, not yet an undo step
     QTransform floatM_;
     bool scaleWidths_ = false;  // Select's Scale widths: transforms scale Width Knot widths too
@@ -2138,9 +2143,31 @@ int main(int argc, char** argv) {
         QImage img = QGuiApplication::clipboard()->image();
         if (img.isNull()) return;  // text or nothing on the clipboard: no paste
         QPointF at = canvas->pastePoint();
+        bool newLayer = true;
+        Document& d = canvas->doc();
+        if (!d.vector(d.current())) {  // on a Raster Layer it always asks (#509, look: #511)
+            QMenu menu;
+            auto* head = new QWidgetAction(&menu);
+            auto* box = new QWidget;
+            auto* row = new QHBoxLayout(box);
+            auto* thumb = new QLabel;
+            thumb->setPixmap(QPixmap::fromImage(img.scaled(48, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+            row->addWidget(thumb);
+            row->addWidget(new QLabel(QString("<b>Paste image</b><br>%1 × %2 px").arg(img.width()).arg(img.height())), 1);
+            head->setDefaultWidget(box);
+            menu.addAction(head);
+            menu.addSeparator();
+            auto* same = menu.addAction(QString("&Same layer: into “%1”").arg(d.name(d.current())));
+            auto* fresh = menu.addAction("&New layer");
+            menu.addAction("Cancel");
+            menu.setActiveAction(same);  // Enter takes it
+            auto* chosen = menu.exec(canvas->pasteMenuPoint());
+            if (chosen != same && chosen != fresh) return;  // Cancel, Esc or a click outside
+            newLayer = chosen == fresh;
+        }
         beforePaste = toolGroup->checkedAction();
         toolGroup->actions()[SelectTool]->trigger();
-        canvas->paste(img.convertToFormat(QImage::Format_RGBA8888), at);
+        canvas->paste(img.convertToFormat(QImage::Format_RGBA8888), at, newLayer);
     });
     canvas->onPasteEnd = [&beforePaste] { if (beforePaste) beforePaste->trigger(); beforePaste = nullptr; };
 
