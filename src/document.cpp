@@ -548,6 +548,7 @@ void Document::apply(const Step& s, bool reverse) {
         if (reverse) { remove(); break; }
         insert({true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), s.na});
         layers_[s.layer].image.fill(Qt::transparent);
+        if (!s.after.isNull()) layers_[s.layer].image = s.after;  // a paste into a new layer (#504)
         layers_[s.layer].vector = s.vector;
         break;
     case Delete:
@@ -653,10 +654,52 @@ void Document::cancelFloat() {
     if (strokeStart_.isNull()) return;
     layers_[current_].image = strokeStart_;
     strokeStart_ = QImage();
+    if (floatFrom_ < 0) return;
+    layers_.pop_back();
+    current_ = floatFrom_;
+    floatFrom_ = -1;
+}
+
+bool Document::floatImage(const QImage& img, const QTransform& m, bool newLayer) {
+    if (strokeStart_.isNull()) {
+        if (!newLayer && layers_[current_].vector) return false;
+        seal();
+        history_.resize(applied_);  // a new edit discards the redo branch
+        if (newLayer) {
+            floatFrom_ = current_;
+            layers_.push_back({true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), "Layer " + QString::number(layers_.size())});
+            layers_.back().image.fill(Qt::transparent);
+            current_ = int(layers_.size()) - 1;
+        }
+        strokeStart_ = layers_[current_].image;
+    }
+    layers_[current_].image = strokeStart_;
+    QPainter p(&layers_[current_].image);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    p.setTransform(m);
+    p.drawImage(0, 0, img);
+    return true;
+}
+
+bool Document::pasteImage(const QImage& img, const QTransform& m, bool newLayer) {
+    if (!floatImage(img, m, newLayer)) return false;
+    seal();
+    return true;
 }
 
 void Document::seal() {
     if (strokeStart_.isNull()) return;
+    if (floatFrom_ >= 0) {  // a paste into a layer it added: the layer, pixels and all, is one Add step
+        Step s;
+        s.kind = Add;
+        s.layer = current_;
+        s.na = layers_[current_].name;
+        s.after = layers_[current_].image;
+        push(s);
+        strokeStart_ = QImage();
+        floatFrom_ = -1;
+        return;
+    }
     // ponytail: full-layer diff once per stroke; upgrade to dirty rects from the dab callback if it shows up in a profile
     QRect rect = diffRect(strokeStart_, layers_[current_].image);
     if (!rect.isNull()) {

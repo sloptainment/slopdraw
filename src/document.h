@@ -56,6 +56,11 @@ public:
     bool floatRect(const QRect& rect, const QTransform& m);
     bool transformRect(const QRect& rect, const QTransform& m);
     void cancelFloat();
+    // Paste (#504): floatImage draws img through m over the current Raster Layer, live like floatRect; newLayer first adds a Raster Layer
+    // on top for it (no step yet). pasteImage is floatImage plus one undo step, the new layer included; cancelFloat drops the float and that layer.
+    // Both refuse a Vector Layer (false) unless newLayer. Pixels past the document edge are cropped.
+    bool floatImage(const QImage& img, const QTransform& m, bool newLayer = false);
+    bool pasteImage(const QImage& img, const QTransform& m, bool newLayer = false);
     // The visible (composite) color at a document pixel; an invalid QColor when p is off the canvas.
     QColor colorAt(QPoint p) const;
     // Adds a transparent Raster Layer on top and makes it current; returns its index (0 is the white background).
@@ -200,4 +205,5 @@ private:
     // The current layer as it was when the stroke in progress began; null when none is in progress.
     // Shares pixels with that layer until the first dab detaches it, so starting a stroke copies once.
     QImage strokeStart_;
+    int floatFrom_ = -1;  // while a paste floats in a layer it added: the layer that was current before; seal turns that layer into one Add step
 };

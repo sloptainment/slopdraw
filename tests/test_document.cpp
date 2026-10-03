@@ -1795,6 +1795,34 @@ static bool referencesDrawFromTheOriginal() {
     return qAlpha(d.pixel(20, 0)) == 0 && std::abs(qAlpha(d.pixel(2, 0)) - 128) <= 1;
 }
 
+// Pasting an image (#504): floatImage draws it through m over the current Raster Layer live (no step, each call from the pixels underneath),
+// cancelFloat puts the layer back, pasteImage commits one undo step. newLayer adds a Raster Layer and pastes into it within that one step.
+// A 10x10 red image moved to (60,60) on a 64x64 document keeps only its 4x4 on the canvas. A Vector Layer refuses the same-layer paste.
+static bool pastedImageFloatsAndCommitsOnce() {
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    QImage red(10, 10, QImage::Format_RGBA8888);
+    red.fill(Qt::red);
+    QImage before = doc.render();
+    bool live = doc.floatImage(red, QTransform::fromTranslate(30, 30)) && doc.floatImage(red, QTransform::fromTranslate(5, 5))
+        && doc.render().pixelColor(14, 14) == QColor(Qt::red) && doc.render().pixelColor(30, 30) == QColor(Qt::white);
+    doc.cancelFloat();
+    bool cancelled = doc.render() == before && doc.undo() && doc.layerCount() == 1;  // no paste step: undo takes addLayer
+    doc.redo();
+    bool same = doc.pasteImage(red, QTransform::fromTranslate(60, 60)) && doc.render().pixelColor(63, 63) == QColor(Qt::red)
+        && doc.render().pixelColor(59, 59) == QColor(Qt::white) && doc.layerCount() == 2;
+    bool undone = doc.undo() && doc.render() == before && doc.layerCount() == 2;
+    bool fresh = doc.pasteImage(red, QTransform::fromTranslate(5, 5), true) && doc.layerCount() == 3 && doc.current() == 2
+        && doc.image(2).pixelColor(5, 5) == QColor(Qt::red) && doc.image(1).pixelColor(5, 5).alpha() == 0;
+    bool freshUndone = doc.undo() && doc.layerCount() == 2 && doc.render() == before && doc.redo() && doc.image(2).pixelColor(5, 5) == QColor(Qt::red);
+    bool freshCancel = doc.floatImage(red, {}, true) && doc.layerCount() == 4;
+    doc.cancelFloat();
+    freshCancel = freshCancel && doc.layerCount() == 3 && doc.current() == 2;
+    doc.addVectorLayer();
+    bool refused = !doc.pasteImage(red, {}) && !doc.floatImage(red, {});
+    return live && cancelled && same && undone && fresh && freshUndone && freshCancel && refused;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1881,6 +1909,7 @@ int main() {
     run("flipMirrorsAndScaleWidthsIsOptIn", flipMirrorsAndScaleWidthsIsOptIn);
     run("rewidthPathScalesKnots", rewidthPathScalesKnots);
     run("transformRectMovesPixelsAndUndoesOnce", transformRectMovesPixelsAndUndoesOnce);
+    run("pastedImageFloatsAndCommitsOnce", pastedImageFloatsAndCommitsOnce);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("bezierPenPlacesCornersAndFinishes", bezierPenPlacesCornersAndFinishes);
     run("bezierPenDragMakesSymmetricNode", bezierPenDragMakesSymmetricNode);
