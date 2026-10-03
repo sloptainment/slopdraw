@@ -14,16 +14,25 @@ inline constexpr struct { const char* name; SpiroType type; } kNodeTypes[] = {
 // current Vector Layer. The Canvas decides what counts as a click and which key finishes.
 struct SpiroPen {
     SpiroType type = SpiroType::G2;  // what Inkscape's Spiro mode makes for a smooth node
-    std::vector<SpiroNode> nodes;
+    bool bezier = false;  // the Tool Options toggle (#308): Bezier clicks place corners, finish makes a Bezier path
+    std::vector<SpiroNode> nodes;  // in Bezier, all Corners: Spiro draws them as the same straight segments, so the preview is shared
 
-    void click(QPointF p, bool corner = false) { nodes.push_back({p.x(), p.y(), corner ? SpiroType::Corner : type}); }  // Shift+click places a Corner (#274)
+    void click(QPointF p, bool corner = false) { nodes.push_back({p.x(), p.y(), corner || bezier ? SpiroType::Corner : type}); }  // Shift+click places a Corner (#274)
     // True when p is within tol of the first node: clicking there closes the path.
     bool onFirst(QPointF p, double tol) const { return !nodes.empty() && std::hypot(p.x() - nodes[0].x, p.y() - nodes[0].y) <= tol; }
     void backspace() { if (!nodes.empty()) nodes.pop_back(); }
     void cancel() { nodes.clear(); }
     // One undo step. On false (not a Vector Layer, or no curve) the nodes stay, so the user can carry on or cancel.
     bool finish(Document& doc, bool closed, const QColor& color, double width, Document::PaintMode mode = Document::PaintMode::Stroke, const QColor& fillColor = {}) {
-        if (!doc.addPath(nodes, closed, color, width, mode, fillColor)) return false;
+        if (bezier) {
+            if (nodes.size() < 2 || !doc.vector(doc.current())) return false;
+            Document::VPath v{{}, closed, color, width, {{0, width}}, Document::PathKind::Bezier, mode, fillColor.isValid() ? fillColor : color};
+            if (!closed) v.knots.push_back({double(nodes.size() - 1), width});  // one cubic per segment (#306)
+            for (const auto& n : nodes) v.bezier.push_back({{n.x, n.y}, {n.x, n.y}, {n.x, n.y}, BezierType::Cusp});
+            auto paths = doc.paths(doc.current());
+            paths.push_back(v);
+            if (!doc.setPaths(doc.current(), paths)) return false;
+        } else if (!doc.addPath(nodes, closed, color, width, mode, fillColor)) return false;
         nodes.clear();
         return true;
     }
@@ -56,6 +65,7 @@ inline std::vector<SpiroNode> retypeNodes(std::vector<SpiroNode> nodes, const st
 // do too, unless scaleWidths: then each is scaled by sqrt(|det m|) (#203).
 inline Document::VPath transformNodes(Document::VPath p, const QTransform& m, bool scaleWidths = false) {
     for (auto& n : p.nodes) m.map(n.x, n.y, &n.x, &n.y);
+    for (auto& n : p.bezier) n.p = m.map(n.p), n.in = m.map(n.in), n.out = m.map(n.out);
     if (scaleWidths)
         for (auto& k : p.knots) k.width *= std::sqrt(std::abs(m.determinant()));
     return p;
@@ -65,7 +75,6 @@ inline Document::VPath transformNodes(Document::VPath p, const QTransform& m, bo
 inline Document::VPath rewidthPath(Document::VPath p, double w) {
     if (p.width > 0)
         for (auto& k : p.knots) k.width *= w / p.width;
-    for (auto& n : p.bezier) n.p = m.map(n.p), n.in = m.map(n.in), n.out = m.map(n.out);
     p.width = w;
     return p;
 }

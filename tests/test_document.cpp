@@ -1367,6 +1367,26 @@ static bool bezierPathRendersAsPowerStroke() {
     return set && mid && thin && flat && doc.pathAt(1, at(0.5), 1) == 0;
 }
 
+// The Pen in Bezier (#308): four clicks and an open finish give one Bezier path of Cusp nodes with handles on their points,
+// end knots at t 0 and 3; a closed finish gets one knot; the picker type is ignored and Spiro stays the default.
+static bool bezierPenPlacesCornersAndFinishes() {
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    SpiroPen pen;
+    bool spiroDefault = !pen.bezier;
+    pen.bezier = true;
+    for (QPointF p : {QPointF(8, 8), QPointF(56, 8), QPointF(56, 56), QPointF(8, 56)}) pen.click(p);
+    bool open = pen.finish(doc, false, Qt::black, 6) && pen.nodes.empty();
+    const auto& v = doc.paths(1)[0];
+    bool corners = v.kind == Document::PathKind::Bezier && v.nodes.empty() && v.bezier.size() == 4 && !v.closed;
+    for (const auto& n : v.bezier) corners = corners && n.in == n.p && n.out == n.p && n.type == BezierType::Cusp;
+    bool knots = v.knots.size() == 2 && v.knots[1].t == 3 && doc.image(1).pixelColor(32, 8).alpha() > 128;
+    for (QPointF p : {QPointF(8, 8), QPointF(56, 8), QPointF(56, 56)}) pen.click(p);
+    bool closed = pen.finish(doc, true, Qt::black, 6) && doc.paths(1).size() == 2 && doc.paths(1)[1].closed && doc.paths(1)[1].knots.size() == 1;
+    bool oneStep = doc.undo() && doc.paths(1).size() == 1;
+    return spiroDefault && open && corners && knots && closed && oneStep;
+}
+
 // transformNodes on a Bezier path maps handles as well as points (#315): the same scale+rotate (x' = -3y + 5, y' = 2x + 7) sends
 // point (10,20), in (1,0), out (0,1) to (-55,27), (5,9), (2,7); types and knots stay, and a flip about x = 50 mirrors a handle's x.
 static bool transformNodesMapsBezierHandles() {
@@ -1394,8 +1414,6 @@ static bool toBezierKeepsOutlineAndKnots() {
 }
 
 int main() {
-    run("transformNodesMapsBezierHandles", transformNodesMapsBezierHandles);
-    run("toBezierKeepsOutlineAndKnots", toBezierKeepsOutlineAndKnots);
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
         bool ok = fn();
@@ -1461,11 +1479,14 @@ int main() {
     run("draggingNodesMovesThemTogetherAndUndoesOnce", draggingNodesMovesThemTogetherAndUndoesOnce);
     run("deletingAndRetypingNodes", deletingAndRetypingNodes);
     run("transformNodesMapsNodesAndKeepsTheRest", transformNodesMapsNodesAndKeepsTheRest);
+    run("transformNodesMapsBezierHandles", transformNodesMapsBezierHandles);
     run("transformBoxRotatesAndScalesAlongItsAxes", transformBoxRotatesAndScalesAlongItsAxes);
     run("flipMirrorsAndScaleWidthsIsOptIn", flipMirrorsAndScaleWidthsIsOptIn);
     run("rewidthPathScalesKnots", rewidthPathScalesKnots);
     run("transformRectMovesPixelsAndUndoesOnce", transformRectMovesPixelsAndUndoesOnce);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
+    run("bezierPenPlacesCornersAndFinishes", bezierPenPlacesCornersAndFinishes);
+    run("toBezierKeepsOutlineAndKnots", toBezierKeepsOutlineAndKnots);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     run("cornerClickIgnoresThePickerType", cornerClickIgnoresThePickerType);
     run("toolFollowsLayerKind", toolFollowsLayerKind);

@@ -101,6 +101,15 @@ public:
     float radius() const { return std::exp(mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC)); }
     float opacity() const { return mypaint_brush_get_base_value(brush_.get(), MYPAINT_BRUSH_SETTING_OPAQUE); }
     void setNodeType(SpiroType t) { pen_.type = t; }  // the Spiro Pen's, for new nodes (#215)
+    // The Spiro/Bezier toggle: with picks in Select, Bezier converts the picked Spiro paths (#317; Spiro is not built yet); else the Pen's next path (#308), dropping a half-placed one
+    void setBezier(bool on) {
+        if (objectTool_ && !picked().empty()) {
+            if (on) editPicks([](Document::VPath& p) { if (p.kind == Document::PathKind::Spiro) p = Document::toBezier(p); });
+            return;
+        }
+        pen_.bezier = on; pen_.cancel(); update();
+    }
+    bool bezier() const { return pen_.bezier; }
     // Node/Knot edit's picker: retypes the selected nodes (one undo step); the pen's type is left alone.
     void retypeSelected(SpiroType t) {
         editType_ = t;
@@ -191,7 +200,7 @@ protected:
         }
         if (spiroTool_ && !pen_.nodes.empty()) {  // the path so far, plus a node under the pointer that a click would place
             auto nodes = pen_.nodes;
-            if (cursor_) nodes.push_back({s_.view.toDoc(*cursor_).x(), s_.view.toDoc(*cursor_).y(), pen_.type});
+            if (cursor_) nodes.push_back({s_.view.toDoc(*cursor_).x(), s_.view.toDoc(*cursor_).y(), pen_.bezier ? SpiroType::Corner : pen_.type});
             if (auto path = spiroToPath(nodes, false)) {
                 QPen pen(Qt::gray, 1);
                 pen.setCosmetic(true);
@@ -346,6 +355,7 @@ private:
     QString hint() const {
         if (!hasDoc()) return {};
         if (spiroTool_ && pen_.nodes.empty()) return "Click places the first node";
+        if (spiroTool_ && pen_.bezier) return "Click adds a corner · Enter or right-click finishes open · click the first node or Shift+Enter closes · Backspace drops the last node · Esc cancels";
         if (spiroTool_) return "Click adds a node · Shift+click adds a corner · Enter or right-click finishes open · click the first node or Shift+Enter closes · Backspace drops the last node · Esc cancels";
         if (selectTool_ && selected_ < 0) return "Click a path to select it";
         if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Shift+click the path adds a node · Ctrl+Alt+click deletes";
@@ -564,7 +574,11 @@ private:
         QMenu menu;
         auto* h = menu.addAction("Flip Horizontal");
         auto* v = menu.addAction("Flip Vertical");
+        auto* c = menu.addAction("Convert to Bezier");
+        auto ps = pickedPaths();
+        c->setEnabled(std::any_of(ps.begin(), ps.end(), [](auto& p) { return p.kind == Document::PathKind::Spiro; }));
         auto* chosen = menu.exec(globalPos);
+        if (chosen == c) return setBezier(true);  // what the Curve toggle's Bezier does (#317)
         if (chosen != h && chosen != v) return;
         BoxFrame f = frame();
         QTransform m = flipMatrix(f.rect.center(), chosen == h);
@@ -1274,6 +1288,23 @@ int main(int argc, char** argv) {
     picker->onRelease = [canvas, pending] { if (*pending) canvas->setColor(**pending); pending->reset(); };
     canvas->onColorPick = [picker, paintSwatches](const QColor& c) { picker->setColor(c); paintSwatches(); };
     auto* penTypes = new QListWidget;  // the Spiro Pen's type for new nodes
+    auto* curveBox = new QWidget;  // the Pen's Spiro / Bezier toggle, Spiro by default (#308); Bezier has no node picker
+    QToolButton* curveButtons[2];
+    auto* curveRow = new QHBoxLayout(curveBox);
+    curveRow->setContentsMargins(0, 0, 0, 0);
+    curveRow->setSpacing(0);
+    curveRow->addWidget(new QLabel("Curve"));
+    for (bool bez : {false, true}) {
+        auto* b = new QToolButton;
+        b->setText(bez ? "Bezier" : "Spiro");
+        b->setCheckable(true);
+        b->setAutoExclusive(true);
+        b->setChecked(!bez);
+        curveButtons[bez] = b;
+        QObject::connect(b, &QToolButton::toggled, [canvas, penTypes, bez](bool on) { if (on) { canvas->setBezier(bez); penTypes->setVisible(!bez && !canvas->selecting()); } });
+        curveRow->addWidget(b);
+    }
+    curveRow->addStretch();
     auto* editTypes = new QListWidget;  // retypes Node/Knot edit's selected nodes, apart from the pen's (#215)
     for (auto* l : {penTypes, editTypes}) for (const auto& t : kNodeTypes) l->addItem(t.name);
     penTypes->setCurrentRow(2);  // G2, SpiroPen's starting type
@@ -1291,7 +1322,8 @@ int main(int argc, char** argv) {
         swatchBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
         picker->setColor(canvas->color());  // the Pen's active swatch or the brush color
         nameColorDock(tool);
-        penTypes->setVisible(tool == SpiroPenTool);
+        curveBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
+        penTypes->setVisible(tool == SpiroPenTool && !canvas->bezier());
         editTypes->setVisible(tool == NodeKnotEditTool);
     };
     // Select shows its picks' Width, Paint and colors, "mixed" where they differ; no pick shows the Pen's next path (#303).
@@ -1310,6 +1342,15 @@ int main(int argc, char** argv) {
             paintButtons[k]->setChecked(!mMixed && kPaints[k].second == mode);
             paintButtons[k]->setAutoExclusive(true);
         }
+        bool hasSpiro = false, hasBezier = false;
+        for (const auto& p : ps) (p.kind == Document::PathKind::Bezier ? hasBezier : hasSpiro) = true;
+        if (ps.empty()) hasBezier = canvas->bezier(), hasSpiro = !hasBezier;
+        for (int k = 0; k < 2; k++) {
+            QSignalBlocker bb(curveButtons[k]);
+            curveButtons[k]->setAutoExclusive(false);  // so a mixed pick leaves both unchecked
+            curveButtons[k]->setChecked(k ? hasBezier && !hasSpiro : hasSpiro && !hasBezier);
+            curveButtons[k]->setAutoExclusive(true);
+        }
         paintSwatches();
     };
     canvas->onToolChange = [=](int tool) { showOptions(tool); showPicks(); };  // setTool has cleared the picks, so leaving Select shows the Pen's again
@@ -1322,6 +1363,7 @@ int main(int argc, char** argv) {
     optionsCol->addWidget(eraseBox);
     optionsCol->addWidget(brushBox);
     optionsCol->addWidget(lassoBox);
+    optionsCol->addWidget(curveBox);
     optionsCol->addWidget(widthBox);
     optionsCol->addWidget(paintBox);
     optionsCol->addWidget(swatchBox);
