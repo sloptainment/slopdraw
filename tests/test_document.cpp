@@ -1611,6 +1611,53 @@ static bool alphaLockHoldsAlphaUnderPaint() {
     return strokeOk && fillOk && eraseOk && deleteOk;
 }
 
+// Inherit Alpha (#429): an item's alpha is cut by everything visible below it (opacity included); the Background ignores the flag; one undo step.
+static bool inheritAlphaCutsByWhatIsBelow() {
+    const std::vector<QPointF> all = {{0, 0}, {64, 0}, {64, 64}, {0, 64}};
+    auto a = [](const Document& d, int x) { return d.render().pixelColor(x, 10).alpha(); };
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.fill(Qt::red, {{0, 0}, {32, 0}, {32, 64}, {0, 64}});  // opaque left half
+    doc.addLayer();
+    doc.fill(Qt::blue, all);
+    doc.setVisible(0, false);
+    doc.setInheritAlpha(2, true);
+    if (!doc.inheritAlpha(2) || a(doc, 10) != 255 || a(doc, 50) != 0) return false;  // 1: shows only inside the shape
+    doc.setOpacity(1, 0.5);
+    if (std::abs(a(doc, 10) - 128) > 1 || a(doc, 50) != 0) return false;  // 2: base at 50%
+    doc.setVisible(1, false);
+    if (a(doc, 10) != 0) return false;  // 2: hidden base adds nothing
+    doc.setVisible(1, true);
+    doc.setOpacity(1, 1);
+    doc.setVisible(0, true);
+    QImage on = doc.render();
+    doc.setInheritAlpha(2, false);
+    if (doc.render() != on) return false;  // 3: Background visible, the flag changes nothing
+    int id = doc.stepId();
+    doc.setInheritAlpha(2, false);
+    if (doc.stepId() != id) return false;
+    doc.setInheritAlpha(0, true);  // 5: the Background ignores it, one undo step
+    if (doc.render() != on || doc.stepId() != id + 1) return false;
+    doc.undo();
+    if (doc.inheritAlpha(0)) return false;
+    // 4: a Vector Layer clips and is clipped, its paths untouched
+    using T = SpiroType;
+    Document v(QSize(64, 64));
+    v.setVisible(0, false);
+    v.addVectorLayer();
+    v.addPath({{10, 10, T::G2}, {30, 10, T::G2}, {30, 25, T::G2}, {10, 25, T::G2}}, true, QColor(10, 20, 30), 4, Document::PaintMode::Fill, QColor(10, 20, 30));
+    auto paths = v.paths(1);
+    v.addLayer();
+    v.fill(Qt::blue, all);
+    v.setInheritAlpha(2, true);  // clipped by the vector shape
+    if (a(v, 20) != 255 || a(v, 50) != 0) return false;
+    v.setInheritAlpha(2, false);
+    v.setInheritAlpha(1, true);  // the vector layer clipped by the raster layer's full coverage: unchanged
+    v.setVisible(2, false);
+    if (a(v, 20) != 0) return false;  // nothing below it
+    return v.paths(1).size() == paths.size() && v.paths(1)[0].nodes.size() == paths[0].nodes.size();
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1620,6 +1667,7 @@ int main() {
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);
+    run("inheritAlphaCutsByWhatIsBelow", inheritAlphaCutsByWhatIsBelow);
     run("alphaLockHoldsAlphaUnderPaint", alphaLockHoldsAlphaUnderPaint);
     run("bezierNodesDragWithHandles", bezierNodesDragWithHandles);
     run("bezierHandleMovesPerType", bezierHandleMovesPerType);

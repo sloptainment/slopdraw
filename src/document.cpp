@@ -69,9 +69,11 @@ QImage Document::render() const {
     QImage out(layers_[0].image.size(), QImage::Format_RGBA8888);
     out.fill(Qt::transparent);
     QPainter p(&out);
-    for (const Layer& l : layers_) {
+    for (size_t i = 0; i < layers_.size(); i++) {
+        const Layer& l = layers_[i];
         if (!l.visible) continue;
         p.setOpacity(l.opacity);
+        p.setCompositionMode(i && l.inheritAlpha ? QPainter::CompositionMode_SourceAtop : QPainter::CompositionMode_SourceOver);
         p.drawImage(0, 0, l.image);
     }
     return out;
@@ -454,6 +456,18 @@ bool Document::setAlphaLock(int layer, bool on) {
     return true;
 }
 
+void Document::setInheritAlpha(int layer, bool on) {
+    if (layers_[layer].inheritAlpha == on) return;
+    seal();
+    Step s;
+    s.kind = InheritAlpha;
+    s.layer = layer;
+    s.a = !on;
+    s.b = on;
+    push(s);
+    apply(s, false);
+}
+
 bool Document::deleteLayer(int layer) {
     if (layer < 1 || layer >= int(layers_.size())) return false;
     seal();
@@ -466,7 +480,7 @@ bool Document::deleteLayer(int layer) {
     s.na = layers_[layer].name;
     s.vector = layers_[layer].vector;
     s.paths = layers_[layer].paths;
-    s.to = layers_[layer].alphaLock;
+    s.to = layers_[layer].alphaLock | layers_[layer].inheritAlpha << 1;
     push(s);
     apply(s, false);
     return true;
@@ -512,13 +526,14 @@ void Document::apply(const Step& s, bool reverse) {
         layers_[s.layer].vector = s.vector;
         break;
     case Delete:
-        if (reverse) insert({bool(s.b), s.a, s.before, s.na, s.vector, s.paths, bool(s.to)});
+        if (reverse) insert({bool(s.b), s.a, s.before, s.na, s.vector, s.paths, bool(s.to & 1), bool(s.to & 2)});
         else remove();
         break;
     case Move: reverse ? applyMove(s.to, s.layer) : applyMove(s.layer, s.to); break;
     case Visible: layers_[s.layer].visible = reverse ? s.a : s.b; break;
     case Opacity: layers_[s.layer].opacity = reverse ? s.a : s.b; break;
     case AlphaLock: layers_[s.layer].alphaLock = reverse ? s.a : s.b; break;
+    case InheritAlpha: layers_[s.layer].inheritAlpha = reverse ? s.a : s.b; break;
     case Name: layers_[s.layer].name = reverse ? s.na : s.nb; break;
     case PathAdd:
         reverse ? layers_[s.layer].paths.pop_back() : layers_[s.layer].paths.push_back(s.paths[0]);

@@ -111,6 +111,9 @@ public:
     // Alpha Lock (#427): a Raster Layer flag, one undo step (a same-value call is none). A Vector Layer refuses it: returns false, no step.
     bool alphaLock(int layer) const { return layers_[layer].alphaLock; }
     bool setAlphaLock(int layer, bool on);
+    // Inherit Alpha (#429): an item flag on Raster and Vector Layers, one undo step (a same-value call is none). render() cuts a flagged item by everything visible below it; the Background ignores it.
+    bool inheritAlpha(int layer) const { return layers_[layer].inheritAlpha; }
+    void setInheritAlpha(int layer, bool on);
     // A Vector Layer's paths, bottom first; empty for a Raster Layer. outline is the filled shape a path draws (its expanded Power Stroke).
     const std::vector<VPath>& paths(int layer) const { return layers_[layer].paths; }
     static QPainterPath outline(const VPath& v);
@@ -140,9 +143,9 @@ public:
 private:
     // Pixels: before/after pixels of the rect a stroke changed. The layer ops keep what undo needs: Add nothing (its layer is blank
     // once later steps are undone), Delete the layer's image in before plus its visible/opacity in a/b, Move the target index in to,
-    // Visible, Opacity and AlphaLock the old and new value in a and b (Delete keeps the lock in to), Name the old and new in na and nb.
+    // Visible, Opacity, AlphaLock and InheritAlpha the old and new value in a and b (Delete keeps both flags in to, lock as bit 0), Name the old and new in na and nb.
     // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path, Knots the old and new Width Knots of one path, Nodes the old and new path in paths[0] and paths[1] (index in to), Rasterize the dropped paths, Paths the old and new list in paths and newPaths.
-    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, AlphaLock, PathAdd, Knots, Nodes, Rasterize, Paths };
+    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, AlphaLock, InheritAlpha, PathAdd, Knots, Nodes, Rasterize, Paths };
     struct Step {
         Kind kind = Pixels;
         int id = 0;
@@ -172,6 +175,7 @@ private:
         bool vector = false;
         std::vector<VPath> paths;
         bool alphaLock = false;
+        bool inheritAlpha = false;
     };
     // Redraws a Vector Layer's image from its paths.
     static void rasterize(Layer& l);
