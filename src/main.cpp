@@ -1487,12 +1487,12 @@ int main(int argc, char** argv) {
     auto* toolCol = new QVBoxLayout(toolPanel);
     auto* toolGroup = new QActionGroup(&window);
     const struct { const char* text; const char* key; } kTools[] = {
-        {"\U0001F58C", "B"}, // Brush (B)
-        {"\u2B2E", "F"}, // Lasso Fill (F)
-        {"\u2712", "P"}, // Spiro Pen (P)
-        {"\u2316", "N"}, // Node/Knot edit (N)
-        {"\u25AD", "S"}, // Select (S)
-        {"\u2B1A", ""} // Box Select
+        {"\U0001F58C Brush", "B"}, // Brush (B)
+        {"\u2B2E Fill", "F"}, // Lasso Fill (F)
+        {"\u2712 Pen", "P"}, // Spiro Pen (P)
+        {"\u2316 Node", "N"}, // Node/Knot edit (N)
+        {"\u25AD Select", "S"}, // Select (S)
+        {"\u2B1A Box", ""} // Box Select
     };
     int lastTool[2] = {BrushTool, SpiroPenTool};  // last tool used on a Raster, a Vector Layer (#161); Select fits both, so it is no one's last
     for (int i = 0; i < 6; i++) {
