@@ -2108,6 +2108,28 @@ static bool bucketFillGrowsAndSmooths() {
     return expand && shrink && partial && all;
 }
 
+// Bucket Fill Sample merged (#606): the region is found on the visible composite, painted on the current layer.
+static bool bucketFillSamplesMerged() {
+    QColor red(255, 0, 0);
+    auto ringBelow = [] {
+        Document d(QSize(32, 32));
+        d.fill(Qt::black, {{8, 8}, {24, 8}, {24, 24}, {8, 24}});
+        d.fill(Qt::white, {{10, 10}, {22, 10}, {22, 22}, {10, 22}});
+        d.addLayer();  // empty, current
+        return d;
+    };
+    Document merged = ringBelow();
+    bool stops = merged.bucketFill({16, 16}, red, 0, 0, false, true) && merged.colorAt({16, 16}) == red && merged.colorAt({2, 2}) == Qt::white && merged.colorAt({9, 16}) == Qt::black;
+    Document current = ringBelow();
+    bool everything = current.bucketFill({16, 16}, red, 0, 0, false, false) && current.colorAt({2, 2}) == red && current.colorAt({9, 16}) == red;
+    Document hidden = ringBelow();
+    hidden.setVisible(0, false);  // the ring below is not drawn, so it stops nothing
+    bool ignored = hidden.bucketFill({16, 16}, red, 0, 0, false, true) && hidden.render().pixelColor({2, 2}) == red;
+    Document ref = ringBelow();
+    ref.addReference({QImage(32, 32, QImage::Format_RGBA8888), QTransform(), QRectF(0, 0, 32, 32), 1});
+    return stops && everything && ignored && ref.bucketFill({2, 2}, red, 0, 0, false, true) && ref.colorAt({2, 2}) == red && ref.colorAt({9, 16}) == Qt::black;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -2119,6 +2141,7 @@ int main() {
     run("bucketFillStopsAtARing", bucketFillStopsAtARing);
     run("bucketFillObeysItsRules", bucketFillObeysItsRules);
     run("bucketFillGrowsAndSmooths", bucketFillGrowsAndSmooths);
+    run("bucketFillSamplesMerged", bucketFillSamplesMerged);
     run("referencesDrawFromTheOriginal", referencesDrawFromTheOriginal);
     run("referencesAreOneUndoStepEachAndNeverRendered", referencesAreOneUndoStepEachAndNeverRendered);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);

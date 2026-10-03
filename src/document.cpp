@@ -761,13 +761,12 @@ void Document::fill(const QColor& color, const std::vector<QPointF>& points, boo
 }
 
 bool Document::bucketFill(const QPoint& at, const QColor& color, int threshold, int expand, bool antialiased, bool sampleMerged, bool eraser) {
-    Q_UNUSED(sampleMerged)
     Layer& l = layers_[current_];
     if (l.vector || l.group || !l.image.rect().contains(at)) return false;
     seal();
     history_.resize(applied_);  // a new edit discards the redo branch
     strokeStart_ = l.image;
-    const QImage src = l.image.convertToFormat(QImage::Format_ARGB32);
+    const QImage src = (sampleMerged ? render() : l.image).convertToFormat(QImage::Format_ARGB32);  // render() skips hidden layers and references
     const QRgb target = src.pixel(at);
     auto diff = [&](int x, int y) {
         QRgb c = src.pixel(x, y);
