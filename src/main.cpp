@@ -1188,6 +1188,49 @@ int main(int argc, char** argv) {
             h->addWidget(new QLabel(d.vector(i) ? "✒" : "🖌"));
             h->addWidget(thumb);
             h->addWidget(new QLabel(d.name(i)), 1);
+            // flag icons at the right end (#468): Alpha Lock (Raster Layer rows; Vector rows keep a blank slot) and Inherit Alpha, grey outline off, white on a blue tile on
+            for (bool lock : {true, false}) {
+                if (lock && d.vector(i)) { h->addSpacing(24 + h->spacing()); continue; }
+                auto* fb = new QToolButton;
+                fb->setCheckable(true);
+                fb->setFixedSize(24, 24);
+                fb->setToolTip(lock ? "Alpha Lock" : "Inherit Alpha");
+                auto paint = [fb, lock](bool on) {
+                    QPixmap pm(18, 18);
+                    pm.fill(Qt::transparent);
+                    QPainter p(&pm);
+                    p.setRenderHint(QPainter::Antialiasing);
+                    QColor c = on ? Qt::white : QColor(102, 102, 102);
+                    p.setPen(QPen(c, 1.5));
+                    if (lock) {
+                        p.drawRoundedRect(QRectF(1.5, 1.5, 15, 15), 1, 1);
+                        p.fillRect(QRectF(1.5, 1.5, 4, 4), c);
+                        p.fillRect(QRectF(9.5, 1.5, 4, 4), c);
+                        p.drawRoundedRect(QRectF(5, 8, 8, 7), 1, 1);
+                        p.drawArc(QRectF(6.5, 3.5, 5, 5), 0, 180 * 16);
+                    } else {
+                        QFont f("serif", 1);
+                        f.setItalic(true);
+                        f.setPixelSize(14);
+                        p.setFont(f);
+                        p.drawText(QPointF(1, 12), "α");
+                        p.drawLine(QPointF(13, 3), QPointF(13, 14));
+                        p.drawPolyline(QPolygonF({QPointF(10, 11), QPointF(13, 14), QPointF(16, 11)}));
+                    }
+                    p.end();
+                    fb->setIcon(pm);
+                    fb->setStyleSheet(on ? "QToolButton { background: #3a5f8f; border: none; border-radius: 4px; }" : "QToolButton { border: none; }");
+                };
+                fb->setChecked(lock ? d.alphaLock(i) : d.inheritAlpha(i));
+                paint(fb->isChecked());
+                QObject::connect(fb, &QToolButton::toggled, [canvas, i, lock, paint](bool on) {
+                    if (lock) canvas->doc().setAlphaLock(i, on);
+                    else canvas->doc().setInheritAlpha(i, on);
+                    paint(on);
+                    canvas->update();
+                });
+                h->addWidget(fb);
+            }
             auto* it = new QListWidgetItem(layerList);
             it->setSizeHint(row->sizeHint());
             layerList->setItemWidget(it, row);
