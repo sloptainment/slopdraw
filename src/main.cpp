@@ -1827,8 +1827,9 @@ int main(int argc, char** argv) {
         Document& d = canvas->doc();
         auto at = [&](int row) { return layerList->item(row)->data(Qt::UserRole).toInt(); };
         bool moved;
-        if (inside >= 0) moved = at(inside) != from && d.moveItem(from, at(inside), d.depth(at(inside)) + 1);  // top item of the group
-        else moved = gap < layerList->count() && d.moveItem(from, at(gap) + 1, d.depth(at(gap)));  // above that row, at its level
+        auto items = layerList->sel.count(from) ? layerList->items(from) : std::vector<int>{from};  // dragging a selected row drags the whole selection (#446)
+        if (inside >= 0) moved = !layerList->sel.count(at(inside)) && at(inside) != from && d.moveItems(items, at(inside), d.depth(at(inside)) + 1);  // top item of the group
+        else moved = gap < layerList->count() && d.moveItems(items, at(gap) + 1, d.depth(at(gap)));  // above that row, at its level
         if (moved) QTimer::singleShot(0, [canvas] { canvas->onLayersChange(); });
     };
     QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
@@ -1892,8 +1893,8 @@ int main(int argc, char** argv) {
         {"+ Raster", "Add &Raster", [](Document& d) { d.addLayer(); }},
         {"+ Vector", "Add &Vector", [](Document& d) { d.addVectorLayer(); }},
         {"+ Group", "Add &Group", [layerList](Document& d) { if (layerList->sel.size() > 1) d.wrap(layerList->items(d.current())); else d.addGroup(); }},
-        {"↑", "&Up", [](Document& d) { d.stepItem(d.current(), true); }},
-        {"↓", "Dow&n", [](Document& d) { d.stepItem(d.current(), false); }},
+        {"↑", "&Up", [layerList](Document& d) { d.stepItems(layerList->items(d.current()), true); }},
+        {"↓", "Dow&n", [layerList](Document& d) { d.stepItems(layerList->items(d.current()), false); }},
         {"🗑", "&Delete", [](Document& d) { d.deleteLayer(d.current()); }}};
     int layerOpIndex = 0;
     for (const auto& l : layerOps) {
