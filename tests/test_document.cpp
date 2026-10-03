@@ -1673,6 +1673,33 @@ static bool inheritAlphaCutsByWhatIsBelow() {
     return v.paths(1).size() == paths.size() && v.paths(1)[0].nodes.size() == paths[0].nodes.size();
 }
 
+// #536: references live beside the layers; add and replace are one undo step each, preview none, and render() never sees them.
+static bool referencesAreOneUndoStepEachAndNeverRendered() {
+    Document doc(QSize(32, 32));
+    QImage before = doc.render();
+    QImage pic(4, 4, QImage::Format_ARGB32_Premultiplied);
+    pic.fill(Qt::red);
+    Reference r{pic, QTransform::fromTranslate(2, 3), QRectF(0, 0, 4, 4), 0.5};
+    doc.addReference(r);
+    if (doc.references().size() != 1 || doc.references()[0].opacity != 0.5 || doc.render() != before) return false;
+    QTemporaryDir dir;
+    QString png = dir.filePath("a.png");
+    if (!exportPng(doc, png) || QImage(png).convertToFormat(before.format()) != before) return false;
+    Reference moved = r;
+    moved.transform = QTransform::fromTranslate(9, 9);
+    int id = doc.stepId();
+    doc.previewReferences({moved});
+    if (doc.stepId() != id || doc.references()[0].transform != moved.transform) return false;
+    doc.setReferences({r});  // preview ends by restoring, then one replace
+    doc.setReferences({moved});
+    if (doc.stepId() != id + 2 || doc.layerCount() != 1) return false;
+    doc.undo();
+    if (doc.references()[0].transform != r.transform) return false;
+    doc.undo();
+    doc.undo();
+    return doc.references().empty();
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1681,6 +1708,7 @@ int main() {
         failed += !ok;
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
+    run("referencesAreOneUndoStepEachAndNeverRendered", referencesAreOneUndoStepEachAndNeverRendered);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);
     run("inheritAlphaCutsByWhatIsBelow", inheritAlphaCutsByWhatIsBelow);
     run("alphaLockHoldsAlphaUnderPaint", alphaLockHoldsAlphaUnderPaint);

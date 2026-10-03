@@ -4,6 +4,7 @@
 #include <QPainterPath>
 #include <QPointF>
 #include <QString>
+#include <QTransform>
 #include <QSize>
 #include <memory>
 #include <optional>
@@ -15,6 +16,9 @@
 // A Bezier path's node: its point, the handles before (in) and after (out) it, and how editing keeps the handles (#251).
 enum class BezierType { Cusp, Smooth, Symmetric };
 struct BezierNode { QPointF p, in, out; BezierType type; bool operator==(const BezierNode&) const = default; };
+
+// A reference image (#533): the original picture, image pixels to document coordinates, the shown part in image pixels, and its opacity.
+struct Reference { QImage image; QTransform transform; QRectF crop; double opacity = 1; };
 
 class Document {
 public:
@@ -133,6 +137,11 @@ public:
     // Every layer op (add, delete, move, visibility, opacity) is one undo step, in the same history as strokes.
     bool deleteLayer(int layer);
     bool moveLayer(int from, int to);
+    // References, last on top; never layers, never in render(). add and set are one undo step each; preview is none (live drags), finish with set.
+    const std::vector<Reference>& references() const { return refs_; }
+    void addReference(const Reference& r);
+    void setReferences(const std::vector<Reference>& refs);
+    void previewReferences(const std::vector<Reference>& refs) { refs_ = refs; }
     // Each returns false when there is nothing to undo / redo.
     bool undo();
     bool redo();
@@ -145,7 +154,7 @@ private:
     // once later steps are undone), Delete the layer's image in before plus its visible/opacity in a/b, Move the target index in to,
     // Visible, Opacity, AlphaLock and InheritAlpha the old and new value in a and b (Delete keeps both flags in to, lock as bit 0), Name the old and new in na and nb.
     // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path, Knots the old and new Width Knots of one path, Nodes the old and new path in paths[0] and paths[1] (index in to), Rasterize the dropped paths, Paths the old and new list in paths and newPaths.
-    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, AlphaLock, InheritAlpha, PathAdd, Knots, Nodes, Rasterize, Paths };
+    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, AlphaLock, InheritAlpha, PathAdd, Knots, Nodes, Rasterize, Paths, References };
     struct Step {
         Kind kind = Pixels;
         int id = 0;
@@ -156,6 +165,7 @@ private:
         double a = 0, b = 0;
         bool vector = false;
         std::vector<VPath> paths, newPaths;
+        std::vector<Reference> refs, newRefs;  // References: the old and new list
         std::vector<WidthKnot> ka, kb;  // Knots: path index in to, the old and new knots
         QString na, nb;  // Add: the new layer's name (nb unused); Delete: the deleted name in na; Name: old and new
     };
@@ -181,6 +191,7 @@ private:
     static void rasterize(Layer& l);
     std::vector<Layer> layers_;  // bottom to top, never empty
     int current_ = 0;
+    std::vector<Reference> refs_;
     qsizetype budget_;
     std::vector<Step> history_;  // history_[0, applied_) are applied; the rest can be redone
     size_t applied_ = 0;
