@@ -130,27 +130,25 @@ static bool spiroFailsInsteadOfGarbage() {
     return fine && coincident && hairpin;
 }
 
-// The bundled pencil.myb loads, and its "opaque" setting reads back the file's 0.7.
+// The tests' own pencil.myb loads, and its "opaque" setting reads back the file's 0.7.
 static bool bundledPencilLoads() {
-    auto b = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto b = loadBrush(TEST_PENCIL);
     return b && mypaint_brush_get_base_value(b.get(), MYPAINT_BRUSH_SETTING_OPAQUE) == 0.7f;
 }
 
-// The bundled brush list includes pencil, is sorted by name, and every entry loads.
+// The bundled brush list is sorted by name, and every entry loads.
 static bool bundledBrushesListAndLoad() {
     auto list = listBrushes(BRUSH_DIR);
-    bool hasPencil = false;
     for (size_t i = 0; i < list.size(); i++) {
-        hasPencil |= list[i].name == "pencil";
         if (i && !(list[i - 1].name < list[i].name)) return false;
         if (!loadBrush(list[i].path)) return false;
     }
-    return hasPencil && list.size() > 1;
+    return list.size() > 1;
 }
 
 // A recorded pen-sample list (pressure ramping up along a wave) replayed with the pencil renders as the golden.
 static bool replayedPencilStrokeMatchesGolden() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     std::vector<PenSample> samples;
     for (int i = 0; i < 16; i++)
@@ -173,7 +171,7 @@ static bool replayedPencilStrokeMatchesGolden() {
 
 // The same samples fed one call at a time (as live pen events arrive) render as the same golden.
 static bool liveFedPencilStrokeMatchesGolden() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     Document doc(QSize(64, 64));
     for (int i = 0; i < 16; i++)
@@ -191,7 +189,7 @@ static std::vector<PenSample> waveAt(float y) {
 
 // Two strokes, undo twice gives the blank layer; redo brings back the first stroke, redo again the second.
 static bool undoRestoresAndRedoReapplies() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     Document doc(QSize(64, 64));
     QImage blank = doc.render().copy();
@@ -211,7 +209,7 @@ static bool undoRestoresAndRedoReapplies() {
 
 // A stroke after an undo replaces the undone one: redo has nothing, and undo goes back through the new stroke.
 static bool newStrokeAfterUndoDiscardsRedo() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     Document doc(QSize(64, 64));
     QImage blank = doc.render().copy();
@@ -226,7 +224,7 @@ static bool newStrokeAfterUndoDiscardsRedo() {
 
 // Strokes fed one sample per call (live pen input) are still one undo step.
 static bool liveFedStrokeIsOneUndoStep() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     Document doc(QSize(64, 64));
     QImage blank = doc.render().copy();
@@ -237,7 +235,7 @@ static bool liveFedStrokeIsOneUndoStep() {
 
 // With a budget of one byte only the newest step survives: undo reaches the state before it, and no further.
 static bool budgetDropsOldestKeepsNewest() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     Document doc(QSize(64, 64), 1);
     doc.stroke(pencil, waveAt(16));
@@ -248,7 +246,7 @@ static bool budgetDropsOldestKeepsNewest() {
 
 // Undo step ids (#240's dirty marker): 0 when fresh, a new id per edit, undo/redo walk them, a budget drop keeps the current one.
 static bool stepIdsTrackTheHistory() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     Document doc(QSize(64, 64));
     int fresh = doc.stepId();
@@ -275,7 +273,7 @@ static bool stepIdsTrackTheHistory() {
 
 // After the pencil wave, colorAt reads the golden's gray at a painted pixel (53,34), white elsewhere, and invalid off the canvas.
 static bool colorAtReadsCompositePixel() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     Document doc(QSize(64, 64));
     for (int i = 0; i < 16; i++)  // the golden's samples, as in replayedPencilStrokeMatchesGolden
@@ -287,7 +285,7 @@ static bool colorAtReadsCompositePixel() {
 
 // Replaying the pencil wave's samples with the eraser flag lightens the painted stroke (golden), and undo restores the painted-only image.
 static bool eraserStrokeErasesAndUndoes() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     std::vector<PenSample> samples;  // the golden's samples, as in replayedPencilStrokeMatchesGolden
     for (int i = 0; i < 16; i++)
@@ -313,7 +311,7 @@ static bool eraserStrokeErasesAndUndoes() {
 
 // The pencil wave painted after setBrushColor(red) is red at (53,34), where the default gray left 137.
 static bool brushColorPaintsInThatColor() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     setBrushColor(pencil.get(), Qt::red);
     Document doc(QSize(64, 64));
@@ -326,7 +324,7 @@ static bool brushColorPaintsInThatColor() {
 // The pencil wave painted with a larger radius covers more pixels, and with lower opacity is lighter at (53,34), than the default.
 static bool brushRadiusAndOpacityChangeTheStroke() {
     auto render = [](float radius, float opacity) {
-        auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+        auto pencil = loadBrush(TEST_PENCIL);
         if (radius) setBrushRadius(pencil.get(), radius);
         if (opacity) setBrushOpacity(pencil.get(), opacity);
         Document doc(QSize(64, 64));
@@ -346,7 +344,7 @@ static bool brushRadiusAndOpacityChangeTheStroke() {
 
 // Fed as Canvas does (first sample continuing=false, dt 0), a second stroke far from the first leaves the pixels between them white, and is its own undo step.
 static bool secondStrokeDoesNotJoinFirst() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     Document doc(QSize(64, 64));
     auto live = [&](float x0, float y0) {
@@ -461,7 +459,7 @@ static bool fillHonoursAlpha() {
 
 // A stroke on an added layer lands on it alone: hiding it leaves the blank white render, showing it reads the single-layer golden's gray at (53,34).
 static bool strokeLandsOnCurrentLayerOnly() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     Document doc(QSize(64, 64));
     QImage blank = doc.render().copy();
@@ -1600,7 +1598,7 @@ static bool alphaLockFlagIsOneUndoStep() {
 
 // Alpha Lock (#427): stroke, fill and erase on a locked layer recolor but keep every alpha; Delete still clears.
 static bool alphaLockHoldsAlphaUnderPaint() {
-    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
     std::vector<PenSample> samples;
     for (int i = 0; i < 16; i++) samples.push_back({4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 1.f, 0, 0, 0.01});

@@ -21,5 +21,5 @@ target_compile_definitions(mydraw PRIVATE BRUSH_DIR="${CMAKE_SOURCE_DIR}/brushes
 enable_testing()
 add_executable(test_document tests/test_document.cpp)
 target_link_libraries(test_document PRIVATE mydraw_core)
-target_compile_definitions(test_document PRIVATE GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden" BRUSH_DIR="${CMAKE_SOURCE_DIR}/brushes")
+target_compile_definitions(test_document PRIVATE GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden" TEST_PENCIL="${CMAKE_SOURCE_DIR}/tests/pencil.myb" BRUSH_DIR="${CMAKE_SOURCE_DIR}/brushes")
 add_test(NAME document COMMAND test_document)

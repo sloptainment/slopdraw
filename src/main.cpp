@@ -900,14 +900,17 @@ private:
     PenSample raw_{};  // the newest pen sample while smoothing, in document coordinates
     bool smoothErase_ = false, finishLine_ = true;
     QTimer* smoothTimer_ = nullptr;
-    std::shared_ptr<MyPaintBrush> brush_ = loadBrush(BRUSH_DIR "/pencil.myb");
+    std::shared_ptr<MyPaintBrush> brush_ = [] {  // the first brush listed: the Brushes list starts on the same one
+        auto all = listBrushes(BRUSH_DIR);
+        return all.empty() ? nullptr : loadBrush(all[0].path);
+    }();
     ulong lastMs_ = 0;
     QPointF last_;
     QString hint_;
     std::optional<QPoint> origin_;  // canvas top-left in window coordinates, for pinOrigin()
     std::optional<QPointF> cursor_;  // pointer position over the canvas, for the brush outline
     bool dragging_ = false, space_ = false, painting_ = false, resizing_ = false;
-    QColor color_ = Qt::black;  // matches pencil.myb and the Color dock's start
+    QColor color_ = Qt::black;  // the Color dock's start
     QPolygonF lasso_;
     Stabilizer lassoSmooth_;
     bool lassoFinish_ = true;
@@ -1163,7 +1166,7 @@ int main(int argc, char** argv) {
     auto* brushList = new QListWidget;
     auto brushes = listBrushes(BRUSH_DIR);
     for (const auto& b : brushes) brushList->addItem(b.name);
-    brushList->setCurrentRow(std::find_if(brushes.begin(), brushes.end(), [](const BrushEntry& b) { return b.name == "pencil"; }) - brushes.begin());  // matches Canvas's starting brush
+    brushList->setCurrentRow(0);  // matches Canvas's starting brush
     QObject::connect(brushList, &QListWidget::currentRowChanged, [canvas, brushes](int row) { if (row >= 0) canvas->setBrush(brushes[row].path); });
     auto* size = new QSlider(Qt::Horizontal);  // radius in px
     size->setRange(kMinRadius, kMaxRadius);
