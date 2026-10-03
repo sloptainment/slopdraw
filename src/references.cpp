@@ -1,4 +1,5 @@
 #include "references.h"
+#include <algorithm>
 #include <cmath>
 #include <map>
 
@@ -33,4 +34,11 @@ void drawReferences(QPainter& p, const std::vector<Reference>& refs, const QTran
         p.drawImage(QRectF(r.image.rect()), levels[k]);
     }
     p.restore();
+}
+
+QTransform placeReference(QSize image, QSize viewSize, const QTransform& view) {
+    double zoom = std::sqrt(std::abs(view.determinant()));
+    double k = std::min({1.0, viewSize.width() / (image.width() * zoom), viewSize.height() / (image.height() * zoom)});
+    QPointF c = view.inverted().map(QRectF(QPointF(), viewSize).center());
+    return QTransform::fromTranslate(-image.width() / 2.0, -image.height() / 2.0) * QTransform::fromScale(k, k) * QTransform::fromTranslate(c.x(), c.y());
 }

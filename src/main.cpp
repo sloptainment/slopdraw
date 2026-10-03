@@ -1,5 +1,6 @@
 #include "document.h"
 #include "spiropen.h"
+#include "references.h"
 #include "tools.h"
 #include "view.h"
 #include "ora.h"
@@ -136,10 +137,11 @@ public:
     // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_: picks and deletes whole paths), 5 Box Select (boxTool_).
     void setTool(int t) {
         commitFloat();
-        fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4; boxTool_ = t == 5;
+        fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4; boxTool_ = t == 5; referenceTool_ = t == ReferenceTool;
         if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
         if (!spiroTool_) pen_.cancel();
         picked_.clear();
+        refPicks_.clear();
         boxing_ = false;
         unsetCursor();
         update();
@@ -152,7 +154,16 @@ public:
         selected_ = -1;
         nodeSel_.clear();
         picked_.clear();
+        refPicks_.clear();
         box_ = QRect();
+        update();
+        if (onLayersChange) onLayersChange();
+    }
+    // File > Import Reference Image (#539): img centred in the view, fitted if larger, as one undo step; the shell has switched to the Reference tool, and the new one is picked.
+    void importReference(const QImage& img) {
+        commitFloat();
+        s_.doc.addReference({img, placeReference(img.size(), size(), s_.view.matrix()), QRectF(img.rect()), 1});
+        refPicks_ = {int(s_.doc.references().size()) - 1};
         update();
         if (onLayersChange) onLayersChange();
     }
@@ -242,6 +253,15 @@ protected:
         p.setTransform(s_.view.matrix());
         QImage doc = s_.doc.render();
         p.drawImage(0, 0, doc);
+        drawReferences(p, s_.doc.references(), s_.view.matrix());  // above the document image, beyond its edge too (#539)
+        for (int i : refPicks_) {  // the picked references' outlines, dashed
+            const Reference& r = s_.doc.references()[i];
+            p.save();
+            p.resetTransform();
+            p.setPen(QPen(Qt::black, 1, Qt::DashLine));
+            p.drawPolygon((r.transform * s_.view.matrix()).map(QPolygonF(r.crop)));
+            p.restore();
+        }
         if (lasso_.size() > 1) {
             QPainterPath lasso;
             lasso.addPolygon(lasso_);
@@ -313,7 +333,7 @@ protected:
             p.setBrush(Qt::NoBrush);
             p.drawRect(marked);
         }
-        if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) {  // brush outline: dark with a light line beside it, readable on any color
+        if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && !referenceTool_) {  // brush outline: dark with a light line beside it, readable on any color
             p.resetTransform();
             p.setRenderHint(QPainter::Antialiasing);
             double r = s_.view.screenRadius(radius());
@@ -327,9 +347,10 @@ protected:
     void mousePressEvent(QMouseEvent* e) override {
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
-        resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && (e->modifiers() & Qt::ShiftModifier);
+        resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && (e->modifiers() & Qt::ShiftModifier);
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier) && !editKnot(e->position(), e->modifiers())) pickAt(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) return;
+        else if (referenceTool_) return;  // picking and moving come with #542
         else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
         else if (e->button() == Qt::RightButton && objectTool_) flipMenu(e->globalPosition().toPoint());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
@@ -375,8 +396,9 @@ protected:
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
         if (e->type() == QEvent::TabletRelease) { endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
-        else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
+        else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
+        else if (referenceTool_) return;
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); else if (handleDrag_ >= 0) dragHandleTo(e->position()); }
         else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (boxTool_) { if (e->type() == QEvent::TabletPress) boxPress(e->position()); }
@@ -422,6 +444,7 @@ private:
         if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Shift+click the path adds a node · Ctrl+Alt+click deletes";
         if (objectTool_ && rasterBox()) return "Drag inside the box moves the pixels · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts them back";
         if (objectTool_ && !s_.doc.vector(s_.doc.current())) return "Make a rectangle with Box Select first, then Select transforms its pixels";
+        if (referenceTool_) return "File > Import Reference Image adds a picture";
         if (boxTool_ && box_.isEmpty()) return "Drag a rectangle to select pixels";
         if (boxTool_) return "Delete clears the pixels · drag a new rectangle to replace it · click outside or Esc clears the selection";
         if (objectTool_ && picked().empty()) return "Click a path to pick it · Shift+click toggles · drag a box on empty canvas picks the paths it touches";
@@ -946,7 +969,8 @@ private:
     int boxLayer_ = -1;
     int penLayer_ = -1;  // the layer the Spiro Pen's unfinished path was started on
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
-    bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false;
+    bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false, referenceTool_ = false;
+    std::vector<int> refPicks_;  // the Reference tool's picked references, indexes into Document::references()
     double pathWidth_ = 10;  // px
     Document::PaintMode paintMode_ = Document::PaintMode::Stroke;
     QColor penStroke_ = Qt::black, penFill_ = QColor(0x2d, 0x5d, 0x9a);  // the Pen's Stroke and Fill swatches
@@ -1579,16 +1603,17 @@ int main(int argc, char** argv) {
         {"\u2712 Pen", "P"}, // Spiro Pen (P)
         {"\u2316 Node", "N"}, // Node/Knot edit (N)
         {"\u25AD Select", "S"}, // Select (S)
-        {"\u2B1A Box", ""} // Box Select
+        {"\u2B1A Box", ""}, // Box Select
+        {"\U0001F5BC Reference", "R"} // Reference (R, #535)
     };
     int lastTool[2] = {BrushTool, SpiroPenTool};  // last tool used on a Raster, a Vector Layer (#161); Select fits both, so it is no one's last
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         auto* a = toolGroup->addAction(kTools[i].text);
         a->setCheckable(true);
         a->setChecked(i == 0);
         a->setShortcut(QKeySequence(kTools[i].key));
         window.addAction(a);
-        QObject::connect(a, &QAction::triggered, [canvas, i, &lastTool] { canvas->setTool(i); if (i != SelectTool) lastTool[toolFitsKind(true, i)] = i; });
+        QObject::connect(a, &QAction::triggered, [canvas, i, &lastTool] { canvas->setTool(i); if (i != SelectTool && i != ReferenceTool) lastTool[toolFitsKind(true, i)] = i; });
         auto* b = new QToolButton;
         b->setDefaultAction(a);
         b->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -1603,7 +1628,7 @@ int main(int argc, char** argv) {
         for (auto* w : {colorDock->widget(), layerPanel, optionsPanel, navPanel}) w->setEnabled(has);
         for (auto* a : docActions) a->setEnabled(has);
         auto tools = toolGroup->actions();
-        for (int i = 0; i < 6; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i));
+        for (int i = 0; i < 7; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i));
         brushPanel->setEnabled(has && !vec);
         int now = toolForLayer(vec, tools.indexOf(toolGroup->checkedAction()), lastTool[0], lastTool[1]);
         if (!tools[now]->isChecked()) tools[now]->trigger();
@@ -1771,6 +1796,16 @@ int main(int argc, char** argv) {
     fileSaveAs->setShortcut(QKeySequence("Ctrl+Shift+S"));
     QObject::connect(fileSaveAs, &QAction::triggered, [&] {
         saveTo(QFileDialog::getSaveFileName(&window, "Save As", canvas->session().path, "OpenRaster (*.ora)"));
+    });
+    auto* fileImportRef = fileMenu->addAction("Import &Reference Image...");
+    docActions.push_back(fileImportRef);
+    QObject::connect(fileImportRef, &QAction::triggered, [&] {
+        QString path = QFileDialog::getOpenFileName(&window, "Import Reference Image", {}, "PNG (*.png)");
+        if (path.isEmpty()) return;
+        QImage img(path);
+        if (img.isNull()) return void(QMessageBox::warning(&window, "Import Reference Image", "Could not read " + path));
+        toolGroup->actions()[ReferenceTool]->trigger();
+        canvas->importReference(img.convertToFormat(QImage::Format_ARGB32_Premultiplied));
     });
     auto* fileExport = fileMenu->addAction("&Export PNG...");
     docActions.push_back(fileExport);

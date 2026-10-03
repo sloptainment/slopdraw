@@ -1245,6 +1245,17 @@ static bool addNodeSplitsTheSegmentUnderTheClick() {
     return nodes && knots && doc.undo() && doc.nodes(1, 0).size() == 3 && doc.knots(1, 0)[1].t == mid;
 }
 
+// #539: an imported picture lands centred in the view, 1:1 in document pixels when it fits, else scaled down to fit the view.
+static bool importedReferenceFitsTheView() {
+    View v;
+    v.pan({-50, -20});
+    v.zoomAt({0, 0}, 2);  // 400x300 view at 2x: 200x150 document pixels visible, centred on document (150, 95)
+    QTransform small = placeReference(QSize(20, 10), QSize(400, 300), v.matrix());
+    QTransform big = placeReference(QSize(1000, 500), QSize(400, 300), v.matrix());
+    return near(small.map(QPointF(0, 0)), {140, 90}) && near(small.map(QPointF(20, 10)), {160, 100})
+        && near(big.map(QPointF(0, 0)), {50, 45}) && near(big.map(QPointF(1000, 500)), {250, 145});
+}
+
 // A layer switch keeps a tool that fits the new layer's kind, else picks the last tool used on that kind (#161), Brush and Spiro Pen the first time.
 static bool toolFollowsLayerKind() {
     return toolForLayer(false, SpiroPenTool) == BrushTool && toolForLayer(true, BrushTool) == SpiroPenTool
@@ -1253,7 +1264,8 @@ static bool toolFollowsLayerKind() {
         && toolForLayer(false, LassoFillTool) == LassoFillTool && toolForLayer(true, NodeKnotEditTool) == NodeKnotEditTool
         && toolForLayer(false, SelectTool) == SelectTool && toolForLayer(true, SelectTool) == SelectTool  // Select fits both kinds (#221)
         && toolForLayer(false, BoxSelectTool) == BoxSelectTool && toolForLayer(true, BoxSelectTool) == SpiroPenTool  // Box Select fits Raster Layers only (#204)
-        && toolForLayer(true, BoxSelectTool, BrushTool, NodeKnotEditTool) == NodeKnotEditTool;
+        && toolForLayer(true, BoxSelectTool, BrushTool, NodeKnotEditTool) == NodeKnotEditTool
+        && toolForLayer(false, ReferenceTool) == ReferenceTool && toolForLayer(true, ReferenceTool) == ReferenceTool;  // fits every kind (#539)
 }
 
 // A path paints by its mode (#298): Stroke the Power Stroke in color, Fill only the inside in fillColor, Both fill under stroke. An
@@ -1816,6 +1828,7 @@ int main() {
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("oraRoundTripsReferences", oraRoundTripsReferences);
+    run("importedReferenceFitsTheView", importedReferenceFitsTheView);
     run("oraRoundTripsAlphaFlags", oraRoundTripsAlphaFlags);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);
