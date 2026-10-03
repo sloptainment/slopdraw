@@ -1474,6 +1474,18 @@ static bool bezierHandleMovesPerType() {
     return cusp && smooth && sym && live;
 }
 
+// Retyping Bezier nodes keeps the out handle (or the in, when out sits on the point) and turns the other to match (#314).
+static bool bezierRetypeAlignsHandles() {
+    std::vector<BezierNode> n = {{{50, 50}, {40, 40}, {60, 50}, BezierType::Cusp}, {{90, 50}, {80, 50}, {90, 50}, BezierType::Cusp}};
+    auto s = retypeBezier(n, {0}, BezierType::Smooth);
+    bool smooth = s[0].type == BezierType::Smooth && s[0].out == QPointF(60, 50) && std::abs(s[0].in.x() - (50 - std::sqrt(200.0))) < 1e-9
+        && std::abs(s[0].in.y() - 50) < 1e-9 && s[1].type == BezierType::Cusp;
+    auto y = retypeBezier(n, {0, 1}, BezierType::Symmetric);
+    bool sym = y[0].in == QPointF(40, 50) && y[1].in == QPointF(80, 50) && y[1].out == QPointF(100, 50) && y[1].type == BezierType::Symmetric;
+    auto c = retypeBezier(n, {0}, BezierType::Cusp);
+    return smooth && sym && c[0].in == QPointF(40, 40);
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1484,6 +1496,7 @@ int main() {
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("bezierNodesDragWithHandles", bezierNodesDragWithHandles);
     run("bezierHandleMovesPerType", bezierHandleMovesPerType);
+    run("bezierRetypeAlignsHandles", bezierRetypeAlignsHandles);
     run("penPaintModeGoesOnNextPath", penPaintModeGoesOnNextPath);
     run("penFillSwatchGoesOnNextPath", penFillSwatchGoesOnNextPath);
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);

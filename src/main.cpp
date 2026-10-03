@@ -113,7 +113,21 @@ public:
     // Node/Knot edit's picker: retypes the selected nodes (one undo step); the pen's type is left alone.
     void retypeSelected(SpiroType t) {
         editType_ = t;
-        if (selectTool_ && selected_ >= 0 && !nodeSel_.empty()) editNodes(retypeNodes(s_.doc.nodes(s_.doc.current(), selected_), nodeSel_, t));
+        if (selectTool_ && selected_ >= 0 && !nodeSel_.empty() && !bezierSelected()) editNodes(retypeNodes(s_.doc.nodes(s_.doc.current(), selected_), nodeSel_, t));
+    }
+    // Its Bezier list (#314): retypes the selected Bezier nodes, turning their handles to suit, as one setPaths step.
+    void retypeSelected(BezierType t) {
+        if (!bezierSelected() || nodeSel_.empty()) return;
+        auto paths = s_.doc.paths(s_.doc.current());
+        paths[selected_].bezier = retypeBezier(paths[selected_].bezier, nodeSel_, t);
+        s_.doc.setPaths(s_.doc.current(), paths);
+        update();
+    }
+    bool editingNodes() const { return selectTool_; }
+    // Node/Knot edit has a Bezier path selected, so the picker lists cusp/smooth/symmetric.
+    bool bezierSelected() const {
+        if (!selectTool_ || selected_ < 0 || selected_ >= int(s_.doc.paths(s_.doc.current()).size())) return false;
+        return s_.doc.paths(s_.doc.current())[selected_].kind == Document::PathKind::Bezier;
     }
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
     std::function<void()> onPaint;  // fired on every repaint, so the Navigation rectangle follows any view change
@@ -1365,6 +1379,10 @@ int main(int argc, char** argv) {
     penTypes->setCurrentRow(2);  // G2, SpiroPen's starting type
     QObject::connect(penTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->setNodeType(kNodeTypes[row].type); });
     QObject::connect(editTypes, &QListWidget::currentRowChanged, [canvas](int row) { if (row >= 0) canvas->retypeSelected(kNodeTypes[row].type); });
+    auto* bezierTypes = new QListWidget;  // Node/Knot edit's list when a Bezier path is selected (#314)
+    const BezierType kBezierTypes[] = {BezierType::Cusp, BezierType::Smooth, BezierType::Symmetric};
+    bezierTypes->addItems({"Cusp", "Smooth", "Symmetric"});
+    QObject::connect(bezierTypes, &QListWidget::currentRowChanged, [canvas, kBezierTypes](int row) { if (row >= 0) canvas->retypeSelected(kBezierTypes[row]); });
     auto* scaleWidths = new QCheckBox("Scale widths");  // Select's, off by default (#203)
     QObject::connect(scaleWidths, &QCheckBox::toggled, [canvas](bool on) { canvas->setScaleWidths(on); });
     auto showOptions = [=](int tool) {
@@ -1379,7 +1397,8 @@ int main(int argc, char** argv) {
         nameColorDock(tool);
         curveBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
         penTypes->setVisible(tool == SpiroPenTool && !canvas->bezier());
-        editTypes->setVisible(tool == NodeKnotEditTool);
+        editTypes->setVisible(tool == NodeKnotEditTool && !canvas->bezierSelected());
+        bezierTypes->setVisible(tool == NodeKnotEditTool && canvas->bezierSelected());
     };
     // Select shows its picks' Width, Paint and colors, "mixed" where they differ; no pick shows the Pen's next path (#303).
     auto showPicks = [=] {
@@ -1412,7 +1431,11 @@ int main(int argc, char** argv) {
     showOptions(BrushTool);
     auto onPaintBefore = canvas->onPaint;
     // ponytail: re-reads the picks on every repaint; a pick-changed signal if drags ever stutter
-    canvas->onPaint = [=] { onPaintBefore(); if (canvas->selecting()) showPicks(); };
+    canvas->onPaint = [=] {
+        onPaintBefore();
+        if (canvas->selecting()) showPicks();
+        if (canvas->editingNodes()) editTypes->setVisible(!canvas->bezierSelected()), bezierTypes->setVisible(canvas->bezierSelected());
+    };
     auto* optionsPanel = new QWidget;
     auto* optionsCol = new QVBoxLayout(optionsPanel);
     optionsCol->addWidget(eraseBox);
@@ -1425,6 +1448,7 @@ int main(int argc, char** argv) {
     optionsCol->addWidget(scaleWidths);
     optionsCol->addWidget(penTypes);
     optionsCol->addWidget(editTypes);
+    optionsCol->addWidget(bezierTypes);
     auto* optionsDock = new QDockWidget("Tool Options", &window);
     optionsDock->setWidget(optionsPanel);
     window.addDockWidget(Qt::RightDockWidgetArea, optionsDock);

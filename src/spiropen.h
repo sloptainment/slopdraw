@@ -88,6 +88,19 @@ inline std::vector<SpiroNode> retypeNodes(std::vector<SpiroNode> nodes, const st
     return nodes;
 }
 
+// The Bezier nodes with those at the selected indexes set to type t (Node/Knot edit picker, #314): the out handle (the in one if out
+// sits on the point) stays, and moveHandle turns the other to suit, collinear for Smooth, mirrored for Symmetric.
+inline std::vector<BezierNode> retypeBezier(std::vector<BezierNode> nodes, const std::set<int>& selected, BezierType t) {
+    for (int i : selected)
+        if (i >= 0 && i < int(nodes.size())) {
+            auto& n = nodes[i];
+            n.type = t;
+            bool out = n.out != n.p;
+            n = moveHandle(n, out, out ? n.out : n.in);
+        }
+    return nodes;
+}
+
 // The path with every node mapped through m (Transform box, #229); types, closed and knot positions stay as they were. Knot widths
 // do too, unless scaleWidths: then each is scaled by sqrt(|det m|) (#203).
 inline Document::VPath transformNodes(Document::VPath p, const QTransform& m, bool scaleWidths = false) {
