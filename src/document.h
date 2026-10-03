@@ -111,6 +111,8 @@ public:
     static QPainterPath outline(const VPath& v);
     // The curve the path's fill covers (open paths close by a straight line when filled).
     static QPainterPath curve(const VPath& v);
+    // The same path as a Bezier path (#316): one node per skeleton cubic join, Smooth where its handles are collinear, else Cusp. Knots kept.
+    static VPath toBezier(const VPath& v);
     // For loading: makes a layer (already restored) a Vector Layer with these paths and redraws it. Drops the undo history.
     void restorePaths(int layer, const std::vector<VPath>& paths);
     const QImage& image(int layer) const { return layers_[layer].image; }

@@ -331,6 +331,30 @@ void Document::rasterize(Layer& l) {
 
 QPainterPath Document::curve(const VPath& v) { return curveOf(v); }
 
+Document::VPath Document::toBezier(const VPath& v) {
+    std::vector<Cubic> sk = skeletonOf(v);
+    size_t n = sk.size() + !v.closed;
+    VPath b = v;
+    b.kind = PathKind::Bezier;
+    b.nodes.clear();
+    b.bezier.clear();
+    for (size_t i = 0; i < n; i++) {
+        bool first = i == 0 && !v.closed, last = i == sk.size();
+        const Cubic& next = sk[i % sk.size()];
+        const Cubic& prev = sk[(i + sk.size() - 1) % sk.size()];
+        QPointF p = last ? prev[3] : next[0];
+        BezierNode node{p, last || !first ? prev[2] : p, first || !last ? next[1] : p, BezierType::Cusp};
+        if (first) node.in = p;
+        if (last) node.out = p;
+        // a handle sitting on its point (a line) points along the segment instead
+        QPointF a = p - (node.in == p ? prev[0] : node.in), c = (node.out == p ? next[3] : node.out) - p;
+        if (!first && !last && std::abs(a.x() * c.y() - a.y() * c.x()) < 1e-9 * std::hypot(a.x(), a.y()) * std::hypot(c.x(), c.y()) && QPointF::dotProduct(a, c) > 0)
+            node.type = BezierType::Smooth;
+        b.bezier.push_back(node);
+    }
+    return b;
+}
+
 QPainterPath Document::outline(const VPath& v) {
     return expandPowerStroke(skeletonOf(v), v.closed, v.knots);
 }

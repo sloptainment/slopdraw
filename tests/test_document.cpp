@@ -1380,8 +1380,22 @@ static bool transformNodesMapsBezierHandles() {
     return mapped && kept && f.p == QPointF(90, 20) && f.in == QPointF(99, 0) && f.out == QPointF(100, 1);
 }
 
+// Spiro -> Bezier (#316): a path with a Corner converts to a Bezier path with the same outline and the same knots; the Corner
+// node is a Cusp, a G2 node in the middle of the arc is Smooth.
+static bool toBezierKeepsOutlineAndKnots() {
+    Document::VPath v{{{10, 50, SpiroType::Corner}, {30, 10, SpiroType::G2}, {50, 50, SpiroType::G2}, {70, 10, SpiroType::Corner}}, false, Qt::black, 4, {{0, 4}, {1.5, 9}, {6, 4}}};
+    Document::VPath b = Document::toBezier(v);
+    bool same = b.kind == Document::PathKind::Bezier && b.nodes.empty() && Document::outline(b) == Document::outline(v) && Document::curve(b) == Document::curve(v);
+    bool knots = b.knots.size() == 3 && b.knots[1].t == 1.5 && b.knots[1].width == 9 && b.knots[2].t == 6;
+    bool types = !b.bezier.empty() && b.bezier.front().type == BezierType::Cusp && b.bezier.back().type == BezierType::Cusp;
+    int cusps = 0;
+    for (const auto& n : b.bezier) cusps += n.type == BezierType::Cusp;
+    return same && knots && types && cusps >= 2 && cusps < int(b.bezier.size());
+}
+
 int main() {
     run("transformNodesMapsBezierHandles", transformNodesMapsBezierHandles);
+    run("toBezierKeepsOutlineAndKnots", toBezierKeepsOutlineAndKnots);
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
         bool ok = fn();
