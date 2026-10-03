@@ -1517,10 +1517,10 @@ static bool bezierRetypePullsCollapsedHandles() {
     return closed && open && k[0].out == QPointF(0, 0) && k[0].in == QPointF(0, 0);
 }
 
-// A Width Knot drag moves its point by a quarter of the pointer's motion, with no jump on press (#374).
+// A Width Knot drag moves its point by an eighth of the pointer's motion, with no jump on press (#374).
 static bool knotDragIsScaled() {
     if (knotDragTarget({10, 10}, {100, 50}, {100, 50}) != QPointF(10, 10)) return false;
-    return knotDragTarget({10, 10}, {100, 50}, {140, 30}) == QPointF(20, 5);
+    return knotDragTarget({10, 10}, {100, 50}, {140, 30}) == QPointF(15, 7.5);
 }
 
 int main() {

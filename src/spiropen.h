@@ -60,8 +60,8 @@ inline std::vector<SpiroNode> moveNodes(std::vector<SpiroNode> nodes, const std:
     return nodes;
 }
 
-// A Width Knot drag moves its point by a quarter of the pointer's motion since the press, for fine width/t control (#374).
-inline constexpr double kKnotDragScale = 0.25;
+// A Width Knot drag moves its point by an eighth of the pointer's motion since the press, for fine width/t control (#374).
+inline constexpr double kKnotDragScale = 0.125;
 inline QPointF knotDragTarget(QPointF knotStart, QPointF press, QPointF pointer) { return knotStart + (pointer - press) * kKnotDragScale; }
 
 // The node with its out (or in) handle dragged to `to` (#313): a Smooth node turns the other handle opposite, keeping its length;

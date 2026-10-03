@@ -740,7 +740,7 @@ private:
         update();
         return true;
     }
-    // The dragged knot follows a quarter of the pointer's motion live (no undo step yet).
+    // The dragged knot follows an eighth of the pointer's motion live (no undo step yet).
     void dragKnotTo(QPointF pos) {
         preview_ = [=, this] {
             auto k = s_.doc.projectKnot(s_.doc.current(), selected_, knotDragTarget(knotStart_, knotPress_, s_.view.toDoc(pos)));
