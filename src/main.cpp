@@ -27,6 +27,7 @@
 #include <QToolButton>
 #include <QActionGroup>
 #include <QSlider>
+#include <QRadioButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
 #include <QMainWindow>
@@ -117,6 +118,9 @@ public:
     void setLassoOpacity(float o) { lassoOpacity_ = o; }
     void setBucketOpacity(float o) { bucketOpacity_ = o; }  // Bucket Fill's own Opacity and Threshold, apart from Lasso Fill's (#607)
     void setBucketThreshold(int t) { bucketThreshold_ = t; }
+    void setBucketExpand(int px) { bucketExpand_ = px; }  // Expand/shrink, Sample merged and Antialiased, passed to the core fill (#608)
+    void setBucketMerged(bool on) { bucketMerged_ = on; }
+    void setBucketAntialiased(bool on) { bucketAA_ = on; }
     void setSmoothing(int n) { smooth_.n = n; }  // the Brush's Stabilizer, 0 = off (#292)  // Lasso Fill's own, apart from the Brush's (#213)
     void setFinishLine(bool on) { finishLine_ = on; }
     void setLassoSmoothing(int n) { lassoSmooth_.n = n; }  // Lasso Fill's own Stabilizer, apart from the Brush's (#261)
@@ -1229,7 +1233,7 @@ private:
         QPointF d = s_.view.toDoc(pos);
         QColor c = color_;
         c.setAlphaF(bucketOpacity_);
-        s_.doc.bucketFill({int(std::floor(d.x())), int(std::floor(d.y()))}, c, bucketThreshold_, 0, true, true, eraseBucket_);
+        s_.doc.bucketFill({int(std::floor(d.x())), int(std::floor(d.y()))}, c, bucketThreshold_, bucketExpand_, bucketAA_, bucketMerged_, eraseBucket_);
         update();
     }
     void endLasso() {
@@ -1361,7 +1365,8 @@ private:
     QColor penStroke_ = Qt::black, penFill_ = QColor(0x2d, 0x5d, 0x9a);  // the Pen's Stroke and Fill swatches
     bool fillActive_ = false;
     float lassoOpacity_ = 1, bucketOpacity_ = 1;
-    int bucketThreshold_ = 15;
+    int bucketThreshold_ = 15, bucketExpand_ = 0;
+    bool bucketMerged_ = true, bucketAA_ = true;
     float otherRadius_ = radius(), otherOpacity_ = opacity();  // the Brush's Size and Opacity for the mode it isn't in
     bool fillTool_ = false, bucketTool_ = false, eraseBucket_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
 };
@@ -1943,6 +1948,24 @@ int main(int argc, char** argv) {
     bucketOpacityRow->addWidget(bucketOpacity);
     bucketOpacityRow->addWidget(bucketOpacityValue);
     bucketCol->addLayout(bucketOpacityRow);
+    auto* expandRow = new QHBoxLayout;
+    auto* expand = new QSpinBox;  // px, negative shrinks
+    expand->setRange(-100, 100);
+    expand->setSuffix(" px");
+    QObject::connect(expand, &QSpinBox::valueChanged, [canvas](int v) { canvas->setBucketExpand(v); });
+    expandRow->addWidget(new QLabel("Expand/shrink"));
+    expandRow->addWidget(expand);
+    bucketCol->addLayout(expandRow);
+    auto* sampleCurrent = new QRadioButton("Sample current only");
+    auto* sampleMerged = new QRadioButton("Sample merged");
+    sampleMerged->setChecked(true);
+    QObject::connect(sampleMerged, &QRadioButton::toggled, [canvas](bool on) { canvas->setBucketMerged(on); });
+    bucketCol->addWidget(sampleCurrent);
+    bucketCol->addWidget(sampleMerged);
+    auto* bucketAA = new QCheckBox("Antialiased");
+    bucketAA->setChecked(true);
+    QObject::connect(bucketAA, &QCheckBox::toggled, [canvas](bool on) { canvas->setBucketAntialiased(on); });
+    bucketCol->addWidget(bucketAA);
     auto* refBox = new QWidget;  // the Reference tool's picks' Opacity (#544), shown only with picks
     auto* refRow = new QHBoxLayout(refBox);
     refRow->setContentsMargins(0, 0, 0, 0);
