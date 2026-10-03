@@ -133,15 +133,28 @@ bool Document::setKnots(int layer, int path, const std::vector<WidthKnot>& knots
     return true;
 }
 
+// A Bezier path takes Spiro-style node positions (#310): each node moves to its new point and its handles move with it.
+// False, changing nothing, unless there is one position per node.
+static bool placeBezier(Document::VPath& v, const std::vector<SpiroNode>& nodes) {
+    if (nodes.size() != v.bezier.size()) return false;
+    for (size_t i = 0; i < nodes.size(); i++) {
+        QPointF d = QPointF(nodes[i].x, nodes[i].y) - v.bezier[i].p;
+        v.bezier[i].p += d, v.bezier[i].in += d, v.bezier[i].out += d;
+    }
+    return true;
+}
+
 bool Document::setNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed, const std::vector<WidthKnot>& knots) {
-    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size()) || !spiroToPath(nodes, closed)) return false;
+    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size())) return false;
+    VPath after = layers_[layer].paths[path];
+    if (after.kind == PathKind::Bezier ? !placeBezier(after, nodes) : !spiroToPath(nodes, closed)) return false;
     seal();
     Step s;
     s.kind = Nodes;
     s.layer = layer;
     s.to = path;
-    s.paths = {layers_[layer].paths[path], layers_[layer].paths[path]};
-    s.paths[1].nodes = nodes;
+    s.paths = {layers_[layer].paths[path], after};
+    if (after.kind == PathKind::Spiro) s.paths[1].nodes = nodes;
     s.paths[1].closed = closed;
     if (!knots.empty()) s.paths[1].knots = knots;
     push(s);
@@ -198,7 +211,11 @@ std::vector<int> Document::pathsIn(int layer, const QRectF& box) const {
 
 std::vector<SpiroNode> Document::nodes(int layer, int path) const {
     if (layer < 0 || layer >= int(layers_.size()) || path < 0 || path >= int(layers_[layer].paths.size())) return {};
-    return layers_[layer].paths[path].nodes;
+    const VPath& v = layers_[layer].paths[path];
+    if (v.kind == PathKind::Spiro) return v.nodes;
+    std::vector<SpiroNode> ns;  // a Bezier path's points, for the Node drag (#310)
+    for (const auto& b : v.bezier) ns.push_back({b.p.x(), b.p.y(), SpiroType::Corner});
+    return ns;
 }
 
 int Document::nodeAt(int layer, int path, QPointF p, double tol) const {
@@ -307,8 +324,10 @@ void Document::previewKnots(int layer, int path, const std::vector<WidthKnot>& k
 }
 
 void Document::previewNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed) {
-    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size()) || !spiroToPath(nodes, closed)) return;
-    layers_[layer].paths[path].nodes = nodes;
+    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size())) return;
+    VPath& v = layers_[layer].paths[path];
+    if (v.kind == PathKind::Bezier ? !placeBezier(v, nodes) : !spiroToPath(nodes, closed)) return;
+    if (v.kind == PathKind::Spiro) v.nodes = nodes;
     layers_[layer].paths[path].closed = closed;
     rasterize(layers_[layer]);
 }

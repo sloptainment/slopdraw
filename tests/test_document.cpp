@@ -1430,6 +1430,28 @@ static bool toBezierKeepsOutlineAndKnots() {
     return same && knots && types && cusps >= 2 && cusps < int(b.bezier.size());
 }
 
+// Node/Knot edit on a Bezier path (#310): nodes() are its points, so the Node drag finds them; moving node 1 by (5,-3) through
+// previewNodes then (restored) setNodes moves its in/out handles by (5,-3) too, node 0 stays, one undo step puts it back, and a knot still adds.
+static bool bezierNodesDragWithHandles() {
+    Document doc(QSize(100, 100));
+    int l = doc.addVectorLayer();
+    Document::VPath v{{}, false, Qt::black, 4, {{0, 4}, {1, 4}}, Document::PathKind::Bezier};
+    v.bezier = {{{10, 50}, {10, 50}, {30, 30}, BezierType::Cusp}, {{70, 50}, {60, 30}, {80, 70}, BezierType::Symmetric}};
+    doc.restorePaths(l, {v});
+    auto n = doc.nodes(l, 0);
+    if (n.size() != 2 || doc.nodeAt(l, 0, {70, 51}, 3) != 1) return false;
+    auto moved = moveNodes(n, {1}, {5, -3});
+    doc.previewNodes(l, 0, moved, false);
+    doc.previewNodes(l, 0, n, false);  // as endNodeDrag: back to the start, then one step
+    if (!doc.setNodes(l, 0, moved, false)) return false;
+    const auto& b = doc.paths(l)[0];
+    bool after = b.nodes.empty() && b.bezier[1].p == QPointF(75, 47) && b.bezier[1].in == QPointF(65, 27) && b.bezier[1].out == QPointF(85, 67)
+        && b.bezier[0].p == QPointF(10, 50) && b.bezier[0].out == QPointF(30, 30);
+    doc.undo();
+    bool undone = doc.paths(l)[0].bezier[1].p == QPointF(70, 50) && doc.paths(l)[0].bezier[1].in == QPointF(60, 30);
+    return after && undone && doc.addKnot(l, 0, {40, 45}) && doc.knots(l, 0).size() == 3;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1438,6 +1460,7 @@ int main() {
         failed += !ok;
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
+    run("bezierNodesDragWithHandles", bezierNodesDragWithHandles);
     run("penPaintModeGoesOnNextPath", penPaintModeGoesOnNextPath);
     run("penFillSwatchGoesOnNextPath", penFillSwatchGoesOnNextPath);
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);

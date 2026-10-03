@@ -406,7 +406,7 @@ private:
             if (!nodeSel_.count(n)) nodeSel_ = {n};
             nodeDrag_ = true;
             nodeStart_ = s_.view.toDoc(pos);
-            pathBefore_ = s_.doc.paths(s_.doc.current())[selected_];
+            pathBefore_ = {s_.doc.nodes(s_.doc.current(), selected_), s_.doc.paths(s_.doc.current())[selected_].closed};  // nodes(), so a Bezier path's points (#310)
         }
         update();
     }
@@ -791,7 +791,7 @@ private:
     std::vector<WidthKnot> knotsBefore_;  // the selected path's knots when the drag began
     bool nodeDrag_ = false;  // a Spiro Node drag is under way
     QPointF nodeStart_;  // where it began, in document coordinates
-    Document::VPath pathBefore_;  // the selected path when it began
+    Document::VPath pathBefore_;  // the selected path's nodes and closed when it began
     std::set<int> nodeSel_;  // selected Spiro Node indexes of the selected path
     std::set<int> picked_;  // Select's picked path indexes on layer pickedLayer_
     int pickedLayer_ = -1;
