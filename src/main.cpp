@@ -189,6 +189,40 @@ public:
         brush_ = b;
     }
 
+    // A 1px line of path (doc coordinates) in the inverse of what's behind it; near mid grey, where the inverse is the same grey, it goes black.
+    void drawInverted(QPainter& p, const QImage& doc, const QPainterPath& path) {
+        QImage mask(size(), QImage::Format_Alpha8);
+        mask.fill(0);
+        QPainter m(&mask);
+        m.setTransform(s_.view.matrix());
+        QPen pen(Qt::black, 1);
+        pen.setCosmetic(true);
+        m.setPen(pen);
+        m.drawPath(path);
+        m.end();
+        QImage out(size(), QImage::Format_ARGB32_Premultiplied);
+        out.fill(Qt::transparent);
+        QTransform inv = s_.view.matrix().inverted();
+        QColor bg = palette().window().color();  // shows through transparent canvas
+        for (int y = 0; y < mask.height(); y++)
+            for (int x = 0; x < mask.width(); x++) {
+                int a = mask.constScanLine(y)[x];
+                if (!a) continue;
+                QPointF d = inv.map(QPointF(x + 0.5, y + 0.5));
+                QPoint dp(std::floor(d.x()), std::floor(d.y()));
+                QColor c = doc.rect().contains(dp) ? doc.pixelColor(dp) : bg;
+                double ca = c.alphaF();
+                int r = c.red() * ca + bg.red() * (1 - ca), g = c.green() * ca + bg.green() * (1 - ca), b = c.blue() * ca + bg.blue() * (1 - ca);
+                bool mid = std::abs(r - 128) < 40 && std::abs(g - 128) < 40 && std::abs(b - 128) < 40;  // inverse too close to see: go darker
+                QColor o = mid ? QColor(0, 0, 0) : QColor(255 - r, 255 - g, 255 - b);
+                out.setPixel(x, y, qPremultiply(qRgba(o.red(), o.green(), o.blue(), a)));
+            }
+        p.save();
+        p.resetTransform();
+        p.drawImage(0, 0, out);
+        p.restore();
+    }
+
 protected:
     void paintEvent(QPaintEvent*) override {
         if (boxLayer_ != s_.doc.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
@@ -206,12 +240,12 @@ protected:
         }
         p.setRenderHint(QPainter::SmoothPixmapTransform);
         p.setTransform(s_.view.matrix());
-        p.drawImage(0, 0, s_.doc.render());
+        QImage doc = s_.doc.render();
+        p.drawImage(0, 0, doc);
         if (lasso_.size() > 1) {
-            QPen pen(Qt::gray, 1);
-            pen.setCosmetic(true);
-            p.setPen(pen);
-            p.drawPolyline(lasso_.data(), lasso_.size());  // the layer is untouched until pen-up
+            QPainterPath lasso;
+            lasso.addPolygon(lasso_);
+            drawInverted(p, doc, lasso);  // the layer is untouched until pen-up
         }
         if (spiroTool_ && !pen_.nodes.empty()) {  // the path so far, plus a node under the pointer that a click would place
             auto nodes = pen_.nodes;
@@ -223,13 +257,7 @@ protected:
                 if (nodes.size() > v.bezier.size()) v.bezier.push_back({{nodes.back().x, nodes.back().y}, {nodes.back().x, nodes.back().y}, {nodes.back().x, nodes.back().y}, BezierType::Cusp});
                 path = Document::curve(v);
             } else path = spiroToPath(nodes, false);
-            if (path) {
-                QPen pen(Qt::gray, 1);
-                pen.setCosmetic(true);
-                p.setPen(pen);
-                p.setBrush(Qt::NoBrush);
-                p.drawPath(*path);
-            }
+            if (path) drawInverted(p, doc, *path);
             QPen pen(Qt::blue, 1);
             pen.setCosmetic(true);
             p.setPen(pen);
