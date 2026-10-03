@@ -549,7 +549,7 @@ void Document::stroke(const std::shared_ptr<MyPaintBrush>& brush, const std::vec
         history_.resize(applied_);  // a new edit discards the redo branch
         strokeStart_ = layers_[current_].image;
     }
-    paintStroke(brush.get(), layers_[current_].image, samples, continuing, eraser);
+    paintStroke(brush.get(), layers_[current_].image, samples, continuing, eraser, layers_[current_].alphaLock);
 }
 
 void Document::fill(const QColor& color, const std::vector<QPointF>& points, bool eraser) {
@@ -563,6 +563,7 @@ void Document::fill(const QColor& color, const std::vector<QPointF>& points, boo
     QPainter p(&layers_[current_].image);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
+    if (layers_[current_].alphaLock) p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
     p.fillPath(path, eraser ? QColor(255, 255, 255, color.alpha()) : color);
     p.end();
     seal();  // its own step, so a live stroke after it starts fresh

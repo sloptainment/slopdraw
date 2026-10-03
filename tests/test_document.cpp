@@ -1583,6 +1583,34 @@ static bool alphaLockFlagIsOneUndoStep() {
     return doc.alphaLock(1);
 }
 
+// Alpha Lock (#427): stroke, fill and erase on a locked layer recolor but keep every alpha; Delete still clears.
+static bool alphaLockHoldsAlphaUnderPaint() {
+    auto pencil = loadBrush(BRUSH_DIR "/pencil.myb");
+    if (!pencil) return false;
+    std::vector<PenSample> samples;
+    for (int i = 0; i < 16; i++) samples.push_back({4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 1.f, 0, 0, 0.01});
+    const std::vector<QPointF> across = {{20, 10}, {44, 10}, {44, 54}, {20, 54}};  // straddles the opaque edge at x=32
+    auto alphas = [](const QImage& im) {
+        QImage a(im.size(), QImage::Format_Grayscale8);
+        for (int y = 0; y < im.height(); y++)
+            for (int x = 0; x < im.width(); x++) a.scanLine(y)[x] = im.constScanLine(y)[4 * x + 3];
+        return a;
+    };
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.fill(Qt::red, {{0, 0}, {32, 0}, {32, 64}, {0, 64}});  // opaque left half, transparent right
+    QImage before = alphas(doc.image(1));
+    doc.setAlphaLock(1, true);
+    doc.stroke(pencil, samples);
+    bool strokeOk = alphas(doc.image(1)) == before && doc.image(1).pixelColor(30, 27) != QColor(255, 0, 0);
+    doc.fill(Qt::blue, across);
+    bool fillOk = alphas(doc.image(1)) == before && doc.image(1).pixelColor(24, 30).blue() > 200 && doc.image(1).pixelColor(40, 30).alpha() == 0;
+    doc.fill(Qt::black, across, true);
+    bool eraseOk = alphas(doc.image(1)) == before && doc.image(1).pixelColor(24, 30).red() > 250;
+    bool deleteOk = doc.clearRect(QRect(0, 0, 64, 64)) && doc.image(1).pixelColor(10, 10).alpha() == 0;
+    return strokeOk && fillOk && eraseOk && deleteOk;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1592,6 +1620,7 @@ int main() {
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);
+    run("alphaLockHoldsAlphaUnderPaint", alphaLockHoldsAlphaUnderPaint);
     run("bezierNodesDragWithHandles", bezierNodesDragWithHandles);
     run("bezierHandleMovesPerType", bezierHandleMovesPerType);
     run("bezierRetypeAlignsHandles", bezierRetypeAlignsHandles);

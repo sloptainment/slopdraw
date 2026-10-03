@@ -28,7 +28,8 @@ struct PenSample {
 
 // Replays samples through brush onto an RGBA8888 image (the Raster Layer), one mypaint_brush_stroke_to per sample.
 // continuing = true carries on the brush's current stroke instead of starting a new one.
-void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample>& samples, bool continuing = false, bool eraser = false);
+// alphaLock = true recolors pixels but keeps every alpha, so pixels with alpha 0 stay untouched.
+void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample>& samples, bool continuing = false, bool eraser = false, bool alphaLock = false);
 
 // Sets the brush's base radius in document pixels (libmypaint stores its natural log) and opacity (0..1) for the strokes painted after.
 void setBrushRadius(MyPaintBrush* brush, float radius);

@@ -27,7 +27,7 @@ namespace {
 // eraser blends dabs toward white instead of their color (#79; transparent once #44's layers exist).
 struct ImageSurface : MyPaintSurface {
     QImage* img;
-    bool eraser;
+    bool eraser, alphaLock;
 };
 
 // Calls fn(pixel, opacity) for each pixel the dab covers, with libmypaint's hardness falloff (brushmodes.c).
@@ -52,10 +52,15 @@ void forEachDabPixel(QImage& img, float x, float y, float radius, float hardness
 
 int drawDab(MyPaintSurface* s, float x, float y, float radius, float r, float g, float b, float opaque, float hardness,
             float, float aspect, float angle, float, float) {
-    const bool eraser = static_cast<ImageSurface*>(s)->eraser;
+    const bool eraser = static_cast<ImageSurface*>(s)->eraser, lock = static_cast<ImageSurface*>(s)->alphaLock;
     const float rgb[3] = {eraser ? 1 : r, eraser ? 1 : g, eraser ? 1 : b};
     forEachDabPixel(*static_cast<ImageSurface*>(s)->img, x, y, radius, hardness, aspect, angle, [&](uchar* p, float opa) {
         const float a = opa * opaque;
+        if (lock) {  // source-atop: destination alpha stays
+            if (p[3] == 0) return;
+            for (int c = 0; c < 3; c++) p[c] = uchar(std::lround(a * rgb[c] * 255 + (1 - a) * p[c]));
+            return;
+        }
         const float dstA = p[3] / 255.f, outA = a + (1 - a) * dstA;  // non-premultiplied source-over, so a transparent layer takes paint
         if (outA <= 0) return;
         for (int c = 0; c < 3; c++) p[c] = uchar(std::lround((a * rgb[c] * 255 + (1 - a) * dstA * p[c]) / outA));
@@ -75,7 +80,7 @@ void getColor(MyPaintSurface* s, float x, float y, float radius, float* r, float
 
 }  // namespace
 
-void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample>& samples, bool continuing, bool eraser) {
+void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample>& samples, bool continuing, bool eraser, bool alphaLock) {
     ImageSurface s;
     s.draw_dab = drawDab;
     s.get_color = getColor;
@@ -86,6 +91,7 @@ void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample
     s.refcount = 1;
     s.img = &layer;
     s.eraser = eraser;
+    s.alphaLock = alphaLock;
     if (!continuing) {
         mypaint_brush_reset(brush);
         mypaint_brush_new_stroke(brush);
