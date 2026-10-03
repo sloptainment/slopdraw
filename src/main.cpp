@@ -335,7 +335,7 @@ protected:
         else s_.view.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
+    void mouseReleaseEvent(QMouseEvent*) override { endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
@@ -345,7 +345,7 @@ protected:
         if (e->button() == Qt::MiddleButton && e->type() != QEvent::TabletMove) { dragging_ = e->type() == QEvent::TabletPress; last_ = e->position(); return; }  // barrel button pans like the mouse's middle button
         if (dragging_) return panZoom(e->position(), e->modifiers());
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
-        if (e->type() == QEvent::TabletRelease) { endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
+        if (e->type() == QEvent::TabletRelease) { endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
         else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
@@ -852,15 +852,16 @@ private:
         lastMs_ = ms;
         update();
     }
+    // Pen-up: the Finish Line tail is painted now, before anything seals the stroke's undo step, so it stays one step.
+    void endSmooth() {
+        if (!smoothTimer_ || !smoothTimer_->isActive()) return;
+        smoothTimer_->stop();
+        if (!finishLine_) return;
+        auto tail = smooth_.finish();
+        if (!tail.empty()) s_.doc.stroke(brush_, tail, true, smoothErase_);
+        update();
+    }
     void smoothTick() {
-        if (!painting_) {
-            if (finishLine_) {
-                auto tail = smooth_.finish();
-                if (!tail.empty()) s_.doc.stroke(brush_, tail, true, smoothErase_);
-                update();
-            }
-            return smoothTimer_->stop();
-        }
         raw_.dt = 0.01;
         smooth_.push(raw_);
         s_.doc.stroke(brush_, {smooth_.sample()}, true, smoothErase_);
