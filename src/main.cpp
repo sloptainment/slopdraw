@@ -1738,14 +1738,16 @@ int main(int argc, char** argv) {
         openTab(Document(sz), {});
     });
 
+    auto openPath = [&](QString path) {  // Open and the command line: a tab per file
+        auto doc = readOra(path);
+        if (!doc) { QMessageBox::warning(&window, "Open", "Could not read " + path); return; }
+        openTab(std::move(*doc), path);
+    };
     auto* fileOpen = fileMenu->addAction("&Open...");
     fileOpen->setShortcut(QKeySequence::Open);
     QObject::connect(fileOpen, &QAction::triggered, [&] {
         QString path = QFileDialog::getOpenFileName(&window, "Open", {}, "OpenRaster (*.ora)");
-        if (path.isEmpty()) return;
-        auto doc = readOra(path);
-        if (!doc) { QMessageBox::warning(&window, "Open", "Could not read " + path); return; }
-        openTab(std::move(*doc), path);
+        if (!path.isEmpty()) openPath(path);
     });
     auto saveTo = [&](QString path) {
         if (path.isEmpty()) return false;
@@ -1874,5 +1876,6 @@ int main(int argc, char** argv) {
     kindChanged();  // the menus exist now: the no-document state applies to them too
     window.resize(1024, 768);
     window.show();
+    for (const QString& path : app.arguments().mid(1)) openPath(path);  // mydraw a.ora b.ora: a tab each
     return app.exec();
 }
