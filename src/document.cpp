@@ -142,48 +142,68 @@ bool Document::wellFormed(const std::vector<Layer>& v) {
     return true;
 }
 
-bool Document::relocate(int lo, int hi, int at, int depth) {
-    std::vector<Layer> v = layers_;
-    std::vector<int> ids(v.size());
-    for (size_t i = 0; i < ids.size(); i++) ids[i] = int(i);
-    std::vector<Layer> block(v.begin() + lo, v.begin() + hi + 1);
-    std::vector<int> blockIds(ids.begin() + lo, ids.begin() + hi + 1);
-    for (Layer& l : block) l.depth += depth - v[hi].depth;
-    v.erase(v.begin() + lo, v.begin() + hi + 1);
-    ids.erase(ids.begin() + lo, ids.begin() + hi + 1);
+std::vector<std::pair<int, int>> Document::blocksOf(const std::vector<int>& items) const {
+    std::vector<int> sorted = items;
+    std::sort(sorted.begin(), sorted.end());
+    sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+    std::vector<std::pair<int, int>> out;
+    if (sorted.empty() || sorted.front() < 1 || sorted.back() >= int(layers_.size())) return out;
+    int floor = int(layers_.size());
+    for (auto i = sorted.rbegin(); i != sorted.rend(); ++i)
+        if (*i < floor) {
+            out.insert(out.begin(), {blockStart(*i), *i});
+            floor = blockStart(*i);
+        }
+    return out;
+}
+
+bool Document::relocate(const std::vector<std::pair<int, int>>& blocks, int at, int depth, bool group) {
+    std::vector<Layer> v = layers_, block;
+    std::vector<int> ids(v.size()), blockIds;
+    std::iota(ids.begin(), ids.end(), 0);
+    for (auto [lo, hi] : blocks)
+        for (int i = lo; i <= hi; i++) {
+            block.push_back(layers_[i]);
+            block.back().depth += depth + group - layers_[hi].depth;
+            blockIds.push_back(i);
+        }
+    for (auto b = blocks.rbegin(); b != blocks.rend(); ++b) {
+        v.erase(v.begin() + b->first, v.begin() + b->second + 1);
+        ids.erase(ids.begin() + b->first, ids.begin() + b->second + 1);
+    }
+    if (group) {
+        Layer g;
+        g.name = "Group " + QString::number(layers_.size());
+        g.depth = depth;
+        g.group = true;
+        block.push_back(g);
+        blockIds.push_back(-1);
+    }
     v.insert(v.begin() + at, block.begin(), block.end());
     ids.insert(ids.begin() + at, blockIds.begin(), blockIds.end());
-    if (at < 1 || depth < 0 || !wellFormed(v) || (at == lo && depth == layers_[hi].depth)) return false;
+    bool same = !group;
+    for (size_t i = 0; same && i < v.size(); i++) same = ids[i] == int(i) && v[i].depth == layers_[i].depth;
+    if (at < 1 || depth < 0 || !wellFormed(v) || same) return false;
     seal();
     Step s;
     s.kind = Tree;
     s.items = layers_;
     s.newItems = v;
     s.to = current_;
-    s.layer = int(std::find(ids.begin(), ids.end(), current_) - ids.begin());  // the current item keeps its identity
+    s.layer = group ? at + int(block.size()) - 1 : int(std::find(ids.begin(), ids.end(), current_) - ids.begin());  // the current item keeps its identity
     push(s);
     apply(s, false);
+    moved_ = ids;
     return true;
 }
 
-int Document::wrap(int layer) {
-    if (layer < 1 || layer >= int(layers_.size())) return -1;
-    seal();
-    Step s;
-    s.kind = Tree;
-    s.items = layers_;
-    s.to = current_;
-    s.newItems = layers_;
-    for (int i = blockStart(layer); i <= layer; i++) s.newItems[i].depth++;
-    Layer g;
-    g.name = "Group " + QString::number(layers_.size());
-    g.depth = layers_[layer].depth;
-    g.group = true;
-    s.newItems.insert(s.newItems.begin() + layer + 1, g);
-    s.layer = layer + 1;
-    push(s);
-    apply(s, false);
-    return current_;
+int Document::wrap(const std::vector<int>& items) {
+    auto blocks = blocksOf(items);
+    if (blocks.empty()) return -1;
+    int total = 0;
+    for (auto [lo, hi] : blocks) total += hi - lo + 1;
+    int top = blocks.back().second;
+    return relocate(blocks, top + 1 - total, layers_[top].depth, true) ? current_ : -1;
 }
 
 bool Document::stepItem(int layer, bool up) {
@@ -208,11 +228,41 @@ bool Document::stepItem(int layer, bool up) {
     return layers_[j].collapsed ? relocate(lo, layer, blockStart(j), d) : relocate(lo, layer, j, d + 1);
 }
 
-bool Document::moveItem(int layer, int gap, int depth) {
-    if (layer < 1 || layer >= int(layers_.size()) || gap < 1 || gap > int(layers_.size())) return false;
-    int lo = blockStart(layer);
-    if (gap > lo && gap <= layer) return false;
-    return relocate(lo, layer, gap > layer ? gap - (layer - lo + 1) : gap, depth);
+bool Document::stepItems(const std::vector<int>& items, bool up) {
+    auto blocks = blocksOf(items);
+    if (blocks.empty()) return false;
+    std::vector<int> tops;  // the stepping order: the ones ahead go first
+    for (auto b : blocks) tops.insert(up ? tops.begin() : tops.end(), b.second);
+    seal();
+    size_t base = applied_;
+    for (size_t k = 0; k < tops.size(); k++) {
+        if (!stepItem(tops[k], up)) {
+            while (applied_ > base) undo();
+            history_.resize(applied_);
+            return false;
+        }
+        std::vector<int> now(moved_.size());
+        for (size_t p = 0; p < moved_.size(); p++) now[moved_[p]] = int(p);
+        for (size_t j = k + 1; j < tops.size(); j++) tops[j] = now[tops[j]];
+    }
+    if (applied_ - base > 1) {  // one Tree step from the first's before to the last's after
+        history_[base].newItems = history_[applied_ - 1].newItems;
+        history_[base].layer = history_[applied_ - 1].layer;
+        applied_ = base + 1;
+        history_.resize(applied_);
+    }
+    return true;
+}
+
+bool Document::moveItems(const std::vector<int>& items, int gap, int depth) {
+    auto blocks = blocksOf(items);
+    if (blocks.empty() || gap < 1 || gap > int(layers_.size())) return false;
+    int below = 0;
+    for (auto [lo, hi] : blocks) {
+        if (gap > lo && gap <= hi) return false;
+        if (hi < gap) below += hi - lo + 1;
+    }
+    return relocate(blocks, gap - below, depth);
 }
 
 int Document::addVectorLayer() {

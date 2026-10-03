@@ -2009,6 +2009,32 @@ static bool wrapStepAndMoveReshapeTheTree() {
     return e.current() == 1 && e.layerCount() == 4;
 }
 
+// #472: the calls taking several items: wrap gathers them under one new group, step moves them as a block, move drops them together; each is one undo step.
+static bool severalItemsWrapStepAndMove() {
+    Document d = flat(4);
+    d.wrap(2);
+    d.setName(3, "G");  // bg0 a0 b1 G0 c0 d0
+    int before = d.stepId();
+    int g = d.wrap({2, 5});  // b out of G and d: the group lands where the topmost (d) was
+    if (g != 6 || d.current() != 6 || tree(d) != "bg0 a0 G0 c0 b1 d1 Group 60" || d.stepId() != before + 1) return false;
+    d.undo();
+    if (tree(d) != "bg0 a0 b1 G0 c0 d0" || d.wrap({0, 1}) != -1) return false;
+    Document s = flat(4);
+    int base = s.stepId();
+    if (!s.stepItems({1, 3}, true) || tree(s) != "bg0 b0 a0 d0 c0" || s.stepId() != base + 1) return false;  // each one place, gap kept
+    if (!s.stepItems({2, 4}, false) || tree(s) != "bg0 a0 b0 c0 d0") return false;
+    int now = s.stepId();
+    if (s.stepItems({3, 4}, true) || tree(s) != "bg0 a0 b0 c0 d0" || s.stepId() != now) return false;  // d cannot go up: none moves, no step
+    Document m = flat(5);
+    base = m.stepId();
+    if (!m.moveItems({1, 3}, 6, 0) || tree(m) != "bg0 b0 d0 e0 a0 c0" || m.stepId() != base + 1) return false;  // dropped together, adjacent
+    Document n = flat(4);
+    n.wrap(4);  // bg0 a0 b0 c0 d1 Group 50
+    if (!n.moveItems({1, 2}, 4, 1) || tree(n) != "bg0 c0 a1 b1 d1 Group 50") return false;
+    n.undo();
+    return tree(n) == "bg0 a0 b0 c0 d1 Group 50" && !n.moveItems({1, 5}, 5, 0);  // a gap inside a selected block
+}
+
 // #461: a group floats as one piece: its raster children's pixels and vector children's paths go through one matrix, live from a snapshot,
 // committed as one undo step or cancelled with none. Items: 0 Background, 1 vector (path y=10), 2 raster (red square), 3 group over both.
 static bool groupFloatsCommitsAndCancels() {
@@ -2251,6 +2277,7 @@ int main() {
     run("splitBezierKeepsTheShape", splitBezierKeepsTheShape);
     run("groupsCompositeIsolatedAndUndoAsOne", groupsCompositeIsolatedAndUndoAsOne);
     run("wrapStepAndMoveReshapeTheTree", wrapStepAndMoveReshapeTheTree);
+    run("severalItemsWrapStepAndMove", severalItemsWrapStepAndMove);
     run("groupFloatsCommitsAndCancels", groupFloatsCommitsAndCancels);
     return failed != 0;
 }

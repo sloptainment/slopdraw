@@ -136,13 +136,19 @@ public:
     // Adds an empty group directly above the current item, at its depth, and makes it current; returns its index. One undo step.
     int addGroup();
     // Wraps item `layer` (with its block) in a new group at its place and returns the group's index, which becomes current; -1, no step, for the Background or a bad index. One undo step.
-    int wrap(int layer);
+    int wrap(int layer) { return wrap(std::vector<int>{layer}); }
+    // Wraps several items (each with its block) in one new group placed where the topmost was, the items inside in their stacking order (#472); the group becomes current. -1, no step, for the Background, a bad index or a broken tree.
+    int wrap(const std::vector<int>& items);
     // Steps item `layer` with its block one place up or down (#425): past a plain item, out of its group at the group's top or bottom edge, into an expanded group next to it
     // (up: as its bottom item, down: as its top item), past a collapsed group whole. Refuses (false, no step) at the ends and below the Background. The current item keeps its identity.
     bool stepItem(int layer, bool up);
+    // Steps several items one place each, as stepItem does, keeping the gaps between them; one undo step. If any one cannot step, none does (false, no step).
+    bool stepItems(const std::vector<int>& items, bool up);
     // Moves item `layer` with its block so its block starts at gap `gap` (0..layerCount, counted in the list as it is now: before the item at that index) at `depth`; one undo step.
     // Refuses (false, no step) a gap inside its own block, below the Background, a depth that leaves a group without its place, or a move that changes nothing.
-    bool moveItem(int layer, int gap, int depth);
+    bool moveItem(int layer, int gap, int depth) { return moveItems({layer}, gap, depth); }
+    // Moves several items (each with its block) so they sit together, adjacent in stacking order, at gap `gap` and `depth`; one undo step. Refuses a gap inside any of their blocks.
+    bool moveItems(const std::vector<int>& items, int gap, int depth);
     // Whether a group hides its children's rows in the Layers dock. Not undoable, not saved.
     bool collapsed(int layer) const { return layers_[layer].collapsed; }
     void setCollapsed(int layer, bool on) { layers_[layer].collapsed = on; }
@@ -223,7 +229,11 @@ private:
     // The first index of the block that ends at item i (i itself for a layer).
     int blockStart(int i) const;
     // Puts items [lo, hi] at index `at` of the list without them, depth shifted so the top item's is `depth`, as one Tree step; false, no step, if that changes nothing or breaks the tree.
-    bool relocate(int lo, int hi, int at, int depth);
+    bool relocate(int lo, int hi, int at, int depth) { return relocate({{lo, hi}}, at, depth); }
+    // The same for several blocks [lo, hi], ascending, gathered in order; with `group` a new group at `depth` is put above them and they sit one deeper. moved_ keeps where each item came from.
+    bool relocate(const std::vector<std::pair<int, int>>& blocks, int at, int depth, bool group = false);
+    // The blocks the items stand for, ascending, none inside another; empty if an index is bad or is the Background.
+    std::vector<std::pair<int, int>> blocksOf(const std::vector<int>& items) const;
     // Applies s (undo: reverse = true) to layers_.
     void apply(const Step& s, bool reverse);
     void applyMove(int from, int to);
@@ -236,6 +246,7 @@ private:
     static bool wellFormed(const std::vector<Layer>& v);
     // Redraws a Vector Layer's image from its paths.
     static void rasterize(Layer& l);
+    std::vector<int> moved_;  // after a relocate: for each new index, the old one (-1 for a new group)
     std::vector<Layer> layers_;  // bottom to top, never empty
     int current_ = 0;
     std::vector<Reference> refs_;
