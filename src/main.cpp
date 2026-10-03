@@ -422,6 +422,8 @@ private:
         if (i >= 0) {
             knotDrag_ = i;
             knotsBefore_ = s_.doc.knots(s_.doc.current(), selected_);
+            knotPress_ = s_.view.toDoc(pos);
+            knotStart_ = s_.doc.knotHandles(s_.doc.current(), selected_)[i];
             return;
         }
         if (auto h = handleAt(pos)) {
@@ -738,10 +740,10 @@ private:
         update();
         return true;
     }
-    // The dragged knot follows the pointer live (no undo step yet).
+    // The dragged knot follows a quarter of the pointer's motion live (no undo step yet).
     void dragKnotTo(QPointF pos) {
         preview_ = [=, this] {
-            auto k = s_.doc.projectKnot(s_.doc.current(), selected_, s_.view.toDoc(pos));
+            auto k = s_.doc.projectKnot(s_.doc.current(), selected_, knotDragTarget(knotStart_, knotPress_, s_.view.toDoc(pos)));
             if (!k) return;
             auto knots = knotsBefore_;
             knots[knotDrag_] = *k;
@@ -853,6 +855,7 @@ private:
     std::function<void()> preview_;  // the latest queued drag preview, run by flushPreview
     int knotDrag_ = -1;  // index of the Width Knot being dragged on the selected path, -1 for none
     std::vector<WidthKnot> knotsBefore_;  // the selected path's knots when the drag began
+    QPointF knotPress_, knotStart_;  // doc-space press point and the dragged knot's handle there (#374)
     bool nodeDrag_ = false;  // a Spiro Node drag is under way
     QPointF nodeStart_;  // where it began, in document coordinates
     int handleDrag_ = -1;  // the Bezier node whose handle is being dragged (#313), -1 for none
