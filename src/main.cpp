@@ -359,6 +359,10 @@ protected:
                     eraser);  // the flag is per call (b20)
     }
     void leaveEvent(QEvent*) override { cursor_.reset(); update(); }
+    // panels showing/hiding move the canvas origin: pan back so the drawing stays put on screen
+    void moveEvent(QMoveEvent*) override { pinOrigin(); }
+    void resizeEvent(QResizeEvent*) override { pinOrigin(); }
+    void pinOrigin() { QPoint o = mapTo(window(), QPoint()); if (origin_) s_.view.pan(*origin_ - o); origin_ = o; }
     void wheelEvent(QWheelEvent* e) override {
         s_.view.zoomAt(e->position(), std::pow(1.1, e->angleDelta().y() / 120.0));
         update();
@@ -864,6 +868,7 @@ private:
     ulong lastMs_ = 0;
     QPointF last_;
     QString hint_;
+    std::optional<QPoint> origin_;  // canvas top-left in window coordinates, for pinOrigin()
     std::optional<QPointF> cursor_;  // pointer position over the canvas, for the brush outline
     bool dragging_ = false, space_ = false, painting_ = false, resizing_ = false;
     QColor color_ = Qt::black;  // matches pencil.myb and the Color dock's start
