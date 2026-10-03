@@ -1367,7 +1367,21 @@ static bool bezierPathRendersAsPowerStroke() {
     return set && mid && thin && flat && doc.pathAt(1, at(0.5), 1) == 0;
 }
 
+// transformNodes on a Bezier path maps handles as well as points (#315): the same scale+rotate (x' = -3y + 5, y' = 2x + 7) sends
+// point (10,20), in (1,0), out (0,1) to (-55,27), (5,9), (2,7); types and knots stay, and a flip about x = 50 mirrors a handle's x.
+static bool transformNodesMapsBezierHandles() {
+    Document::VPath p{{}, false, Qt::red, 6, {{0, 3}}, Document::PathKind::Bezier};
+    p.bezier = {{{10, 20}, {1, 0}, {0, 1}, BezierType::Smooth}};
+    auto q = transformNodes(p, QTransform(0, 2, -3, 0, 5, 7));
+    const auto& n = q.bezier[0];
+    bool mapped = n.p == QPointF(-55, 27) && n.in == QPointF(5, 9) && n.out == QPointF(2, 7);
+    bool kept = n.type == BezierType::Smooth && q.knots.size() == 1 && q.knots[0].width == 3 && q.nodes.empty();
+    auto f = transformNodes(p, flipMatrix({50, 25}, true)).bezier[0];
+    return mapped && kept && f.p == QPointF(90, 20) && f.in == QPointF(99, 0) && f.out == QPointF(100, 1);
+}
+
 int main() {
+    run("transformNodesMapsBezierHandles", transformNodesMapsBezierHandles);
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
         bool ok = fn();

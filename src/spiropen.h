@@ -65,6 +65,7 @@ inline Document::VPath transformNodes(Document::VPath p, const QTransform& m, bo
 inline Document::VPath rewidthPath(Document::VPath p, double w) {
     if (p.width > 0)
         for (auto& k : p.knots) k.width *= w / p.width;
+    for (auto& n : p.bezier) n.p = m.map(n.p), n.in = m.map(n.in), n.out = m.map(n.out);
     p.width = w;
     return p;
 }
