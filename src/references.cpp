@@ -70,3 +70,19 @@ std::vector<Reference> transformReferences(std::vector<Reference> refs, const st
         if (i >= 0 && i < int(refs.size())) refs[i].transform *= m;
     return refs;
 }
+
+std::optional<QPoint> cropEdgeAt(const QRectF& crop, QPointF p, double tol) {
+    bool inX = p.x() > crop.left() - tol && p.x() < crop.right() + tol, inY = p.y() > crop.top() - tol && p.y() < crop.bottom() + tol;
+    int hx = inY && std::abs(p.x() - crop.left()) < tol ? -1 : inY && std::abs(p.x() - crop.right()) < tol ? 1 : 0;
+    int hy = inX && std::abs(p.y() - crop.top()) < tol ? -1 : inX && std::abs(p.y() - crop.bottom()) < tol ? 1 : 0;
+    if (!hx && !hy) return std::nullopt;
+    return QPoint(hx, hy);
+}
+
+QRectF cropTo(QRectF crop, QSize image, QPoint h, QPointF p) {
+    if (h.x() < 0) crop.setLeft(std::clamp(p.x(), 0.0, crop.right() - 1));
+    if (h.x() > 0) crop.setRight(std::clamp(p.x(), crop.left() + 1, double(image.width())));
+    if (h.y() < 0) crop.setTop(std::clamp(p.y(), 0.0, crop.bottom() - 1));
+    if (h.y() > 0) crop.setBottom(std::clamp(p.y(), crop.top() + 1, double(image.height())));
+    return crop;
+}

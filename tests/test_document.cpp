@@ -1267,6 +1267,18 @@ static bool referencesPickAndMove() {
         && near(moved[0].transform.map(QPointF()), {3, 0}) && near(moved[1].transform.map(QPointF()), {5, 5});
 }
 
+// #546: crop mode finds the crop edge under a point and moves it, never past the picture nor past the other edge.
+static bool cropEdgesMoveWithinThePicture() {
+    QRectF crop(0, 0, 100, 50);
+    QSize pic(100, 50);
+    return cropEdgeAt(crop, {99, 25}, 4) == QPoint(1, 0) && cropEdgeAt(crop, {1, 1}, 4) == QPoint(-1, -1)
+        && !cropEdgeAt(crop, {50, 25}, 4) && !cropEdgeAt(crop, {150, 25}, 4)
+        && cropTo(crop, pic, {1, 0}, {60, 10}) == QRectF(0, 0, 60, 50)
+        && cropTo(QRectF(0, 0, 60, 50), pic, {1, 0}, {200, 0}) == QRectF(0, 0, 100, 50)
+        && cropTo(crop, pic, {-1, 0}, {150, 0}) == QRectF(99, 0, 1, 50)
+        && cropTo(crop, pic, {1, 1}, {-20, -30}) == QRectF(0, 0, 1, 1);
+}
+
 // A layer switch keeps a tool that fits the new layer's kind, else picks the last tool used on that kind (#161), Brush and Spiro Pen the first time.
 static bool toolFollowsLayerKind() {
     return toolForLayer(false, SpiroPenTool) == BrushTool && toolForLayer(true, BrushTool) == SpiroPenTool
@@ -1841,6 +1853,7 @@ int main() {
     run("oraRoundTripsReferences", oraRoundTripsReferences);
     run("importedReferenceFitsTheView", importedReferenceFitsTheView);
     run("referencesPickAndMove", referencesPickAndMove);
+    run("cropEdgesMoveWithinThePicture", cropEdgesMoveWithinThePicture);
     run("oraRoundTripsAlphaFlags", oraRoundTripsAlphaFlags);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);
