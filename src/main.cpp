@@ -36,6 +36,8 @@
 #include <QPainter>
 #include <QConicalGradient>
 #include <QPainterPath>
+#include <QDrag>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <algorithm>
 #include <functional>
@@ -1468,20 +1470,71 @@ int main(int argc, char** argv) {
     brushDock->setWidget(brushPanel);
 
     // Layers dock: the list runs top layer first, so row = layerCount - 1 - index. refresh() rebuilds it from the Document.
-    // Drag a row to a gap between rows (#459): the drop is handed over as the dragged item's Document index and the row gap; Qt moves nothing, refresh() rebuilds the rows.
+    // Drag a row (#459, #460): the pointer is over a gap between rows (a green bar) or the middle of a group row (a dashed outline, "inside"). Qt moves nothing:
+    // the drop is handed over as the dragged item's Document index, the gap row and the inside row (-1 for none); refresh() rebuilds the rows.
     struct LayerList : QListWidget {
-        std::function<void(int, int)> onDrop;
+        std::function<void(int, int, int)> onDrop;
+        int gap_ = -1, inside_ = -1, pressed_ = -1, from_ = -1;
+        QPoint pressPos_;
+        // A press that made the row current would rebuild the rows under the mouse and lose the drag; so the row becomes current on release, and the drag starts here.
+        void mousePressEvent(QMouseEvent* e) override {
+            auto* it = itemAt(e->pos());
+            pressed_ = it && e->button() == Qt::LeftButton ? it->data(Qt::UserRole).toInt() : -1;
+            pressPos_ = e->pos();
+        }
+        void mouseMoveEvent(QMouseEvent* e) override {
+            if (pressed_ < 0 || !(e->buttons() & Qt::LeftButton) || (e->pos() - pressPos_).manhattanLength() < QApplication::startDragDistance()) return;
+            from_ = pressed_;
+            pressed_ = -1;
+            auto* drag = new QDrag(this);
+            drag->setMimeData(new QMimeData);
+            drag->exec(Qt::MoveAction);
+        }
+        void mouseReleaseEvent(QMouseEvent* e) override {
+            if (pressed_ >= 0 && itemAt(e->pos())) setCurrentItem(itemAt(e->pos()));
+            pressed_ = -1;
+        }
+        void dragEnterEvent(QDragEnterEvent* e) override { e->accept(); }
+        void aim(QPoint pos) {
+            auto* it = itemAt(pos);
+            gap_ = it ? row(it) : count();
+            inside_ = -1;
+            if (!it) return;
+            QRect r = visualItemRect(it);
+            if (it->data(Qt::UserRole + 1).toBool() && pos.y() > r.top() + r.height() / 4 && pos.y() < r.bottom() - r.height() / 4) inside_ = gap_;
+            else gap_ += pos.y() > r.center().y();
+        }
+        void dragMoveEvent(QDragMoveEvent* e) override {
+            aim(e->position().toPoint());
+            e->accept();
+            viewport()->update();
+        }
+        void dragLeaveEvent(QDragLeaveEvent* e) override { gap_ = inside_ = -1; viewport()->update(); }
         void dropEvent(QDropEvent* e) override {
-            auto* it = itemAt(e->position().toPoint());
-            int gap = it ? row(it) + (e->position().y() > visualItemRect(it).center().y()) : count();
+            aim(e->position().toPoint());
             e->setDropAction(Qt::IgnoreAction);
             e->accept();
-            if (currentItem()) onDrop(currentItem()->data(Qt::UserRole).toInt(), gap);
+            int g = gap_, in = inside_;
+            gap_ = inside_ = -1;
+            onDrop(from_, g, in);
+        }
+        void paintEvent(QPaintEvent* e) override {
+            QListWidget::paintEvent(e);
+            if (gap_ < 0 && inside_ < 0) return;
+            QPainter p(viewport());
+            if (inside_ >= 0) {
+                p.setPen(QPen(QColor("#7fd27f"), 2, Qt::DashLine));
+                p.drawRect(visualItemRect(item(inside_)).adjusted(1, 1, -1, -1));
+            } else if (count()) {
+                QRect r = visualItemRect(item(std::min(gap_, count() - 1)));
+                p.fillRect(0, (gap_ < count() ? r.top() : r.bottom()) - 1, viewport()->width(), 3, QColor("#7fd27f"));
+            }
         }
     };
     auto* layerList = new LayerList;
-    layerList->setDragDropMode(QAbstractItemView::InternalMove);
-    layerList->setDropIndicatorShown(true);
+    layerList->setAcceptDrops(true);
+    layerList->viewport()->setAcceptDrops(true);
+    layerList->setDropIndicatorShown(false);
     auto* layerOpacity = new QSlider(Qt::Horizontal);  // percent, of the current layer
     layerOpacity->setRange(0, 100);
     auto* layerOpacityValue = new QLabel;
@@ -1587,6 +1640,7 @@ int main(int argc, char** argv) {
             }
             auto* it = new QListWidgetItem(layerList);
             it->setData(Qt::UserRole, i);
+            it->setData(Qt::UserRole + 1, group);
             it->setSizeHint(row->sizeHint());
             layerList->setItemWidget(it, row);
             if (i == d.current()) currentRow = layerList->count() - 1;
@@ -1601,10 +1655,13 @@ int main(int argc, char** argv) {
         if (updateTitle) updateTitle();
     };
     canvas->onLayersChange = refresh;
-    layerList->onDrop = [canvas, layerList](int from, int gap) {  // above the row under the line; nothing drops below the Background
-        if (gap >= layerList->count()) return;
-        if (canvas->doc().moveItem(from, layerList->item(gap)->data(Qt::UserRole).toInt() + 1, canvas->doc().depth(from)))
-            QTimer::singleShot(0, [canvas] { canvas->onLayersChange(); });
+    layerList->onDrop = [canvas, layerList](int from, int gap, int inside) {  // nothing drops below the Background, or into its own block
+        Document& d = canvas->doc();
+        auto at = [&](int row) { return layerList->item(row)->data(Qt::UserRole).toInt(); };
+        bool moved;
+        if (inside >= 0) moved = at(inside) != from && d.moveItem(from, at(inside), d.depth(at(inside)) + 1);  // top item of the group
+        else moved = gap < layerList->count() && d.moveItem(from, at(gap) + 1, d.depth(at(gap)));  // above that row, at its level
+        if (moved) QTimer::singleShot(0, [canvas] { canvas->onLayersChange(); });
     };
     QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
         if (row < 0) return;
