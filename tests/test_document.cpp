@@ -2038,6 +2038,57 @@ static bool groupFloatsCommitsAndCancels() {
     return doc.undo() && doc.render() == before && doc.paths(1)[0].nodes[0].x == 8 && doc.redo() && doc.render() == moved;
 }
 
+// Bucket Fill (#604): a click fills the region connected to it, stopping at a ring and leaving the ring and the outside alone.
+static bool bucketFillStopsAtARing() {
+    Document doc(QSize(32, 32));
+    doc.fill(Qt::black, {{8, 8}, {24, 8}, {24, 24}, {8, 24}});
+    doc.fill(Qt::white, {{10, 10}, {22, 10}, {22, 22}, {10, 22}});  // a black ring two pixels thick
+    QColor red(255, 0, 0);
+    return doc.bucketFill({16, 16}, red, 0) && doc.colorAt({16, 16}) == red && doc.colorAt({10, 10}) == red && doc.colorAt({21, 21}) == red
+        && doc.colorAt({8, 8}) == Qt::black && doc.colorAt({9, 16}) == Qt::black && doc.colorAt({2, 2}) == Qt::white && doc.colorAt({25, 16}) == Qt::white;
+}
+
+// Bucket Fill's Threshold, alpha, opacity, erase, Alpha Lock, undo and refusals (#604).
+static bool bucketFillObeysItsRules() {
+    QColor red(255, 0, 0);
+    Document t(QSize(32, 32));
+    t.fill(QColor(240, 250, 255), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 15 off white in red
+    Document t16(QSize(32, 32));
+    t16.fill(QColor(239, 255, 255), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 16 off
+    bool threshold = t.bucketFill({30, 16}, red, 15) && t.colorAt({2, 16}) == red && t16.bucketFill({30, 16}, red, 15) && t16.colorAt({2, 16}) == QColor(239, 255, 255) && t16.colorAt({20, 16}) == red;
+
+    Document layer(QSize(32, 32));
+    layer.addLayer();
+    layer.fill(Qt::black, {{15, 0}, {17, 0}, {17, 32}, {15, 32}});  // a line on a transparent layer
+    bool alpha = layer.bucketFill({2, 16}, red, 0) && layer.colorAt({2, 16}) == red && layer.colorAt({15, 16}) == Qt::black && layer.colorAt({25, 16}) == Qt::white;
+
+    Document half(QSize(32, 32));
+    half.addLayer();
+    half.bucketFill({2, 2}, QColor(0, 0, 0, 128), 0);
+    int grey = half.colorAt({2, 2}).red();
+    half.bucketFill({2, 2}, Qt::black, 0, 0, true, true, true);
+    bool opacity = grey > 100 && grey < 156 && half.colorAt({2, 2}) == Qt::white;  // erase clears the region
+
+    Document lock(QSize(32, 32));
+    lock.addLayer();
+    lock.fill(Qt::black, {{0, 0}, {16, 0}, {16, 32}, {0, 32}});
+    lock.setAlphaLock(lock.current(), true);
+    lock.bucketFill({30, 16}, red, 0);  // transparent there: the lock keeps it transparent
+    bool locked = lock.colorAt({30, 16}) == Qt::white && lock.bucketFill({2, 16}, red, 0) && lock.colorAt({2, 16}) == red;
+
+    Document one(QSize(32, 32));
+    QImage before = one.render().copy();
+    one.bucketFill({2, 2}, red, 0);
+    bool undo = one.undo() && one.render() == before && !one.undo();
+
+    Document none(QSize(32, 32));
+    none.addVectorLayer();
+    bool refused = !none.bucketFill({2, 2}, red, 0);  // Vector Layer
+    none.addGroup();
+    refused = refused && !none.bucketFill({2, 2}, red, 0) && !one.bucketFill({40, 2}, red, 0) && !one.bucketFill({-1, 2}, red, 0);  // group, outside
+    return threshold && alpha && opacity && locked && undo && refused;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -2046,6 +2097,8 @@ int main() {
         failed += !ok;
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
+    run("bucketFillStopsAtARing", bucketFillStopsAtARing);
+    run("bucketFillObeysItsRules", bucketFillObeysItsRules);
     run("referencesDrawFromTheOriginal", referencesDrawFromTheOriginal);
     run("referencesAreOneUndoStepEachAndNeverRendered", referencesAreOneUndoStepEachAndNeverRendered);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);

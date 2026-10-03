@@ -760,6 +760,44 @@ void Document::fill(const QColor& color, const std::vector<QPointF>& points, boo
     seal();  // its own step, so a live stroke after it starts fresh
 }
 
+bool Document::bucketFill(const QPoint& at, const QColor& color, int threshold, int expand, bool antialiased, bool sampleMerged, bool eraser) {
+    Q_UNUSED(expand) Q_UNUSED(antialiased) Q_UNUSED(sampleMerged)
+    Layer& l = layers_[current_];
+    if (l.vector || l.group || !l.image.rect().contains(at)) return false;
+    seal();
+    history_.resize(applied_);  // a new edit discards the redo branch
+    strokeStart_ = l.image;
+    const QImage src = l.image.convertToFormat(QImage::Format_ARGB32);
+    const QRgb target = src.pixel(at);
+    auto near = [&](int x, int y) {
+        QRgb c = src.pixel(x, y);
+        return std::max({std::abs(qRed(c) - qRed(target)), std::abs(qGreen(c) - qGreen(target)), std::abs(qBlue(c) - qBlue(target)), std::abs(qAlpha(c) - qAlpha(target))}) <= threshold;
+    };
+    QImage mask(src.size(), QImage::Format_ARGB32_Premultiplied);
+    mask.fill(Qt::transparent);
+    const QRgb paint = qPremultiply((eraser ? QColor(255, 255, 255, color.alpha()) : color).rgba());
+    std::vector<bool> seen(size_t(src.width()) * src.height());  // not mask: a fully transparent color leaves it 0
+    auto visit = [&](QPoint q) { seen[size_t(q.y()) * src.width() + q.x()] = true; mask.setPixel(q, paint); };
+    std::vector<QPoint> todo = {at};
+    visit(at);
+    while (!todo.empty()) {
+        QPoint p = todo.back();
+        todo.pop_back();
+        for (QPoint q : {p + QPoint(1, 0), p + QPoint(-1, 0), p + QPoint(0, 1), p + QPoint(0, -1)})
+            if (src.rect().contains(q) && !seen[size_t(q.y()) * src.width() + q.x()] && near(q.x(), q.y())) {
+                visit(q);
+                todo.push_back(q);
+            }
+    }
+    QPainter p(&l.image);
+    if (l.alphaLock) p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
+    else if (eraser) p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+    p.drawImage(0, 0, mask);
+    p.end();
+    seal();  // its own step, so a live stroke after it starts fresh
+    return true;
+}
+
 bool Document::clearRect(const QRect& rect) {
     if (layers_[current_].vector) return false;
     seal();
