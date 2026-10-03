@@ -1387,6 +1387,23 @@ static bool bezierPenPlacesCornersAndFinishes() {
     return spiroDefault && open && corners && knots && closed && oneStep;
 }
 
+// Dragging after a Bezier click pulls a symmetric node (#309): drag to (20,8) from the click at (8,8) puts out at (20,8) and in at (-4,8);
+// an undragged click stays a Cusp with handles on the point; the preview nodes carry the same handles.
+static bool bezierPenDragMakesSymmetricNode() {
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    SpiroPen pen;
+    pen.bezier = true;
+    pen.click({8, 8});
+    pen.drag({20, 8});
+    pen.click({56, 56});
+    auto live = pen.bezierNodes();
+    bool preview = live.size() == 2 && live[0].out == QPointF(20, 8) && live[0].in == QPointF(-4, 8) && live[1].type == BezierType::Cusp;
+    bool done = pen.finish(doc, false, Qt::black, 6);
+    const auto& b = doc.paths(1)[0].bezier;
+    return preview && done && b.size() == 2 && b[0].type == BezierType::Symmetric && b[0].out == QPointF(20, 8) && b[0].in == QPointF(-4, 8) && b[1].type == BezierType::Cusp && b[1].in == b[1].p;
+}
+
 // transformNodes on a Bezier path maps handles as well as points (#315): the same scale+rotate (x' = -3y + 5, y' = 2x + 7) sends
 // point (10,20), in (1,0), out (0,1) to (-55,27), (5,9), (2,7); types and knots stay, and a flip about x = 50 mirrors a handle's x.
 static bool transformNodesMapsBezierHandles() {
@@ -1486,6 +1503,7 @@ int main() {
     run("transformRectMovesPixelsAndUndoesOnce", transformRectMovesPixelsAndUndoesOnce);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("bezierPenPlacesCornersAndFinishes", bezierPenPlacesCornersAndFinishes);
+    run("bezierPenDragMakesSymmetricNode", bezierPenDragMakesSymmetricNode);
     run("toBezierKeepsOutlineAndKnots", toBezierKeepsOutlineAndKnots);
     run("pickerRowsSetTheNextNodeType", pickerRowsSetTheNextNodeType);
     run("cornerClickIgnoresThePickerType", cornerClickIgnoresThePickerType);

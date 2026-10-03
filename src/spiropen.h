@@ -17,23 +17,36 @@ struct SpiroPen {
     bool bezier = false;  // the Tool Options toggle (#308): Bezier clicks place corners, finish makes a Bezier path
     std::vector<SpiroNode> nodes;  // in Bezier, all Corners: Spiro draws them as the same straight segments, so the preview is shared
 
-    void click(QPointF p, bool corner = false) { nodes.push_back({p.x(), p.y(), corner || bezier ? SpiroType::Corner : type}); }  // Shift+click places a Corner (#274)
+    std::vector<QPointF> outs;  // Bezier: each node's out handle, parallel to nodes; the in handle mirrors it (#309)
+
+    void click(QPointF p, bool corner = false) { nodes.push_back({p.x(), p.y(), corner || bezier ? SpiroType::Corner : type}); outs.push_back(p); }  // Shift+click places a Corner (#274)
     // True when p is within tol of the first node: clicking there closes the path.
     bool onFirst(QPointF p, double tol) const { return !nodes.empty() && std::hypot(p.x() - nodes[0].x, p.y() - nodes[0].y) <= tol; }
-    void backspace() { if (!nodes.empty()) nodes.pop_back(); }
-    void cancel() { nodes.clear(); }
+    void backspace() { if (!nodes.empty()) nodes.pop_back(), outs.pop_back(); }
+    void cancel() { nodes.clear(); outs.clear(); }
+    // Bezier: the last node's out handle follows the pointer (press-drag, #309).
+    void drag(QPointF p) { if (bezier && !outs.empty()) outs.back() = p; }
+    // The nodes as Bezier nodes: dragged ones Symmetric, the rest Cusps with handles on their points.
+    std::vector<BezierNode> bezierNodes() const {
+        std::vector<BezierNode> b;
+        for (size_t i = 0; i < nodes.size(); i++) {
+            QPointF p(nodes[i].x, nodes[i].y);
+            b.push_back({p, 2 * p - outs[i], outs[i], outs[i] == p ? BezierType::Cusp : BezierType::Symmetric});
+        }
+        return b;
+    }
     // One undo step. On false (not a Vector Layer, or no curve) the nodes stay, so the user can carry on or cancel.
     bool finish(Document& doc, bool closed, const QColor& color, double width, Document::PaintMode mode = Document::PaintMode::Stroke, const QColor& fillColor = {}) {
         if (bezier) {
             if (nodes.size() < 2 || !doc.vector(doc.current())) return false;
             Document::VPath v{{}, closed, color, width, {{0, width}}, Document::PathKind::Bezier, mode, fillColor.isValid() ? fillColor : color};
             if (!closed) v.knots.push_back({double(nodes.size() - 1), width});  // one cubic per segment (#306)
-            for (const auto& n : nodes) v.bezier.push_back({{n.x, n.y}, {n.x, n.y}, {n.x, n.y}, BezierType::Cusp});
+            v.bezier = bezierNodes();
             auto paths = doc.paths(doc.current());
             paths.push_back(v);
             if (!doc.setPaths(doc.current(), paths)) return false;
         } else if (!doc.addPath(nodes, closed, color, width, mode, fillColor)) return false;
-        nodes.clear();
+        cancel();
         return true;
     }
 };

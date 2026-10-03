@@ -200,8 +200,15 @@ protected:
         }
         if (spiroTool_ && !pen_.nodes.empty()) {  // the path so far, plus a node under the pointer that a click would place
             auto nodes = pen_.nodes;
-            if (cursor_) nodes.push_back({s_.view.toDoc(*cursor_).x(), s_.view.toDoc(*cursor_).y(), pen_.bezier ? SpiroType::Corner : pen_.type});
-            if (auto path = spiroToPath(nodes, false)) {
+            if (cursor_ && !penDrag_) nodes.push_back({s_.view.toDoc(*cursor_).x(), s_.view.toDoc(*cursor_).y(), pen_.bezier ? SpiroType::Corner : pen_.type});
+            std::optional<QPainterPath> path;
+            if (pen_.bezier) {  // a Bezier path in progress: the dragged handles shape it (#309)
+                Document::VPath v{{}, false, Qt::black, 1, {}, Document::PathKind::Bezier};
+                v.bezier = pen_.bezierNodes();
+                if (nodes.size() > v.bezier.size()) v.bezier.push_back({{nodes.back().x, nodes.back().y}, {nodes.back().x, nodes.back().y}, {nodes.back().x, nodes.back().y}, BezierType::Cusp});
+                path = Document::curve(v);
+            } else path = spiroToPath(nodes, false);
+            if (path) {
                 QPen pen(Qt::gray, 1);
                 pen.setCosmetic(true);
                 p.setPen(pen);
@@ -291,6 +298,7 @@ protected:
         if (knotDrag_ >= 0) return dragKnotTo(e->position());
         if (nodeDrag_) return dragNodesTo(e->position());
         if (moveDrag_) return dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
+        if (penDrag_) return pen_.drag(s_.view.toDoc(e->position()));
         if (boxing_) return;
         if (objectTool_) setCursor(!picked().empty() && onRotateHandle(e->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
         if (lassoing_) return lassoAt(e->position(), erase());
@@ -306,7 +314,7 @@ protected:
         else s_.view.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
+    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
@@ -316,14 +324,14 @@ protected:
         if (e->button() == Qt::MiddleButton && e->type() != QEvent::TabletMove) { dragging_ = e->type() == QEvent::TabletPress; last_ = e->position(); return; }  // barrel button pans like the mouse's middle button
         if (dragging_) return panZoom(e->position(), e->modifiers());
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
-        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = false; if (onLayersChange) onLayersChange(); }
+        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
         else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); }
         else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (boxTool_) { if (e->type() == QEvent::TabletPress) boxPress(e->position()); }
-        else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position(), e->modifiers() & Qt::ShiftModifier); } }  // the barrel button arrives as right (#178)
+        else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position(), e->modifiers() & Qt::ShiftModifier); } else if (penDrag_) pen_.drag(s_.view.toDoc(e->position())); }  // the barrel button arrives as right (#178)
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), erase() || eraser);
         else if (!objectTool_ && !boxTool_ && (e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
@@ -371,7 +379,7 @@ private:
     void spiroClick(QPointF pos, bool corner = false) {
         QPointF d = s_.view.toDoc(pos);
         if (pen_.nodes.size() > 2 && pen_.onFirst(d, 6 / s_.view.screenRadius(1))) finishPath(true);
-        else pen_.click(d, corner);
+        else pen_.click(d, corner), penDrag_ = pen_.bezier;
         update();
     }
     // Select tool: a click within 6 screen px of a path of the current Vector Layer selects it; any other click deselects.
@@ -777,6 +785,7 @@ private:
     Stabilizer lassoSmooth_;
     bool lassoFinish_ = true;
     SpiroPen pen_;
+    bool penDrag_ = false;  // a Bezier press is down: moving pulls the new node's handle (#309)
     std::function<void()> preview_;  // the latest queued drag preview, run by flushPreview
     int knotDrag_ = -1;  // index of the Width Knot being dragged on the selected path, -1 for none
     std::vector<WidthKnot> knotsBefore_;  // the selected path's knots when the drag began
