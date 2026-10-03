@@ -657,6 +657,15 @@ private:
     // Delete: drops the selected nodes unless fewer than 2 would remain.
     void deleteSelectedNodes() {
         if (selected_ < 0 || nodeSel_.empty()) return;
+        if (bezierSelected()) {
+            auto paths = s_.doc.paths(s_.doc.current());
+            if (auto kept = removeBezier(paths[selected_], nodeSel_)) {
+                paths[selected_] = *kept;
+                s_.doc.setPaths(s_.doc.current(), paths);
+                nodeSel_.clear();
+            }
+            return;
+        }
         if (auto kept = removeNodes(s_.doc.nodes(s_.doc.current(), selected_), nodeSel_)) {
             editNodes(*kept);
             nodeSel_.clear();
@@ -725,12 +734,22 @@ private:
         return -1;
     }
     // Ctrl+click on a Width Knot handle duplicates the knot, Ctrl+Alt+click deletes it, Ctrl+click on the selected path off a handle adds one,
-    // Ctrl+Shift+click there adds a Spiro Node of the picker's type instead (one undo step each); false otherwise.
+    // Ctrl+Shift+click there adds a Spiro Node of the picker's type (a Bezier path: a Smooth node on the curve) instead (one undo step each); false otherwise.
     bool editKnot(QPointF pos, Qt::KeyboardModifiers mods) {
         int i = knotAt(pos);
         if (i < 0) {
             if (!selectTool_ || selected_ < 0 || (mods & Qt::AltModifier) || s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1)) != selected_) return false;
-            if (mods & Qt::ShiftModifier) s_.doc.addNode(s_.doc.current(), selected_, s_.view.toDoc(pos), editType_);
+            if (mods & Qt::ShiftModifier) {
+                if (bezierSelected()) {
+                    auto k = s_.doc.projectKnot(s_.doc.current(), selected_, s_.view.toDoc(pos));
+                    auto paths = s_.doc.paths(s_.doc.current());
+                    if (auto split = k ? splitBezier(paths[selected_], k->t) : std::nullopt) {
+                        paths[selected_] = *split;
+                        s_.doc.setPaths(s_.doc.current(), paths);
+                        nodeSel_.clear();  // indexes after the new node moved
+                    }
+                } else s_.doc.addNode(s_.doc.current(), selected_, s_.view.toDoc(pos), editType_);
+            }
             else s_.doc.addKnot(s_.doc.current(), selected_, s_.view.toDoc(pos));
             update();
             return true;

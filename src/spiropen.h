@@ -93,6 +93,41 @@ inline std::vector<SpiroNode> retypeNodes(std::vector<SpiroNode> nodes, const st
     return nodes;
 }
 
+// The Bezier path without the nodes at the selected indexes (Node/Knot edit Delete, #311): the neighbours join with the handles
+// they have, and a knot past the new end moves to it; nullopt if fewer than 2 nodes would remain.
+inline std::optional<Document::VPath> removeBezier(Document::VPath v, const std::set<int>& selected) {
+    std::vector<BezierNode> kept;
+    for (int i = 0; i < int(v.bezier.size()); i++)
+        if (!selected.count(i)) kept.push_back(v.bezier[i]);
+    if (kept.size() < 2) return std::nullopt;
+    v.bezier = kept;
+    double segs = v.closed ? kept.size() : kept.size() - 1;
+    for (auto& k : v.knots) k.t = std::min(k.t, segs);
+    return v;
+}
+
+// The Bezier path split at skeleton parameter t (Ctrl+Shift+click, #312) by de Casteljau, so the shape stays: the new Smooth node sits
+// on the curve, the neighbours' handles shorten (a Symmetric one becomes Smooth), and each knot keeps its point on the curve.
+// nullopt if t is on a node.
+inline std::optional<Document::VPath> splitBezier(Document::VPath v, double t) {
+    const int n = int(v.bezier.size());
+    const int segs = v.closed ? n : n - 1;
+    const int s = std::min(int(t), segs - 1);
+    const double u = t - s;
+    if (n < 2 || u < 1e-6 || u > 1 - 1e-6) return std::nullopt;
+    auto lerp = [u](QPointF a, QPointF b) { return a + (b - a) * u; };
+    BezierNode& a = v.bezier[s];
+    BezierNode& b = v.bezier[(s + 1) % n];
+    QPointF q0 = lerp(a.p, a.out), q1 = lerp(a.out, b.in), q2 = lerp(b.in, b.p), r0 = lerp(q0, q1), r1 = lerp(q1, q2);
+    a.out = q0, b.in = q2;
+    for (BezierNode* x : {&a, &b})
+        if (x->type == BezierType::Symmetric) x->type = BezierType::Smooth;
+    v.bezier.insert(v.bezier.begin() + s + 1, {lerp(r0, r1), r0, r1, BezierType::Smooth});
+    for (auto& k : v.knots)
+        if (k.t > s) k.t = k.t < s + u ? s + (k.t - s) / u : k.t < s + 1 ? s + 1 + (k.t - s - u) / (1 - u) : k.t + 1;
+    return v;
+}
+
 // The Bezier nodes with those at the selected indexes set to type t (Node/Knot edit picker, #314): the out handle (the in one if out
 // sits on the point) stays, and moveHandle turns the other to suit, collinear for Smooth, mirrored for Symmetric. A node with both
 // handles on its point (an undragged pen click) gets them pulled out along previous -> next, a third of the way to each (#368).

@@ -1523,6 +1523,48 @@ static bool knotDragIsScaled() {
     return knotDragTarget({10, 10}, {100, 50}, {140, 30}) == QPointF(15, 7.5);
 }
 
+// Deleting Bezier nodes (#311): removing the middle of three joins its neighbours (their handles stay) and a knot past the new end
+// moves to it; removing down to one node is refused.
+static bool removeBezierJoinsNeighbours() {
+    Document::VPath v{{}, false, Qt::black, 4, {{0, 4}, {1.5, 6}, {2, 4}}, Document::PathKind::Bezier};
+    v.bezier = {{{10, 50}, {10, 50}, {20, 20}, BezierType::Cusp}, {{40, 20}, {30, 20}, {50, 20}, BezierType::Smooth}, {{70, 50}, {60, 20}, {70, 50}, BezierType::Cusp}};
+    auto r = removeBezier(v, {1});
+    if (!r || r->bezier.size() != 2 || r->bezier[0].out != QPointF(20, 20) || r->bezier[1].in != QPointF(60, 20)) return false;
+    if (r->knots.size() != 3 || r->knots[1].t != 1 || r->knots[2].t != 1) return false;
+    return !removeBezier(v, {0, 1}) && !removeBezier(v, {0, 1, 2});
+}
+
+// Splitting a Bezier path (#312): the arch (10,50) (30,10) (50,10) (70,50) split where it passes (40,20) gets a Smooth node there with
+// handles (30,20) and (50,20) (the halves' tangents), the neighbours' handles shorten to (20,30) and (60,30), the path still passes
+// through every point it did, and each Width Knot keeps its handle point (knots 0, .25, .75, 1 move to 0, .5, 1.5, 2).
+static bool splitBezierKeepsTheShape() {
+    Document doc(QSize(100, 100));
+    int l = doc.addVectorLayer();
+    Document::VPath v{{}, false, Qt::black, 4, {{0, 4}, {0.25, 6}, {0.75, 8}, {1, 4}}, Document::PathKind::Bezier};
+    v.bezier = {{{10, 50}, {10, 50}, {30, 10}, BezierType::Cusp}, {{70, 50}, {50, 10}, {70, 50}, BezierType::Cusp}};
+    doc.restorePaths(l, {v});
+    auto before = doc.knotHandles(l, 0);
+    auto k = doc.projectKnot(l, 0, {40, 20});
+    auto s = k ? splitBezier(v, k->t) : std::nullopt;
+    if (!s || s->bezier.size() != 3) return false;
+    const auto& b = s->bezier;
+    if (QLineF(b[1].p, {40, 20}).length() > 1e-3 || QLineF(b[1].in, {30, 20}).length() > 1e-3 || QLineF(b[1].out, {50, 20}).length() > 1e-3 || b[1].type != BezierType::Smooth) return false;
+    if (QLineF(b[0].out, {20, 30}).length() > 1e-3 || QLineF(b[2].in, {60, 30}).length() > 1e-3) return false;
+    auto at = [](const QPainterPath& c, int i) { return c.pointAtPercent(i / 40.0); };
+    QPainterPath was = Document::curve(v), now = Document::curve(*s);
+    for (int i = 0; i <= 40; i++) {
+        double best = 1e9;
+        for (int j = 0; j <= 400; j++) best = std::min(best, QLineF(at(was, i), now.pointAtPercent(j / 400.0)).length());
+        if (best > 0.1) return false;
+    }
+    doc.restorePaths(l, std::vector<Document::VPath>{*s});
+    auto after = doc.knotHandles(l, 0);
+    if (after.size() != before.size() || std::abs(s->knots[1].t - 0.5) > 1e-3 || std::abs(s->knots[2].t - 1.5) > 1e-3 || s->knots[3].t != 2) return false;
+    for (size_t i = 0; i < before.size(); i++)
+        if (QLineF(before[i], after[i]).length() > 0.1) return false;
+    return !splitBezier(v, 0) && !splitBezier(v, 1);  // on a node: refused
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1615,5 +1657,7 @@ int main() {
     run("transformBoxBoundsAndMovesPickedPaths", transformBoxBoundsAndMovesPickedPaths);
     run("transformBoxScalesAboutOppositeHandle", transformBoxScalesAboutOppositeHandle);
     run("knotDragIsScaled", knotDragIsScaled);
+    run("removeBezierJoinsNeighbours", removeBezierJoinsNeighbours);
+    run("splitBezierKeepsTheShape", splitBezierKeepsTheShape);
     return failed != 0;
 }
