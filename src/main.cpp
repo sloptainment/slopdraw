@@ -8,6 +8,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QDockWidget>
 #include <QFileInfo>
@@ -185,6 +186,19 @@ public:
         s_.doc.addReference({img, placeReference(img.size(), size(), s_.view.matrix()), QRectF(img.rect()), 1});
         refPicks_ = {int(s_.doc.references().size()) - 1};
         frame_.reset();
+        update();
+        if (onLayersChange) onLayersChange();
+    }
+    // Edit > Copy / Cut on a Raster Layer (#506): the Box Select rectangle (a floating piece where it now lies), else the whole layer, onto the
+    // system clipboard as an image; Cut then clears it as one undo step. Does nothing on a Vector Layer.
+    void copy(bool cut) {
+        if (!hasDoc() || s_.doc.vector(s_.doc.current())) return;
+        QRect all = s_.doc.image(0).rect();
+        QRect r = !rasterBox() ? all : floating_ ? floatM_.mapRect(box_) & all : box_;
+        QGuiApplication::clipboard()->setImage(s_.doc.image(s_.doc.current()).copy(r));
+        if (!cut) return;
+        commitFloat();
+        s_.doc.clearRect(r);
         update();
         if (onLayersChange) onLayersChange();
     }
@@ -2087,6 +2101,9 @@ int main(int argc, char** argv) {
     auto* editMenu = window.menuBar()->addMenu("&Edit");
     QObject::connect(key(editMenu->addAction("&Undo"), {QKeySequence("Ctrl+Z")}), &QAction::triggered, [canvas] { canvas->undo(false); });
     QObject::connect(key(editMenu->addAction("&Redo"), {QKeySequence("Ctrl+Shift+Z")}), &QAction::triggered, [canvas] { canvas->undo(true); });
+    editMenu->addSeparator();
+    QObject::connect(key(editMenu->addAction("Cu&t"), {QKeySequence("Ctrl+X")}), &QAction::triggered, [canvas] { canvas->copy(true); });
+    QObject::connect(key(editMenu->addAction("&Copy"), {QKeySequence("Ctrl+C")}), &QAction::triggered, [canvas] { canvas->copy(false); });
 
     auto* viewMenu = window.menuBar()->addMenu("&View");
     QObject::connect(key(viewMenu->addAction("&Mirror"), {QKeySequence("M")}), &QAction::triggered, [canvas] { canvas->mirror(); });
