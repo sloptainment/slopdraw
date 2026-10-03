@@ -70,7 +70,7 @@ class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
     void setDocument(Document doc, QString path = {}) { Session s{std::move(doc), View(), path, 0}; s.saved = s.doc.stepId(); setSession(std::move(s)); }
-    void setSession(Session s) { cropping_ = -1; s_ = std::move(s); floating_ = false; pasted_ = QImage(); floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
+    void setSession(Session s) { cropping_ = -1; s_ = std::move(s); floating_ = false; groupFloat_ = false; groupKeyLayer_ = -1; pasted_ = QImage(); floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return s_.doc; }
     Session& session() { return s_; }
     Session takeSession() { commitFloat(); endCrop(); pen_.cancel(); return std::move(s_); }  // the tab being left: a lifted piece lands, an unfinished path drops; setSession must follow
@@ -241,7 +241,7 @@ public:
         return true;
     }
     void finishPath(bool closed) {
-        if (floating_) return endPaste();
+        if (floating_ || groupFloat_) return endPaste();
         if (cropping_ >= 0) return endCrop();  // Enter leaves crop mode (#546)
         if (spiroTool_) pen_.finish(s_.doc, closed, penStroke_, pathWidth_, paintMode_, penFill_);  // refused on a Raster Layer
         update();
@@ -292,6 +292,7 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override {
+        updateGroupRect();
         if (boxLayer_ != s_.doc.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; if (!referenceTool_) frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
         flushPreview();
         if (penLayer_ != s_.doc.current()) { pen_.cancel(); penLayer_ = s_.doc.current(); }  // a layer switch drops the unfinished path
@@ -393,7 +394,7 @@ protected:
             p.setPen(pen);
             p.setBrush(Qt::NoBrush);
             for (int i : picked()) p.drawPath(Document::outline(s_.doc.paths(s_.doc.current())[i]));
-            if (!picked().empty() || rasterBox()) drawTransformBox(p, frame());
+            if (!picked().empty() || rasterBox() || groupBox()) drawTransformBox(p, frame());
             if (boxing_ && cursor_) {
                 pen.setStyle(Qt::DashLine);
                 p.setPen(pen);
@@ -533,6 +534,7 @@ private:
         if (spiroTool_) return "Click adds a node · Shift+click adds a corner · Enter or right-click finishes open · click the first node or Shift+Enter closes · Backspace drops the last node · Esc cancels";
         if (selectTool_ && selected_ < 0) return "Click a path to select it";
         if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Shift+click the path adds a node · Ctrl+Alt+click deletes";
+        if (objectTool_ && groupBox()) return "Drag inside the box moves the group · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts it back";
         if (objectTool_ && rasterBox()) return "Drag inside the box moves the pixels · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts them back";
         if (objectTool_ && !s_.doc.vector(s_.doc.current())) return "Make a rectangle with Box Select first, then Select transforms its pixels";
         if (cropping_ >= 0) return "Drag an edge or corner to crop · the whole picture is kept · Enter or click outside finishes";
@@ -595,7 +597,7 @@ private:
     // Select press on a Vector Layer: on a path it picks that path alone (Shift toggles it); on empty canvas it clears the pick (Shift keeps it)
     // and starts a box that endBox turns into the paths it touches.
     void objectPress(QPointF pos, Qt::KeyboardModifiers mods) {
-        if (!s_.doc.vector(s_.doc.current())) return rasterPress(pos);
+        if (!s_.doc.vector(s_.doc.current())) return rasterPress(pos);  // a group too: groupBox() is the box
         bool shift = mods & Qt::ShiftModifier;
         int i = s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
         auto was = picked();
@@ -760,7 +762,7 @@ private:
     }
     // Select press on a Raster Layer: with a Box Select rectangle, a handle, the rotate circle or the inside of the box starts a drag of the piece; outside commits a floating one.
     void rasterPress(QPointF pos) {
-        if (!rasterBox()) return;
+        if (!rasterBox() && !groupBox()) return;
         BoxFrame f = frame();
         QPointF d = s_.view.toDoc(pos);
         auto handle = frameHandleAt(f, d, 6 / s_.view.screenRadius(1));
@@ -787,6 +789,14 @@ private:
     }
     // The piece's pixels are in the document again: one undo step, and the selection ends.
     void commitFloat() {
+        if (groupFloat_) {
+            s_.doc.transformGroup(s_.doc.current(), groupM_, scaleWidths_);
+            groupFloat_ = false;
+            groupM_ = {};
+            groupFrame_.reset();
+            update();
+            if (onLayersChange) onLayersChange();
+        }
         if (!floating_) return;
         floatPiece(floatM_, true);
         pasted_ = QImage();
@@ -798,6 +808,13 @@ private:
         if (onLayersChange) onLayersChange();
     }
     void cancelFloat() {
+        if (groupFloat_) {
+            s_.doc.cancelFloat();
+            groupFloat_ = false;
+            groupM_ = {};
+            groupFrame_.reset();
+            update();
+        }
         if (!floating_) return;
         s_.doc.cancelFloat();
         pasted_ = QImage();
@@ -805,6 +822,24 @@ private:
         floatM_ = {};
         frame_.reset();
         update();
+    }
+    // Select with a group current (#462): the Transform box surrounds everything the group draws, no pick needed; its float is the Document's (#461).
+    bool groupBox() const { return hasDoc() && objectTool_ && s_.doc.isGroup(s_.doc.current()) && !groupRect_.isNull(); }
+    // Refreshes groupRect_ when the group or the document changed (a float keeps the step id, so it never refreshes mid-drag).
+    void updateGroupRect() {
+        if (!hasDoc() || !objectTool_ || !s_.doc.isGroup(s_.doc.current())) {  // stepId seals a stroke in progress, so only ask with Select on a group
+            groupRect_ = QRectF();
+            groupKeyLayer_ = -1;
+            return;
+        }
+        int cur = s_.doc.current(), id = s_.doc.stepId();
+        if (cur == groupKeyLayer_ && id == groupKeyStep_) return;
+        groupKeyLayer_ = cur;
+        groupKeyStep_ = id;
+        groupFloat_ = false;
+        groupM_ = {};
+        groupFrame_.reset();
+        groupRect_ = s_.doc.groupBounds(cur);
     }
     // A Box Select rectangle on the current Raster Layer: Select's Transform box shows on it.
     bool rasterBox() const { return hasDoc() && !s_.doc.vector(s_.doc.current()) && !box_.isEmpty() && boxLayer_ == s_.doc.current(); }
@@ -863,6 +898,7 @@ private:
     // The Transform box: the frame a rotate drag left, else the picked paths' bounds, unturned (#202).
     BoxFrame frame() const {
         if (referenceTool_) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : frame_ ? *frame_ : BoxFrame{referencesBounds(s_.doc.references(), refPicks_), 0};
+        if (groupBox()) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : groupFrame_ ? *groupFrame_ : BoxFrame{groupRect_, 0};
         if (rasterBox()) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : frame_ ? *frame_ : BoxFrame{QRectF(box_), 0};
         if (moveDrag_ && (rotating_ || frame_)) return frameAfter(moveFrame_, dragM_);
         return frame_ ? *frame_ : BoxFrame{pickedBounds(s_.doc.paths(s_.doc.current()), picked()), 0};
@@ -879,6 +915,10 @@ private:
             dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, s_.view.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), shift) : QTransform::fromTranslate(s_.view.toDoc(pos).x() - moveStart_.x(), s_.view.toDoc(pos).y() - moveStart_.y());
             if (referenceTool_ && handle_) dragM_ = frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), true);  // aspect always kept
             if (referenceTool_) return s_.doc.previewReferences(transformReferences(refsBefore_, refPicks_, dragM_));
+            if (groupBox()) {
+                groupFloat_ = s_.doc.floatGroup(s_.doc.current(), groupM_ * dragM_, scaleWidths_);
+                return;
+            }
             if (rasterBox()) {  // lift on the first drag; every drag resamples from the untouched pixels
                 floating_ = floatPiece(floatM_ * dragM_);
                 return;
@@ -900,6 +940,10 @@ private:
             if (rotating_ || frame_) frame_ = frameAfter(moveFrame_, dragM_);
             return update();
         }
+        if (groupBox()) {
+            if (groupFloat_) { groupM_ = groupM_ * dragM_; groupFrame_ = frameAfter(moveFrame_, dragM_); }
+            return;
+        }
         if (rasterBox()) {
             if (floating_) { floatM_ = floatM_ * dragM_; frame_ = frameAfter(moveFrame_, dragM_); }
             return;
@@ -912,7 +956,7 @@ private:
     }
     // Right-click on Select with paths picked: Flip Horizontal / Vertical about the Transform box centre, each one undo step (#203).
     void flipMenu(QPoint globalPos) {
-        if (picked().empty() && !rasterBox()) return;
+        if (picked().empty() && !rasterBox() && !groupBox()) return;
         QMenu menu;
         auto* h = menu.addAction("Flip Horizontal");
         auto* v = menu.addAction("Flip Vertical");
@@ -924,6 +968,12 @@ private:
         if (chosen != h && chosen != v) return;
         BoxFrame f = frame();
         QTransform m = flipMatrix(f.rect.center(), chosen == h);
+        if (groupBox()) {  // joins the floating group
+            groupM_ = groupM_ * m;
+            groupFloat_ = s_.doc.floatGroup(s_.doc.current(), groupM_, scaleWidths_);
+            groupFrame_ = frameAfter(f, m);
+            return update();
+        }
         if (rasterBox()) {  // joins the floating piece; the commit is the one undo step
             floatM_ = floatM_ * m;
             floating_ = floatPiece(floatM_);
@@ -1202,6 +1252,11 @@ private:
     std::optional<BoxFrame> frame_;  // the box a rotate left, until the next pick
     QImage pasted_;  // the image a paste floats (#508); null when the floating piece is a lifted Box Select rectangle
     bool pasteNew_ = true;  // pasted_ floats in a layer of its own, not the current one
+    QRectF groupRect_;  // what the current group draws, as of document step groupKeyStep_ on layer groupKeyLayer_
+    int groupKeyLayer_ = -1, groupKeyStep_ = -1;
+    bool groupFloat_ = false;  // the group is lifted: the Document shows it moved through groupM_, not yet an undo step
+    QTransform groupM_;
+    std::optional<BoxFrame> groupFrame_;
     bool floating_ = false;  // a raster selection's piece is lifted: the layer shows box_'s pixels moved through floatM_, not yet an undo step
     QTransform floatM_;
     bool scaleWidths_ = false;  // Select's Scale widths: transforms scale Width Knot widths too
