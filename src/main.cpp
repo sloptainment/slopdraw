@@ -238,7 +238,7 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override {
-        if (boxLayer_ != s_.doc.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
+        if (boxLayer_ != s_.doc.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; if (!referenceTool_) frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
         flushPreview();
         if (penLayer_ != s_.doc.current()) { pen_.cancel(); penLayer_ = s_.doc.current(); }  // a layer switch drops the unfinished path
         QString h = hint();  // every tool or state change calls update(), so paint is where a change of hint is noticed
@@ -362,7 +362,7 @@ protected:
         resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && (e->modifiers() & Qt::ShiftModifier);
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier) && !editKnot(e->position(), e->modifiers())) pickAt(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) return;
-        else if (referenceTool_) { if (e->button() == Qt::LeftButton && !space_) refPress(e->position(), e->modifiers()); }
+        else if (referenceTool_) { if (e->button() == Qt::LeftButton && !space_) refPress(e->position(), e->modifiers()); else if (e->button() == Qt::RightButton) refMenu(e->globalPosition().toPoint()); }
         else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
         else if (e->button() == Qt::RightButton && objectTool_) flipMenu(e->globalPosition().toPoint());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
@@ -382,7 +382,7 @@ protected:
         if (moveDrag_) return dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
         if (penDrag_) return pen_.drag(s_.view.toDoc(e->position()));
         if (boxing_) return;
-        if (objectTool_) setCursor(!picked().empty() && onRotateHandle(e->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
+        if (objectTool_ || referenceTool_) setCursor(!(referenceTool_ ? refPicks_.empty() : picked().empty()) && onRotateHandle(e->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
         if (lassoing_) return lassoAt(e->position(), erase());
         if (painting_) return paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
         if (!dragging_) return;
@@ -458,7 +458,7 @@ private:
         if (objectTool_ && rasterBox()) return "Drag inside the box moves the pixels · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts them back";
         if (objectTool_ && !s_.doc.vector(s_.doc.current())) return "Make a rectangle with Box Select first, then Select transforms its pixels";
         if (referenceTool_ && refPicks_.empty()) return "Click a reference to pick it · Shift+click toggles · drag a box on empty canvas picks the ones it touches · File > Import Reference Image adds a picture";
-        if (referenceTool_) return QString("%1 picked · drag inside the box moves them · Delete removes them · click or drag a box to pick again · Shift adds").arg(refPicks_.size());
+        if (referenceTool_) return QString("%1 picked · drag inside the box moves them · a corner scales · the circle rotates · right-click flips · Delete removes them · click or drag a box to pick again · Shift adds").arg(refPicks_.size());
         if (boxTool_ && box_.isEmpty()) return "Drag a rectangle to select pixels";
         if (boxTool_) return "Delete clears the pixels · drag a new rectangle to replace it · click outside or Esc clears the selection";
         if (objectTool_ && picked().empty()) return "Click a path to pick it · Shift+click toggles · drag a box on empty canvas picks the paths it touches";
@@ -560,6 +560,19 @@ private:
         bool shift = mods & Qt::ShiftModifier;
         QPointF d = s_.view.toDoc(pos);
         int i = referenceAt(s_.doc.references(), d);
+        auto handle = refPicks_.empty() ? std::nullopt : frameHandleAt(frame(), d, 6 / s_.view.screenRadius(1));
+        if (handle && (!handle->x() || !handle->y())) handle.reset();  // corners only: an edge would break the aspect (#543)
+        bool rotate = !refPicks_.empty() && onRotateHandle(pos);
+        if (handle || rotate) {  // a corner scales about the opposite one, aspect kept; the circle rotates about the centre
+            moveFrame_ = frame();
+            moveDrag_ = true;
+            handle_ = handle;
+            rotating_ = rotate;
+            moveStart_ = d;
+            dragM_ = {};
+            refsBefore_ = s_.doc.references();
+            return;
+        }
         if (!shift && !refPicks_.empty() && frame().rect.contains(frame().toDoc().inverted().map(d)) && (i < 0 || refPicks_.count(i))) {
             moveFrame_ = frame();
             moveDrag_ = true;
@@ -575,6 +588,20 @@ private:
         if (i < 0) boxing_ = true, boxStart_ = d;
         else if (!shift) refPicks_ = {i};
         else if (!refPicks_.erase(i)) refPicks_.insert(i);
+        update();
+    }
+    // Right-click with references picked: Flip Horizontal / Vertical about the Transform box centre, one undo step each (#543).
+    void refMenu(QPoint globalPos) {
+        if (refPicks_.empty()) return;
+        QMenu menu;
+        auto* h = menu.addAction("Flip Horizontal");
+        auto* v = menu.addAction("Flip Vertical");
+        auto* chosen = menu.exec(globalPos);
+        if (chosen != h && chosen != v) return;
+        BoxFrame f = frame();
+        QTransform m = flipMatrix(f.rect.center(), chosen == h);
+        s_.doc.setReferences(transformReferences(s_.doc.references(), refPicks_, m));
+        if (frame_) frame_ = frameAfter(f, m);
         update();
     }
     // Delete: removes the picked references as one undo step.
@@ -692,6 +719,7 @@ private:
     void dragMoveTo(QPointF pos, bool shift) {
         preview_ = [=, this] {
             dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, s_.view.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), shift) : QTransform::fromTranslate(s_.view.toDoc(pos).x() - moveStart_.x(), s_.view.toDoc(pos).y() - moveStart_.y());
+            if (referenceTool_ && handle_) dragM_ = frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), true);  // aspect always kept
             if (referenceTool_) return s_.doc.previewReferences(transformReferences(refsBefore_, refPicks_, dragM_));
             if (rasterBox()) {  // lift on the first drag; every drag resamples from the untouched pixels
                 floating_ = s_.doc.floatRect(box_, floatM_ * dragM_);
@@ -711,7 +739,7 @@ private:
             if (dragM_.isIdentity()) return;
             s_.doc.previewReferences(refsBefore_);
             s_.doc.setReferences(transformReferences(refsBefore_, refPicks_, dragM_));
-            if (frame_) frame_ = frameAfter(moveFrame_, dragM_);
+            if (rotating_ || frame_) frame_ = frameAfter(moveFrame_, dragM_);
             return update();
         }
         if (rasterBox()) {
