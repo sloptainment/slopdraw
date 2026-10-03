@@ -2149,7 +2149,8 @@ int main(int argc, char** argv) {
         QPointF at = canvas->pastePoint();
         bool newLayer = true;
         Document& d = canvas->doc();
-        if (!d.vector(d.current())) {  // on a Raster Layer it always asks (#509, look: #511)
+        {  // it always asks (#509, look: #511); a Vector Layer has no Same layer row (#564)
+            bool raster = !d.vector(d.current());
             QMenu menu;
             auto* head = new QWidgetAction(&menu);
             auto* box = new QWidget;
@@ -2161,14 +2162,14 @@ int main(int argc, char** argv) {
             head->setDefaultWidget(box);
             menu.addAction(head);
             menu.addSeparator();
-            auto* same = menu.addAction(QString("&Same layer: into “%1”").arg(d.name(d.current())));
+            auto* same = raster ? menu.addAction(QString("&Same layer: into “%1”").arg(d.name(d.current()))) : nullptr;
             auto* fresh = menu.addAction("&New layer");
             auto* ref = menu.addAction("&Reference image");
             menu.addAction("Cancel");
-            menu.setActiveAction(same);  // Enter takes it
+            menu.setActiveAction(raster ? same : fresh);  // Enter takes it
             auto* chosen = menu.exec(canvas->pasteMenuPoint());
             if (chosen == ref) return pasteReference(img);
-            if (chosen != same && chosen != fresh) return;  // Cancel, Esc or a click outside
+            if (!chosen || (chosen != same && chosen != fresh)) return;  // Cancel, Esc or a click outside
             newLayer = chosen == fresh;
         }
         beforePaste = toolGroup->checkedAction();
