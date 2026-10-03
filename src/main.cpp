@@ -231,6 +231,11 @@ protected:
             p.setPen(pen);
             double r = 4 / s_.view.screenRadius(1);
             auto nodes = s_.doc.nodes(s_.doc.current(), selected_);
+            auto& path = s_.doc.paths(s_.doc.current())[selected_];
+            for (int i : nodeSel_)  // a selected Bezier node's handles: a line out to a circle, skipped where a handle sits on its point (#313)
+                if (i < int(path.bezier.size()))
+                    for (QPointF h : {path.bezier[i].in, path.bezier[i].out})
+                        if (h != path.bezier[i].p) p.setBrush(Qt::white), p.drawLine(path.bezier[i].p, h), p.drawEllipse(h, r, r);
             for (int i = 0; i < int(nodes.size()); i++) {
                 p.setBrush(nodeSel_.count(i) ? Qt::blue : Qt::white);
                 p.drawRect(QRectF(nodes[i].x - r, nodes[i].y - r, 2 * r, 2 * r));
@@ -297,6 +302,7 @@ protected:
         if (resizing_) return resizeTo(e->position());
         if (knotDrag_ >= 0) return dragKnotTo(e->position());
         if (nodeDrag_) return dragNodesTo(e->position());
+        if (handleDrag_ >= 0) return dragHandleTo(e->position());
         if (moveDrag_) return dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
         if (penDrag_) return pen_.drag(s_.view.toDoc(e->position()));
         if (boxing_) return;
@@ -314,7 +320,7 @@ protected:
         else s_.view.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
+    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
@@ -324,11 +330,11 @@ protected:
         if (e->button() == Qt::MiddleButton && e->type() != QEvent::TabletMove) { dragging_ = e->type() == QEvent::TabletPress; last_ = e->position(); return; }  // barrel button pans like the mouse's middle button
         if (dragging_) return panZoom(e->position(), e->modifiers());
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
-        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
+        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
         else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
-        else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); }
+        else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); else if (handleDrag_ >= 0) dragHandleTo(e->position()); }
         else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (boxTool_) { if (e->type() == QEvent::TabletPress) boxPress(e->position()); }
         else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position(), e->modifiers() & Qt::ShiftModifier); } else if (penDrag_) pen_.drag(s_.view.toDoc(e->position())); }  // the barrel button arrives as right (#178)
@@ -395,6 +401,11 @@ private:
         if (i >= 0) {
             knotDrag_ = i;
             knotsBefore_ = s_.doc.knots(s_.doc.current(), selected_);
+            return;
+        }
+        if (auto h = handleAt(pos)) {
+            std::tie(handleDrag_, handleOut_) = *h;
+            pathBefore_ = s_.doc.paths(s_.doc.current())[selected_];
             return;
         }
         int n = selected_ < 0 ? -1 : s_.doc.nodeAt(s_.doc.current(), selected_, s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
@@ -650,6 +661,39 @@ private:
         nodeDrag_ = false;
         update();
     }
+    // The selected Bezier node and which handle (out = true) within 6 screen px of pos; a handle on its node's point is the node's (#313).
+    std::optional<std::pair<int, bool>> handleAt(QPointF pos) {
+        if (!selectTool_ || selected_ < 0) return std::nullopt;
+        auto& b = s_.doc.paths(s_.doc.current())[selected_].bezier;
+        for (int i : nodeSel_)
+            for (bool out : {false, true}) {
+                if (i >= int(b.size())) break;
+                QPointF h = out ? b[i].out : b[i].in;
+                if (h != b[i].p && QLineF(h, s_.view.toDoc(pos)).length() * s_.view.screenRadius(1) <= 6) return std::pair{i, out};
+            }
+        return std::nullopt;
+    }
+    // The dragged handle follows the pointer live (no undo step yet).
+    void dragHandleTo(QPointF pos) {
+        preview_ = [=, this] {
+            auto v = pathBefore_;
+            v.bezier[handleDrag_] = moveHandle(v.bezier[handleDrag_], handleOut_, s_.view.toDoc(pos));
+            s_.doc.previewPath(s_.doc.current(), selected_, v);
+        };
+        update();
+    }
+    // Release: one undo step for the whole drag, from the path it started with.
+    void endHandleDrag() {
+        if (handleDrag_ < 0) return;
+        flushPreview();
+        auto paths = s_.doc.paths(s_.doc.current());
+        s_.doc.previewPath(s_.doc.current(), selected_, pathBefore_);
+        auto& a = paths[selected_].bezier[handleDrag_];
+        auto& w = pathBefore_.bezier[handleDrag_];
+        if (a.in != w.in || a.out != w.out) s_.doc.setPaths(s_.doc.current(), paths);
+        handleDrag_ = -1;
+        update();
+    }
     // Index of the selected path's Width Knot handle within 6 screen px of pos, -1 for none.
     int knotAt(QPointF pos) {
         if (!selectTool_ || selected_ < 0) return -1;
@@ -791,6 +835,8 @@ private:
     std::vector<WidthKnot> knotsBefore_;  // the selected path's knots when the drag began
     bool nodeDrag_ = false;  // a Spiro Node drag is under way
     QPointF nodeStart_;  // where it began, in document coordinates
+    int handleDrag_ = -1;  // the Bezier node whose handle is being dragged (#313), -1 for none
+    bool handleOut_ = false;  // its out handle, else its in handle
     Document::VPath pathBefore_;  // the selected path's nodes and closed when it began
     std::set<int> nodeSel_;  // selected Spiro Node indexes of the selected path
     std::set<int> picked_;  // Select's picked path indexes on layer pickedLayer_

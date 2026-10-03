@@ -332,6 +332,12 @@ void Document::previewNodes(int layer, int path, const std::vector<SpiroNode>& n
     rasterize(layers_[layer]);
 }
 
+void Document::previewPath(int layer, int path, const VPath& v) {
+    if (layer < 0 || layer >= int(layers_.size()) || !layers_[layer].vector || path < 0 || path >= int(layers_[layer].paths.size())) return;
+    layers_[layer].paths[path] = v;
+    rasterize(layers_[layer]);
+}
+
 void Document::rasterize(Layer& l) {
     l.image.fill(Qt::transparent);
     QPainter p(&l.image);

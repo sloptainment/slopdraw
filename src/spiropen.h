@@ -3,6 +3,7 @@
 #include <optional>
 #include <set>
 #include <vector>
+#include <QLineF>
 #include <QTransform>
 #include "document.h"
 
@@ -56,6 +57,19 @@ inline std::vector<SpiroNode> moveNodes(std::vector<SpiroNode> nodes, const std:
     for (int i : selected)
         if (i >= 0 && i < int(nodes.size())) { nodes[i].x += d.x(); nodes[i].y += d.y(); }
     return nodes;
+}
+
+// The node with its out (or in) handle dragged to `to` (#313): a Smooth node turns the other handle opposite, keeping its length;
+// a Symmetric one mirrors it; a Cusp leaves it.
+inline BezierNode moveHandle(BezierNode n, bool out, QPointF to) {
+    QPointF& h = out ? n.out : n.in;
+    QPointF& o = out ? n.in : n.out;
+    h = to;
+    QPointF d = n.p - to;
+    double len = std::hypot(d.x(), d.y());
+    if (n.type == BezierType::Symmetric) o = n.p + d;
+    else if (n.type == BezierType::Smooth && len > 0) o = n.p + d * (QLineF(n.p, o).length() / len);
+    return n;
 }
 
 // The nodes without those at the selected indexes (Node tool Delete, #141); nullopt if fewer than 2 would remain.

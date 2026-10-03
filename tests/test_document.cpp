@@ -1452,6 +1452,28 @@ static bool bezierNodesDragWithHandles() {
     return after && undone && doc.addKnot(l, 0, {40, 45}) && doc.knots(l, 0).size() == 3;
 }
 
+static bool bezierHandleMovesPerType() {
+    BezierNode c{{50, 50}, {40, 50}, {60, 50}, BezierType::Cusp};
+    auto a = moveHandle(c, true, {60, 40});
+    bool cusp = a.out == QPointF(60, 40) && a.in == QPointF(40, 50) && a.p == QPointF(50, 50);
+    BezierNode s{{50, 50}, {30, 50}, {60, 50}, BezierType::Smooth};  // in is 20 long, out 10
+    auto b = moveHandle(s, true, {50, 60});
+    bool smooth = b.out == QPointF(50, 60) && std::abs(b.in.x() - 50) < 1e-9 && std::abs(b.in.y() - 30) < 1e-9;
+    BezierNode y{{50, 50}, {40, 50}, {60, 50}, BezierType::Symmetric};
+    auto d = moveHandle(y, false, {45, 70});
+    bool sym = d.in == QPointF(45, 70) && d.out == QPointF(55, 30);
+    Document doc(QSize(100, 100));
+    int l = doc.addVectorLayer();
+    Document::VPath v{{}, false, Qt::black, 4, {{0, 4}, {1, 4}}, Document::PathKind::Bezier};
+    v.bezier = {{{10, 50}, {10, 50}, {30, 30}, BezierType::Cusp}, {{70, 50}, {60, 30}, {80, 70}, BezierType::Symmetric}};
+    doc.restorePaths(l, {v});
+    auto w = v;
+    w.bezier[1] = moveHandle(w.bezier[1], false, {70, 20});
+    doc.previewPath(l, 0, w);
+    bool live = doc.paths(l)[0].bezier[1].out == QPointF(70, 80) && !doc.undo();
+    return cusp && smooth && sym && live;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1461,6 +1483,7 @@ int main() {
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("bezierNodesDragWithHandles", bezierNodesDragWithHandles);
+    run("bezierHandleMovesPerType", bezierHandleMovesPerType);
     run("penPaintModeGoesOnNextPath", penPaintModeGoesOnNextPath);
     run("penFillSwatchGoesOnNextPath", penFillSwatchGoesOnNextPath);
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);

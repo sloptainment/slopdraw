@@ -98,6 +98,8 @@ public:
     void previewKnots(int layer, int path, const std::vector<WidthKnot>& knots);
     // Like setNodes but only redraws: no undo step; a node set with no curve leaves the path as it was. For live dragging; finish with setNodes.
     void previewNodes(int layer, int path, const std::vector<SpiroNode>& nodes, bool closed);
+    // Replaces path `path` of Vector Layer `layer` with v and redraws: no undo step, no checks beyond the indexes. For live dragging (#313); finish with setPaths.
+    void previewPath(int layer, int path, const VPath& v);
     int layerCount() const { return int(layers_.size()); }
     int current() const { return current_; }
     bool visible(int layer) const { return layers_[layer].visible; }
