@@ -70,7 +70,7 @@ class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
     void setDocument(Document doc, QString path = {}) { Session s{std::move(doc), View(), path, 0}; s.saved = s.doc.stepId(); setSession(std::move(s)); }
-    void setSession(Session s) { cropping_ = -1; s_ = std::move(s); floating_ = false; groupFloat_ = false; groupKeyLayer_ = -1; pasted_ = QImage(); floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
+    void setSession(Session s) { cropping_ = -1; s_ = std::move(s); floating_ = false; groupFloat_ = false; groupKeyLayer_ = -1; pasted_ = QImage(); floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); others_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return s_.doc; }
     Session& session() { return s_; }
     Session takeSession() { commitFloat(); endCrop(); pen_.cancel(); return std::move(s_); }  // the tab being left: a lifted piece lands, an unfinished path drops; setSession must follow
@@ -135,14 +135,21 @@ public:
     // Node/Knot edit's picker: retypes the selected nodes (one undo step); the pen's type is left alone.
     void retypeSelected(SpiroType t) {
         editType_ = t;
-        if (selectTool_ && selected_ >= 0 && !nodeSel_.empty() && !bezierSelected()) editNodes(retypeNodes(s_.doc.nodes(s_.doc.current(), selected_), nodeSel_, t));
+        if (!selectTool_ || bezierSelected() || nodeSels().empty()) return;
+        editSelected([&](Document::VPath& v, const std::set<int>& sel) {
+            if (v.kind != Document::PathKind::Spiro) return true;
+            v.nodes = retypeNodes(v.nodes, sel, t);
+            return bool(spiroToPath(v.nodes, v.closed));
+        });
+        update();
     }
-    // Its Bezier list (#314): retypes the selected Bezier nodes, turning their handles to suit, as one setPaths step.
+    // Its Bezier list (#314): retypes the selected Bezier nodes of every path, turning their handles to suit, as one setPaths step.
     void retypeSelected(BezierType t) {
-        if (!bezierSelected() || nodeSel_.empty()) return;
-        auto paths = s_.doc.paths(s_.doc.current());
-        paths[selected_].bezier = retypeBezier(paths[selected_].bezier, nodeSel_, t, paths[selected_].closed);
-        s_.doc.setPaths(s_.doc.current(), paths);
+        if (!bezierSelected() || nodeSels().empty()) return;
+        editSelected([&](Document::VPath& v, const std::set<int>& sel) {
+            if (v.kind == Document::PathKind::Bezier) v.bezier = retypeBezier(v.bezier, sel, t, v.closed);
+            return true;
+        });
         update();
     }
     bool editingNodes() const { return selectTool_; }
@@ -158,7 +165,7 @@ public:
     void setTool(int t) {
         commitFloat();
         fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4; boxTool_ = t == 5; referenceTool_ = t == ReferenceTool;
-        if (selectTool_) { selected_ = -1; nodeSel_.clear(); }
+        if (selectTool_) { selected_ = -1; nodeSel_.clear(); others_.clear(); }
         if (!spiroTool_) pen_.cancel();
         picked_.clear();
         refPicks_.clear();
@@ -176,6 +183,7 @@ public:
         redo ? s_.doc.redo() : s_.doc.undo();
         selected_ = -1;
         nodeSel_.clear();
+        others_.clear();
         picked_.clear();
         refPicks_.clear();
         box_ = QRect();
@@ -372,29 +380,31 @@ protected:
                 p.drawRect(QRectF(pen_.nodes[i].x - r, pen_.nodes[i].y - r, 2 * r, 2 * r));
             }
         }
-        if (selectTool_ && selected_ >= 0) {  // a square per Spiro Node of the selected path, filled when selected, then a circle per Width Knot
+        auto shown = others_;  // the selected path and the others Shift+click added
+        if (selected_ >= 0) shown[selected_] = nodeSel_;
+        if (selectTool_) for (auto& [sp, sel] : shown) {  // a square per Spiro Node of each, filled when selected, then a circle per Width Knot
             QPen pen(Qt::blue, 1);
             pen.setCosmetic(true);
             p.setPen(pen);
             double r = 4 / s_.view.screenRadius(1);
-            auto nodes = s_.doc.nodes(s_.doc.current(), selected_);
-            auto& path = s_.doc.paths(s_.doc.current())[selected_];
-            for (int i : nodeSel_)  // a selected Bezier node's handles: a line out to a circle, skipped where a handle sits on its point (#313)
+            auto nodes = s_.doc.nodes(s_.doc.current(), sp);
+            auto& path = s_.doc.paths(s_.doc.current())[sp];
+            for (int i : sel)  // a selected Bezier node's handles: a line out to a circle, skipped where a handle sits on its point (#313)
                 if (i < int(path.bezier.size()))
                     for (QPointF h : {path.bezier[i].in, path.bezier[i].out})
                         if (h != path.bezier[i].p) p.setBrush(Qt::white), p.drawLine(path.bezier[i].p, h), p.drawEllipse(h, r, r);
             for (int i = 0; i < int(nodes.size()); i++) {
-                p.setBrush(nodeSel_.count(i) ? Qt::blue : Qt::white);
+                p.setBrush(sel.count(i) ? Qt::blue : Qt::white);
                 p.drawRect(QRectF(nodes[i].x - r, nodes[i].y - r, 2 * r, 2 * r));
             }
         }
-        if (selectTool_ && selected_ >= 0) {  // a handle per Width Knot of the selected path
+        if (selectTool_) for (auto& [sp, sel] : shown) {  // a handle per Width Knot of each
             QPen pen(Qt::blue, 1);
             pen.setCosmetic(true);
             p.setPen(pen);
             p.setBrush(Qt::white);
             double r = 4 / s_.view.screenRadius(1);
-            for (QPointF h : s_.doc.knotHandles(s_.doc.current(), selected_)) p.drawEllipse(h, r, r);
+            for (QPointF h : s_.doc.knotHandles(s_.doc.current(), sp)) p.drawEllipse(h, r, r);
         }
         if (objectTool_) {  // Select: the picked paths' outlines, and the box being dragged
             QPen pen(Qt::blue, 1);
@@ -567,11 +577,13 @@ private:
     void selectAt(QPointF pos) {
         selected_ = s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
         nodeSel_.clear();
+        others_.clear();
         update();
     }
     // Select tool press: on a Width Knot handle of the selected path (within 6 screen px) it starts a drag; on a Spiro Node it selects
     // only that node (Shift toggles it); anywhere else it selects a path and clears the node selection (Shift+click there changes nothing).
     void selectPress(QPointF pos, Qt::KeyboardModifiers mods) {
+        focusHit(pos);
         int i = knotAt(pos);
         int n = selected_ < 0 ? -1 : s_.doc.nodeAt(s_.doc.current(), selected_, s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
         if (i >= 0 && n >= 0) {  // a knot handle near a node (the t=0 knot by node 0): the nearer one takes the press (#368)
@@ -590,17 +602,60 @@ private:
             pathBefore_ = s_.doc.paths(s_.doc.current())[selected_];
             return;
         }
-        if (n < 0 && (mods & Qt::ShiftModifier)) return;
+        if (n < 0 && (mods & Qt::ShiftModifier)) {  // Shift+click on another path shows its nodes to select too, again hides them
+            int p = selected_ < 0 ? -1 : s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
+            if (p >= 0 && p != selected_ && !others_.erase(p)) others_.try_emplace(p);
+            update();
+            return;
+        }
         if (n < 0) return selectAt(pos);
         if (mods & Qt::ShiftModifier) {
             if (!nodeSel_.erase(n)) nodeSel_.insert(n);
         } else {  // a press on a selected node keeps the selection, so all selected nodes drag together
-            if (!nodeSel_.count(n)) nodeSel_ = {n};
+            if (!nodeSel_.count(n)) {
+                nodeSel_ = {n};
+                for (auto& kv : others_) kv.second.clear();
+            }
             nodeDrag_ = true;
             nodeStart_ = s_.view.toDoc(pos);
-            pathBefore_ = {s_.doc.nodes(s_.doc.current(), selected_), s_.doc.paths(s_.doc.current())[selected_].closed};  // nodes(), so a Bezier path's points (#310)
+            nodesBefore_.clear();
+            for (auto& [i, sel] : nodeSels()) nodesBefore_[i] = {s_.doc.nodes(s_.doc.current(), i), s_.doc.paths(s_.doc.current())[i].closed};  // nodes(), so a Bezier path's points (#310)
         }
         update();
+    }
+        // Makes shown path p the selected one; the old one and its node selection join others_.
+    void makePrimary(int p) {
+        if (p == selected_) return;
+        others_[selected_] = std::move(nodeSel_);
+        nodeSel_ = std::move(others_[p]);
+        others_.erase(p);
+        selected_ = p;
+    }
+    // A press on a Width Knot, node or handle of another shown path makes that path the selected one, so every edit below works on it.
+    void focusHit(QPointF pos) {
+        if (selected_ < 0) return;
+        auto hit = [&] { return knotAt(pos) >= 0 || handleAt(pos) || s_.doc.nodeAt(s_.doc.current(), selected_, s_.view.toDoc(pos), 6 / s_.view.screenRadius(1)) >= 0; };
+        if (hit()) return;
+        int home = selected_;
+        for (auto& [p, _] : std::map(others_)) {
+            makePrimary(p);
+            if (hit()) return;
+        }
+        makePrimary(home);
+    }
+    // The node selection of every path that has one: the selected path's and others_'.
+    std::map<int, std::set<int>> nodeSels() const {
+        auto m = others_;
+        if (selected_ >= 0) m[selected_] = nodeSel_;
+        std::erase_if(m, [](auto& kv) { return kv.second.empty(); });
+        return m;
+    }
+    // Edits every path with selected nodes by f as one undo step; f returns false to refuse the whole edit.
+    bool editSelected(const std::function<bool(Document::VPath&, const std::set<int>&)>& f) {
+        auto paths = s_.doc.paths(s_.doc.current());
+        for (auto& [i, sel] : nodeSels())
+            if (!f(paths[i], sel)) return false;
+        return s_.doc.setPaths(s_.doc.current(), paths);
     }
     // Select press on a Vector Layer: on a path it picks that path alone (Shift toggles it); on empty canvas it clears the pick (Shift keeps it)
     // and starts a box that endBox turns into the paths it touches.
@@ -1008,46 +1063,46 @@ private:
         bool ok = pickedLayer_ == s_.doc.current() && (picked_.empty() || *picked_.rbegin() < int(s_.doc.paths(pickedLayer_).size()));
         return ok ? picked_ : none;
     }
-    // Replaces the selected path's nodes with one undo step; a set with no curve is refused and leaves the path as it was.
-    void editNodes(const std::vector<SpiroNode>& nodes) {
-        s_.doc.setNodes(s_.doc.current(), selected_, nodes, s_.doc.paths(s_.doc.current())[selected_].closed);
-        update();
-    }
-    // Delete: drops the selected nodes unless fewer than 2 would remain.
+    // Delete: drops the selected nodes of every path as one step, unless fewer than 2 would remain on one.
     void deleteSelectedNodes() {
-        if (selected_ < 0 || nodeSel_.empty()) return;
-        if (bezierSelected()) {
-            auto paths = s_.doc.paths(s_.doc.current());
-            if (auto kept = removeBezier(paths[selected_], nodeSel_)) {
-                paths[selected_] = *kept;
-                s_.doc.setPaths(s_.doc.current(), paths);
-                nodeSel_.clear();
+        bool ok = editSelected([&](Document::VPath& v, const std::set<int>& sel) {
+            if (v.kind == Document::PathKind::Bezier) {
+                auto kept = removeBezier(v, sel);
+                if (kept) v = *kept;
+                return bool(kept);
             }
-            return;
-        }
-        if (auto kept = removeNodes(s_.doc.nodes(s_.doc.current(), selected_), nodeSel_)) {
-            editNodes(*kept);
-            nodeSel_.clear();
-        }
+            auto kept = removeNodes(v.nodes, sel);
+            if (kept) v.nodes = *kept;
+            return kept && spiroToPath(v.nodes, v.closed);
+        });
+        if (!ok) return;
+        nodeSel_.clear();
+        for (auto& kv : others_) kv.second.clear();
     }
     // The selected nodes follow the pointer live (no undo step yet).
     void dragNodesTo(QPointF pos) {
-        preview_ = [=, this] { s_.doc.previewNodes(s_.doc.current(), selected_, moveNodes(pathBefore_.nodes, nodeSel_, s_.view.toDoc(pos) - nodeStart_), pathBefore_.closed); };
+        preview_ = [=, this] {
+            auto sels = nodeSels();
+            for (auto& [i, was] : nodesBefore_) s_.doc.previewNodes(s_.doc.current(), i, moveNodes(was.nodes, sels[i], s_.view.toDoc(pos) - nodeStart_), was.closed);
+        };
         update();
     }
     // A pen sends far more moves than a re-rasterize can keep up with, so a drag only queues its preview and paint runs the latest one.
     void flushPreview() {
         if (auto f = std::exchange(preview_, nullptr)) f();
     }
-    // Release: one undo step for the whole drag, from the nodes it started with.
+    // Release: one undo step for the whole drag, across every path it moved, from the nodes they started with.
     void endNodeDrag() {
         if (!nodeDrag_) return;
         flushPreview();
-        auto after = s_.doc.nodes(s_.doc.current(), selected_);
-        s_.doc.previewNodes(s_.doc.current(), selected_, pathBefore_.nodes, pathBefore_.closed);
-        auto& was = pathBefore_.nodes;
-        if (!std::equal(after.begin(), after.end(), was.begin(), [](auto& a, auto& b) { return a.x == b.x && a.y == b.y; }))
-            s_.doc.setNodes(s_.doc.current(), selected_, after, pathBefore_.closed);
+        auto after = s_.doc.paths(s_.doc.current());
+        bool moved = false;
+        for (auto& [i, was] : nodesBefore_) {
+            auto now = s_.doc.nodes(s_.doc.current(), i);
+            moved |= !std::equal(now.begin(), now.end(), was.nodes.begin(), [](auto& a, auto& b) { return a.x == b.x && a.y == b.y; });
+            s_.doc.previewNodes(s_.doc.current(), i, was.nodes, was.closed);
+        }
+        if (moved) s_.doc.setPaths(s_.doc.current(), after);
         nodeDrag_ = false;
         update();
     }
@@ -1250,8 +1305,10 @@ private:
     QPointF nodeStart_;  // where it began, in document coordinates
     int handleDrag_ = -1;  // the Bezier node whose handle is being dragged (#313), -1 for none
     bool handleOut_ = false;  // its out handle, else its in handle
-    Document::VPath pathBefore_;  // the selected path's nodes and closed when it began
+    Document::VPath pathBefore_;  // the selected path's nodes and closed when a handle drag began
+    std::map<int, Document::VPath> nodesBefore_;  // each moved path's nodes and closed when a node drag began
     std::set<int> nodeSel_;  // selected Spiro Node indexes of the selected path
+    std::map<int, std::set<int>> others_;  // other paths shown by Shift+click, with their selected node indexes
     std::set<int> picked_;  // Select's picked path indexes on layer pickedLayer_
     int pickedLayer_ = -1;
     bool moveDrag_ = false;  // a Transform box move or scale is under way
