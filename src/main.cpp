@@ -66,7 +66,7 @@ class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
     void setDocument(Document doc, QString path = {}) { Session s{std::move(doc), View(), path, 0}; s.saved = s.doc.stepId(); setSession(std::move(s)); }
-    void setSession(Session s) { s_ = std::move(s); floating_ = false; floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
+    void setSession(Session s) { s_ = std::move(s); floating_ = false; floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return s_.doc; }
     Session& session() { return s_; }
     Session takeSession() { commitFloat(); pen_.cancel(); return std::move(s_); }  // the tab being left: a lifted piece lands, an unfinished path drops; setSession must follow
@@ -142,6 +142,7 @@ public:
         if (!spiroTool_) pen_.cancel();
         picked_.clear();
         refPicks_.clear();
+        frame_.reset();
         boxing_ = false;
         unsetCursor();
         update();
@@ -164,6 +165,7 @@ public:
         commitFloat();
         s_.doc.addReference({img, placeReference(img.size(), size(), s_.view.matrix()), QRectF(img.rect()), 1});
         refPicks_ = {int(s_.doc.references().size()) - 1};
+        frame_.reset();
         update();
         if (onLayersChange) onLayersChange();
     }
@@ -262,6 +264,16 @@ protected:
             p.drawPolygon((r.transform * s_.view.matrix()).map(QPolygonF(r.crop)));
             p.restore();
         }
+        if (referenceTool_) {  // the Transform box on the picks, and the box being dragged (#542)
+            if (!refPicks_.empty()) drawTransformBox(p, frame());
+            if (boxing_ && cursor_) {
+                QPen pen(Qt::blue, 1, Qt::DashLine);
+                pen.setCosmetic(true);
+                p.setPen(pen);
+                p.setBrush(Qt::NoBrush);
+                p.drawRect(QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized());
+            }
+        }
         if (lasso_.size() > 1) {
             QPainterPath lasso;
             lasso.addPolygon(lasso_);
@@ -350,7 +362,7 @@ protected:
         resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && (e->modifiers() & Qt::ShiftModifier);
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier) && !editKnot(e->position(), e->modifiers())) pickAt(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) return;
-        else if (referenceTool_) return;  // picking and moving come with #542
+        else if (referenceTool_) { if (e->button() == Qt::LeftButton && !space_) refPress(e->position(), e->modifiers()); }
         else if (e->button() == Qt::RightButton && spiroTool_) finishPath(false);
         else if (e->button() == Qt::RightButton && objectTool_) flipMenu(e->globalPosition().toPoint());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && selectTool_) selectPress(e->position(), e->modifiers());
@@ -398,7 +410,7 @@ protected:
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
         else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
-        else if (referenceTool_) return;
+        else if (referenceTool_) { if (e->type() == QEvent::TabletPress) refPress(e->position(), e->modifiers()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); else if (handleDrag_ >= 0) dragHandleTo(e->position()); }
         else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (boxTool_) { if (e->type() == QEvent::TabletPress) boxPress(e->position()); }
@@ -423,6 +435,7 @@ protected:
         else if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
             if (selectTool_) deleteSelectedNodes();
             else if (objectTool_) deletePicked();
+            else if (referenceTool_) deleteRefPicks();
             else if (boxTool_) deleteBox();
             else pen_.backspace();
             update();
@@ -444,7 +457,8 @@ private:
         if (selectTool_) return "Click or Shift+click nodes · drag nodes · Delete removes them · drag a knot · Ctrl+click a knot duplicates · Ctrl+click the path adds a knot · Ctrl+Shift+click the path adds a node · Ctrl+Alt+click deletes";
         if (objectTool_ && rasterBox()) return "Drag inside the box moves the pixels · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts them back";
         if (objectTool_ && !s_.doc.vector(s_.doc.current())) return "Make a rectangle with Box Select first, then Select transforms its pixels";
-        if (referenceTool_) return "File > Import Reference Image adds a picture";
+        if (referenceTool_ && refPicks_.empty()) return "Click a reference to pick it · Shift+click toggles · drag a box on empty canvas picks the ones it touches · File > Import Reference Image adds a picture";
+        if (referenceTool_) return QString("%1 picked · drag inside the box moves them · Delete removes them · click or drag a box to pick again · Shift adds").arg(refPicks_.size());
         if (boxTool_ && box_.isEmpty()) return "Drag a rectangle to select pixels";
         if (boxTool_) return "Delete clears the pixels · drag a new rectangle to replace it · click outside or Esc clears the selection";
         if (objectTool_ && picked().empty()) return "Click a path to pick it · Shift+click toggles · drag a box on empty canvas picks the paths it touches";
@@ -540,6 +554,39 @@ private:
         }
         update();
     }
+    // Reference tool press (#542): inside the Transform box (not on an unpicked reference) a drag moves the picks; otherwise a
+    // reference is picked alone (Shift toggles it), or empty canvas clears the pick (Shift keeps it) and starts a box.
+    void refPress(QPointF pos, Qt::KeyboardModifiers mods) {
+        bool shift = mods & Qt::ShiftModifier;
+        QPointF d = s_.view.toDoc(pos);
+        int i = referenceAt(s_.doc.references(), d);
+        if (!shift && !refPicks_.empty() && frame().rect.contains(frame().toDoc().inverted().map(d)) && (i < 0 || refPicks_.count(i))) {
+            moveFrame_ = frame();
+            moveDrag_ = true;
+            rotating_ = false;
+            handle_.reset();
+            moveStart_ = d;
+            dragM_ = {};
+            refsBefore_ = s_.doc.references();
+            return;
+        }
+        frame_.reset();
+        if (!shift) refPicks_.clear();
+        if (i < 0) boxing_ = true, boxStart_ = d;
+        else if (!shift) refPicks_ = {i};
+        else if (!refPicks_.erase(i)) refPicks_.insert(i);
+        update();
+    }
+    // Delete: removes the picked references as one undo step.
+    void deleteRefPicks() {
+        if (refPicks_.empty()) return;
+        std::vector<Reference> kept;
+        for (int i = 0; i < int(s_.doc.references().size()); i++) if (!refPicks_.count(i)) kept.push_back(s_.doc.references()[i]);
+        s_.doc.setReferences(kept);
+        refPicks_.clear();
+        update();
+        if (onLayersChange) onLayersChange();
+    }
     // Select press on a Raster Layer: with a Box Select rectangle, a handle, the rotate circle or the inside of the box starts a drag of the piece; outside commits a floating one.
     void rasterPress(QPointF pos) {
         if (!rasterBox()) return;
@@ -598,6 +645,9 @@ private:
             if (boxTool_) {
                 if (dragged) { box_ = box.toAlignedRect() & s_.doc.image(0).rect(); boxLayer_ = s_.doc.current(); frame_.reset(); }
                 else if (!box_.contains(box.topLeft().toPoint())) box_ = QRect();
+            } else if (dragged && referenceTool_) {
+                auto in = referencesIn(s_.doc.references(), box);
+                refPicks_.insert(in.begin(), in.end());
             } else if (dragged) {
                 auto in = s_.doc.pathsIn(s_.doc.current(), box);
                 picked_.insert(in.begin(), in.end());
@@ -627,6 +677,7 @@ private:
     }
     // The Transform box: the frame a rotate drag left, else the picked paths' bounds, unturned (#202).
     BoxFrame frame() const {
+        if (referenceTool_) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : frame_ ? *frame_ : BoxFrame{referencesBounds(s_.doc.references(), refPicks_), 0};
         if (rasterBox()) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : frame_ ? *frame_ : BoxFrame{QRectF(box_), 0};
         if (moveDrag_ && (rotating_ || frame_)) return frameAfter(moveFrame_, dragM_);
         return frame_ ? *frame_ : BoxFrame{pickedBounds(s_.doc.paths(s_.doc.current()), picked()), 0};
@@ -641,6 +692,7 @@ private:
     void dragMoveTo(QPointF pos, bool shift) {
         preview_ = [=, this] {
             dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, s_.view.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), shift) : QTransform::fromTranslate(s_.view.toDoc(pos).x() - moveStart_.x(), s_.view.toDoc(pos).y() - moveStart_.y());
+            if (referenceTool_) return s_.doc.previewReferences(transformReferences(refsBefore_, refPicks_, dragM_));
             if (rasterBox()) {  // lift on the first drag; every drag resamples from the untouched pixels
                 floating_ = s_.doc.floatRect(box_, floatM_ * dragM_);
                 return;
@@ -655,6 +707,13 @@ private:
         if (!moveDrag_) return;
         flushPreview();
         moveDrag_ = false;
+        if (referenceTool_) {  // one References step from the list the drag began with
+            if (dragM_.isIdentity()) return;
+            s_.doc.previewReferences(refsBefore_);
+            s_.doc.setReferences(transformReferences(refsBefore_, refPicks_, dragM_));
+            if (frame_) frame_ = frameAfter(moveFrame_, dragM_);
+            return update();
+        }
         if (rasterBox()) {
             if (floating_) { floatM_ = floatM_ * dragM_; frame_ = frameAfter(moveFrame_, dragM_); }
             return;
@@ -970,7 +1029,8 @@ private:
     int penLayer_ = -1;  // the layer the Spiro Pen's unfinished path was started on
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false, referenceTool_ = false;
-    std::vector<int> refPicks_;  // the Reference tool's picked references, indexes into Document::references()
+    std::set<int> refPicks_;  // the Reference tool's picked references, indexes into Document::references()
+    std::vector<Reference> refsBefore_;  // the references when a Reference tool drag began
     double pathWidth_ = 10;  // px
     Document::PaintMode paintMode_ = Document::PaintMode::Stroke;
     QColor penStroke_ = Qt::black, penFill_ = QColor(0x2d, 0x5d, 0x9a);  // the Pen's Stroke and Fill swatches

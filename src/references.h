@@ -1,6 +1,7 @@
 #pragma once
 #include <QPainter>
 #include <QTransform>
+#include <set>
 #include <vector>
 #include "document.h"
 
@@ -10,3 +11,11 @@ void drawReferences(QPainter& p, const std::vector<Reference>& refs, const QTran
 // An imported picture's transform (#539): image pixels 1:1 to document pixels, scaled down if it would not fit inside a
 // viewSize widget under view, centred on the widget's centre.
 QTransform placeReference(QSize image, QSize viewSize, const QTransform& view);
+// The topmost reference whose cropped area holds the document point p, -1 for none (#542).
+int referenceAt(const std::vector<Reference>& refs, QPointF p);
+// The references whose cropped area touches box (#542).
+std::set<int> referencesIn(const std::vector<Reference>& refs, const QRectF& box);
+// The union of the picked references' cropped areas, in document coordinates: the Transform box.
+QRectF referencesBounds(const std::vector<Reference>& refs, const std::set<int>& picks);
+// refs with each picked one's placement followed by m.
+std::vector<Reference> transformReferences(std::vector<Reference> refs, const std::set<int>& picks, const QTransform& m);

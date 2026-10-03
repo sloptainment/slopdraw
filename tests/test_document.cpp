@@ -1256,6 +1256,17 @@ static bool importedReferenceFitsTheView() {
         && near(big.map(QPointF(0, 0)), {50, 45}) && near(big.map(QPointF(1000, 500)), {250, 145});
 }
 
+// #542: the Reference tool picks the topmost reference under a point (inside its crop), the ones a box touches, and moves picks only.
+static bool referencesPickAndMove() {
+    QImage pic(10, 10, QImage::Format_ARGB32_Premultiplied);
+    std::vector<Reference> refs{{pic, QTransform(), QRectF(0, 0, 10, 10), 1}, {pic, QTransform::fromTranslate(5, 5), QRectF(0, 0, 2, 2), 1}};
+    auto moved = transformReferences(refs, {0}, QTransform::fromTranslate(3, 0));
+    return referenceAt(refs, {6, 6}) == 1 && referenceAt(refs, {8, 8}) == 0 && referenceAt(refs, {30, 30}) == -1
+        && referencesIn(refs, QRectF(20, 20, 5, 5)).empty() && referencesIn(refs, QRectF(6.5, 6.5, 5, 5)) == std::set<int>{0, 1}
+        && referencesBounds(refs, {0, 1}) == QRectF(0, 0, 10, 10) && referencesBounds(refs, {1}) == QRectF(5, 5, 2, 2)
+        && near(moved[0].transform.map(QPointF()), {3, 0}) && near(moved[1].transform.map(QPointF()), {5, 5});
+}
+
 // A layer switch keeps a tool that fits the new layer's kind, else picks the last tool used on that kind (#161), Brush and Spiro Pen the first time.
 static bool toolFollowsLayerKind() {
     return toolForLayer(false, SpiroPenTool) == BrushTool && toolForLayer(true, BrushTool) == SpiroPenTool
@@ -1829,6 +1840,7 @@ int main() {
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("oraRoundTripsReferences", oraRoundTripsReferences);
     run("importedReferenceFitsTheView", importedReferenceFitsTheView);
+    run("referencesPickAndMove", referencesPickAndMove);
     run("oraRoundTripsAlphaFlags", oraRoundTripsAlphaFlags);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);

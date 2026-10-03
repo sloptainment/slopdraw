@@ -42,3 +42,31 @@ QTransform placeReference(QSize image, QSize viewSize, const QTransform& view) {
     QPointF c = view.inverted().map(QRectF(QPointF(), viewSize).center());
     return QTransform::fromTranslate(-image.width() / 2.0, -image.height() / 2.0) * QTransform::fromScale(k, k) * QTransform::fromTranslate(c.x(), c.y());
 }
+
+static QPolygonF area(const Reference& r) { return r.transform.map(QPolygonF(r.crop)); }
+
+int referenceAt(const std::vector<Reference>& refs, QPointF p) {
+    for (int i = int(refs.size()) - 1; i >= 0; i--)
+        if (area(refs[i]).containsPoint(p, Qt::OddEvenFill)) return i;
+    return -1;
+}
+
+std::set<int> referencesIn(const std::vector<Reference>& refs, const QRectF& box) {
+    std::set<int> in;
+    for (int i = 0; i < int(refs.size()); i++)
+        if (area(refs[i]).intersects(QPolygonF(box))) in.insert(i);
+    return in;
+}
+
+QRectF referencesBounds(const std::vector<Reference>& refs, const std::set<int>& picks) {
+    QRectF b;
+    for (int i : picks)
+        if (i >= 0 && i < int(refs.size())) b |= area(refs[i]).boundingRect();
+    return b;
+}
+
+std::vector<Reference> transformReferences(std::vector<Reference> refs, const std::set<int>& picks, const QTransform& m) {
+    for (int i : picks)
+        if (i >= 0 && i < int(refs.size())) refs[i].transform *= m;
+    return refs;
+}
