@@ -1468,7 +1468,20 @@ int main(int argc, char** argv) {
     brushDock->setWidget(brushPanel);
 
     // Layers dock: the list runs top layer first, so row = layerCount - 1 - index. refresh() rebuilds it from the Document.
-    auto* layerList = new QListWidget;
+    // Drag a row to a gap between rows (#459): the drop is handed over as the dragged item's Document index and the row gap; Qt moves nothing, refresh() rebuilds the rows.
+    struct LayerList : QListWidget {
+        std::function<void(int, int)> onDrop;
+        void dropEvent(QDropEvent* e) override {
+            auto* it = itemAt(e->position().toPoint());
+            int gap = it ? row(it) + (e->position().y() > visualItemRect(it).center().y()) : count();
+            e->setDropAction(Qt::IgnoreAction);
+            e->accept();
+            if (currentItem()) onDrop(currentItem()->data(Qt::UserRole).toInt(), gap);
+        }
+    };
+    auto* layerList = new LayerList;
+    layerList->setDragDropMode(QAbstractItemView::InternalMove);
+    layerList->setDropIndicatorShown(true);
     auto* layerOpacity = new QSlider(Qt::Horizontal);  // percent, of the current layer
     layerOpacity->setRange(0, 100);
     auto* layerOpacityValue = new QLabel;
@@ -1588,6 +1601,11 @@ int main(int argc, char** argv) {
         if (updateTitle) updateTitle();
     };
     canvas->onLayersChange = refresh;
+    layerList->onDrop = [canvas, layerList](int from, int gap) {  // above the row under the line; nothing drops below the Background
+        if (gap >= layerList->count()) return;
+        if (canvas->doc().moveItem(from, layerList->item(gap)->data(Qt::UserRole).toInt() + 1, canvas->doc().depth(from)))
+            QTimer::singleShot(0, [canvas] { canvas->onLayersChange(); });
+    };
     QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
         if (row < 0) return;
         canvas->doc().setCurrent(layerList->item(row)->data(Qt::UserRole).toInt());
