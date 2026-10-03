@@ -65,16 +65,26 @@ Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget) {
     layers_[0].image.fill(Qt::white);
 }
 
-QImage Document::render() const {
+QImage Document::render() const { return compose(0, int(layers_.size()), 0); }
+
+QImage Document::compose(int lo, int hi, int d) const {
     QImage out(layers_[0].image.size(), QImage::Format_RGBA8888);
     out.fill(Qt::transparent);
+    // walk down the level's items, a group taking the deeper run below it
+    std::vector<std::pair<int, int>> items;  // (item, first child)
+    for (int i = hi - 1; i >= lo;) {
+        int s = i;
+        if (layers_[i].group) while (s > lo && layers_[s - 1].depth > d) s--;
+        items.push_back({i, s});
+        i = s - 1;
+    }
     QPainter p(&out);
-    for (size_t i = 0; i < layers_.size(); i++) {
-        const Layer& l = layers_[i];
+    for (size_t k = items.size(); k-- > 0;) {
+        const Layer& l = layers_[items[k].first];
         if (!l.visible) continue;
         p.setOpacity(l.opacity);
-        p.setCompositionMode(i && l.inheritAlpha ? QPainter::CompositionMode_SourceAtop : QPainter::CompositionMode_SourceOver);
-        p.drawImage(0, 0, l.image);
+        p.setCompositionMode(k + 1 < items.size() && l.inheritAlpha ? QPainter::CompositionMode_SourceAtop : QPainter::CompositionMode_SourceOver);
+        p.drawImage(0, 0, l.group ? compose(items[k].second, items[k].first, d + 1) : l.image);
     }
     return out;
 }
@@ -88,6 +98,24 @@ int Document::addLayer() {
     s.kind = Add;
     s.layer = int(layers_.size());
     s.na = "Layer " + QString::number(s.layer);
+    push(s);
+    apply(s, false);
+    return current_;
+}
+
+int Document::addGroup() {
+    seal();
+    Step s;
+    s.kind = Tree;
+    s.items = layers_;
+    s.to = current_;
+    Layer g;
+    g.name = "Group " + QString::number(layers_.size());
+    g.depth = layers_[current_].depth;
+    g.group = true;
+    s.newItems = layers_;
+    s.newItems.insert(s.newItems.begin() + current_ + 1, g);
+    s.layer = current_ + 1;
     push(s);
     apply(s, false);
     return current_;
@@ -417,8 +445,10 @@ void Document::restorePaths(int layer, const std::vector<VPath>& paths) {
     applied_ = 0;
 }
 
-void Document::restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity, bool alphaLock, bool inheritAlpha) {
-    layers_[layer] = {visible, opacity, image.convertToFormat(QImage::Format_RGBA8888), name};
+void Document::restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity, bool alphaLock, bool inheritAlpha, int depth, bool group) {
+    layers_[layer] = {visible, opacity, group ? QImage() : image.convertToFormat(QImage::Format_RGBA8888), name};
+    layers_[layer].depth = depth;
+    layers_[layer].group = group;
     layers_[layer].alphaLock = alphaLock;
     layers_[layer].inheritAlpha = inheritAlpha;
     history_.clear();
@@ -497,6 +527,19 @@ bool Document::deleteLayer(int layer) {
     if (layer < 1 || layer >= int(layers_.size())) return false;
     seal();
     Step s;
+    if (layers_[layer].group) {  // the block goes with it
+        int lo = layer;
+        while (layers_[lo - 1].depth > layers_[layer].depth) lo--;
+        s.kind = Tree;
+        s.items = layers_;
+        s.to = current_;
+        s.newItems = layers_;
+        s.newItems.erase(s.newItems.begin() + lo, s.newItems.begin() + layer + 1);
+        s.layer = lo - 1;
+        push(s);
+        apply(s, false);
+        return true;
+    }
     s.kind = Delete;
     s.layer = layer;
     s.before = layers_[layer].image;
@@ -505,7 +548,7 @@ bool Document::deleteLayer(int layer) {
     s.na = layers_[layer].name;
     s.vector = layers_[layer].vector;
     s.paths = layers_[layer].paths;
-    s.to = layers_[layer].alphaLock | layers_[layer].inheritAlpha << 1;
+    s.to = layers_[layer].alphaLock | layers_[layer].inheritAlpha << 1 | layers_[layer].depth << 2;
     push(s);
     apply(s, false);
     return true;
@@ -552,10 +595,14 @@ void Document::apply(const Step& s, bool reverse) {
         layers_[s.layer].vector = s.vector;
         break;
     case Delete:
-        if (reverse) insert({bool(s.b), s.a, s.before, s.na, s.vector, s.paths, bool(s.to & 1), bool(s.to & 2)});
+        if (reverse) insert({bool(s.b), s.a, s.before, s.na, s.vector, s.paths, bool(s.to & 1), bool(s.to & 2), s.to >> 2});
         else remove();
         break;
     case Move: reverse ? applyMove(s.to, s.layer) : applyMove(s.layer, s.to); break;
+    case Tree:
+        layers_ = reverse ? s.items : s.newItems;
+        current_ = reverse ? s.to : s.layer;
+        break;
     case Visible: layers_[s.layer].visible = reverse ? s.a : s.b; break;
     case Opacity: layers_[s.layer].opacity = reverse ? s.a : s.b; break;
     case AlphaLock: layers_[s.layer].alphaLock = reverse ? s.a : s.b; break;

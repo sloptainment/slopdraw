@@ -117,6 +117,11 @@ public:
     QString name(int layer) const { return layers_[layer].name; }
     void setName(int layer, const QString& name);
     bool vector(int layer) const { return layers_[layer].vector; }
+    // Groups (#424): every item has a depth (0 = root); a group has no pixels and sits directly above its children, the run below it that is deeper.
+    int depth(int layer) const { return layers_[layer].depth; }
+    bool isGroup(int layer) const { return layers_[layer].group; }
+    // Adds an empty group directly above the current item, at its depth, and makes it current; returns its index. One undo step.
+    int addGroup();
     // Alpha Lock (#427): a Raster Layer flag, one undo step (a same-value call is none). A Vector Layer refuses it: returns false, no step.
     bool alphaLock(int layer) const { return layers_[layer].alphaLock; }
     bool setAlphaLock(int layer, bool on);
@@ -134,11 +139,12 @@ public:
     void restorePaths(int layer, const std::vector<VPath>& paths);
     const QImage& image(int layer) const { return layers_[layer].image; }
     // For loading a file into a fresh Document: replaces a layer's contents outright and drops the undo history.
-    void restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity, bool alphaLock = false, bool inheritAlpha = false);
+    void restoreLayer(int layer, const QImage& image, const QString& name, bool visible, double opacity, bool alphaLock = false, bool inheritAlpha = false, int depth = 0, bool group = false);
     void setCurrent(int layer);
     void setVisible(int layer, bool visible);
     void setOpacity(int layer, double opacity);
     // Both leave the background (layer 0) alone and return false when they do nothing. moveLayer puts layer `from` at index `to`.
+    // Deleting a group deletes its children too, as one undo step.
     // Every layer op (add, delete, move, visibility, opacity) is one undo step, in the same history as strokes.
     bool deleteLayer(int layer);
     bool moveLayer(int from, int to);
@@ -157,9 +163,21 @@ public:
 private:
     // Pixels: before/after pixels of the rect a stroke changed. The layer ops keep what undo needs: Add nothing (its layer is blank
     // once later steps are undone), Delete the layer's image in before plus its visible/opacity in a/b, Move the target index in to,
-    // Visible, Opacity, AlphaLock and InheritAlpha the old and new value in a and b (Delete keeps both flags in to, lock as bit 0), Name the old and new in na and nb.
+    // Visible, Opacity, AlphaLock and InheritAlpha the old and new value in a and b (Delete keeps both flags and the depth in to, lock as bit 0, inherit as bit 1, depth from bit 2; Tree the whole item list before and after in items and newItems, the current item in to and layer), Name the old and new in na and nb.
     // A Vector Layer's paths are kept as nodes and its image is redrawn from them; Add carries vector, Delete the paths, PathAdd the new path, Knots the old and new Width Knots of one path, Nodes the old and new path in paths[0] and paths[1] (index in to), Rasterize the dropped paths, Paths the old and new list in paths and newPaths.
-    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, AlphaLock, InheritAlpha, PathAdd, Knots, Nodes, Rasterize, Paths, References };
+    struct Layer {
+        bool visible = true;
+        double opacity = 1;
+        QImage image;
+        QString name;
+        bool vector = false;
+        std::vector<VPath> paths;
+        bool alphaLock = false;
+        bool inheritAlpha = false;
+        int depth = 0;
+        bool group = false;  // no pixels: image is null
+    };
+    enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, AlphaLock, InheritAlpha, PathAdd, Knots, Nodes, Rasterize, Paths, References, Tree };
     struct Step {
         Kind kind = Pixels;
         int id = 0;
@@ -170,6 +188,7 @@ private:
         double a = 0, b = 0;
         bool vector = false;
         std::vector<VPath> paths, newPaths;
+        std::vector<Layer> items, newItems;  // Tree
         std::vector<Reference> refs, newRefs;  // References: the old and new list
         std::vector<WidthKnot> ka, kb;  // Knots: path index in to, the old and new knots
         QString na, nb;  // Add: the new layer's name (nb unused); Delete: the deleted name in na; Name: old and new
@@ -182,16 +201,8 @@ private:
     // Turns the stroke in progress (if any) into a Step of history_, and drops the oldest past the budget.
     void seal();
 
-    struct Layer {
-        bool visible = true;
-        double opacity = 1;
-        QImage image;
-        QString name;
-        bool vector = false;
-        std::vector<VPath> paths;
-        bool alphaLock = false;
-        bool inheritAlpha = false;
-    };
+    // The items [lo, hi), all at depth d or deeper, composited into one transparent image: each level on its own, groups at their opacity.
+    QImage compose(int lo, int hi, int d) const;
     // Redraws a Vector Layer's image from its paths.
     static void rasterize(Layer& l);
     std::vector<Layer> layers_;  // bottom to top, never empty

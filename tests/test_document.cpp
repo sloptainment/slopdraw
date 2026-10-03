@@ -1838,6 +1838,44 @@ static bool pasteAfterLiveStrokeKeepsTheStroke() {
     return pasted && undone;
 }
 
+// #454: a group composites its children on their own; groups nest, hide, and delete with their block as one undo step.
+// Items bottom to top: 0 Background, 1 red, 2 blue (both depth 2), 3 inner group (depth 1), 4 outer group (depth 0) at 50%.
+static bool groupsCompositeIsolatedAndUndoAsOne() {
+    const std::vector<QPointF> all = {{0, 0}, {64, 0}, {64, 64}, {0, 64}};
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.fill(Qt::red, all);
+    doc.addLayer();
+    doc.fill(Qt::blue, all);
+    doc.addLayer();
+    doc.addLayer();
+    QImage red = doc.image(1), blue = doc.image(2);
+    doc.restoreLayer(1, red, "red", true, 1, false, false, 2, false);
+    doc.restoreLayer(2, blue, "blue", true, 1, false, false, 2, false);
+    doc.restoreLayer(3, QImage(), "inner", true, 1, false, false, 1, true);
+    doc.restoreLayer(4, QImage(), "outer", true, 0.5, false, false, 0, true);
+    QColor c = doc.render().pixelColor(10, 10);
+    if (std::abs(c.red() - 128) > 1 || std::abs(c.green() - 128) > 1 || c.blue() != 255) return false;  // 2: red does not show through blue
+    doc.setVisible(4, false);
+    if (doc.render().pixelColor(10, 10) != QColor(Qt::white)) return false;  // 3: hidden outer group
+    doc.setVisible(4, true);
+    doc.setVisible(3, false);
+    if (doc.render().pixelColor(10, 10) != QColor(Qt::white)) return false;  // 3: hidden inner group
+    doc.setVisible(3, true);
+    QImage before = doc.render();
+    doc.setCurrent(2);
+    if (doc.addGroup() != 3 || !doc.isGroup(3) || doc.depth(3) != 2 || doc.current() != 3 || doc.layerCount() != 6) return false;  // 1
+    if (doc.render() != before) return false;  // an empty group draws nothing
+    doc.undo();
+    if (doc.layerCount() != 5 || doc.current() != 2) return false;
+    doc.setCurrent(4);
+    if (!doc.deleteLayer(4) || doc.layerCount() != 1 || doc.current() != 0 || doc.render().pixelColor(10, 10) != QColor(Qt::white)) return false;  // 4
+    doc.undo();
+    if (doc.layerCount() != 5 || doc.current() != 4 || doc.render() != before || doc.depth(1) != 2 || !doc.isGroup(3) || doc.depth(0) != 0) return false;
+    doc.redo();
+    return doc.layerCount() == 1 && doc.undo() && doc.layerCount() == 5;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1944,5 +1982,6 @@ int main() {
     run("knotDragIsScaled", knotDragIsScaled);
     run("removeBezierJoinsNeighbours", removeBezierJoinsNeighbours);
     run("splitBezierKeepsTheShape", splitBezierKeepsTheShape);
+    run("groupsCompositeIsolatedAndUndoAsOne", groupsCompositeIsolatedAndUndoAsOne);
     return failed != 0;
 }
