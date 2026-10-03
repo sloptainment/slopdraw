@@ -225,7 +225,15 @@ public:
     void mirror() { s_.view.mirrorAt(rect().center()); update(); }
     // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
     bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && eraseBrush_; }
-    void setErase(bool on) { if (!spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_) (fillTool_ ? eraseFill_ : eraseBrush_) = on; }
+    void setErase(bool on) {
+        if (spiroTool_ || selectTool_ || objectTool_ || boxTool_) return;
+        if (!fillTool_ && eraseBrush_ != on) {  // the Brush keeps a Size and Opacity per mode: swap in the other mode's
+            float r = radius(), o = opacity();
+            setRadius(otherRadius_), setOpacity(otherOpacity_);
+            otherRadius_ = r, otherOpacity_ = o;
+        }
+        (fillTool_ ? eraseFill_ : eraseBrush_) = on;
+    }
     void setScaleWidths(bool on) { scaleWidths_ = on; }
     // The picks' width in Select, knots scaled (#305), else a new Vector Path's width in px, from the Spiro Pen's Tool Options
     void setPathWidth(double w) { if (!editPicks([w](Document::VPath& p) { p = rewidthPath(p, w); })) pathWidth_ = w; }
@@ -1283,6 +1291,7 @@ private:
     QColor penStroke_ = Qt::black, penFill_ = QColor(0x2d, 0x5d, 0x9a);  // the Pen's Stroke and Fill swatches
     bool fillActive_ = false;
     float lassoOpacity_ = 1;
+    float otherRadius_ = radius(), otherOpacity_ = opacity();  // the Brush's Size and Opacity for the mode it isn't in
     bool fillTool_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
 };
 
@@ -2395,7 +2404,7 @@ int main(int argc, char** argv) {
     toolsMenu->addSeparator();
     auto* erase = key(toolsMenu->addAction("&Erase mode"), {QKeySequence("E")});
     erase->setCheckable(true);
-    QObject::connect(erase, &QAction::toggled, [canvas, eraseBox, erase](bool on) { canvas->setErase(on); eraseBox->setChecked(canvas->erase()); erase->setChecked(canvas->erase()); });
+    QObject::connect(erase, &QAction::toggled, [canvas, eraseBox, erase, opacity](bool on) { canvas->setErase(on); canvas->onRadiusChange(); opacity->setValue(std::lround(canvas->opacity() * 100)); eraseBox->setChecked(canvas->erase()); erase->setChecked(canvas->erase()); });
     auto showOptionsFor = canvas->onToolChange;
     canvas->onToolChange = [=](int tool) { showOptionsFor(tool); erase->setChecked(canvas->erase()); };  // the new tool's own Erase
     QObject::connect(eraseBox, &QCheckBox::toggled, erase, &QAction::setChecked);  // each side's setChecked with the same value emits nothing, so they settle
