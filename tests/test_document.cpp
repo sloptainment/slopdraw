@@ -2035,6 +2035,42 @@ static bool severalItemsWrapStepAndMove() {
     return tree(n) == "bg0 a0 b0 c0 d1 Group 50" && !n.moveItems({1, 5}, 5, 0);  // a gap inside a selected block
 }
 
+// #473: the row settings take several layers and are one undo step each: visibility, opacity, Alpha Lock (Raster only), Inherit Alpha, delete, Rasterize (Vector only).
+static bool rowSettingsOnSeveralLayers() {
+    Document d = flat(3);  // bg a b c
+    d.addVectorLayer();
+    d.setName(4, "v");
+    int id = d.stepId();
+    if (!d.setVisible({1, 2, 3}, false) || d.visible(1) || d.visible(2) || d.visible(3) || d.stepId() == id) return false;
+    d.undo();
+    if (d.stepId() != id) return false;  // one undo step took it all back
+    if (!d.visible(1) || !d.visible(2) || !d.visible(3)) return false;
+    id = d.stepId();
+    if (!d.setOpacity({1, 2, 3}, 0.5) || d.opacity(2) != 0.5 || d.stepId() == id) return false;
+    d.undo();
+    if (d.stepId() != id) return false;  // one undo step took it all back
+    if (d.opacity(1) != 1 || d.opacity(3) != 1) return false;
+    id = d.stepId();
+    if (!d.setAlphaLock({1, 2, 4}, true) || !d.alphaLock(1) || !d.alphaLock(2) || d.alphaLock(4) || d.stepId() == id) return false;  // the Vector Layer is skipped
+    d.undo();
+    if (d.stepId() != id) return false;  // one undo step took it all back
+    if (d.alphaLock(1) || d.alphaLock(2)) return false;
+    id = d.stepId();
+    if (!d.setInheritAlpha({1, 3}, true) || !d.inheritAlpha(1) || !d.inheritAlpha(3) || d.stepId() == id) return false;
+    d.undo();
+    if (d.stepId() != id) return false;  // one undo step took it all back
+    if (d.inheritAlpha(1) || d.setAlphaLock({4}, true) || d.stepId() != id) return false;  // nothing to lock: no step
+    if (!d.rasterizeLayers({1, 4}) || d.vector(4) || d.stepId() == id) return false;  // the Raster Layer is skipped
+    d.undo();
+    if (d.stepId() != id) return false;  // one undo step took it all back
+    if (!d.vector(4)) return false;
+    id = d.stepId();
+    if (!d.deleteLayers({1, 3}) || tree(d) != "bg0 b0 v0" || d.stepId() == id) return false;
+    d.undo();
+    if (d.stepId() != id) return false;  // one undo step took it all back
+    return tree(d) == "bg0 a0 b0 c0 v0" && !d.deleteLayers({0}) && d.stepId() == id;
+}
+
 // #461: a group floats as one piece: its raster children's pixels and vector children's paths go through one matrix, live from a snapshot,
 // committed as one undo step or cancelled with none. Items: 0 Background, 1 vector (path y=10), 2 raster (red square), 3 group over both.
 static bool groupFloatsCommitsAndCancels() {
@@ -2278,6 +2314,7 @@ int main() {
     run("groupsCompositeIsolatedAndUndoAsOne", groupsCompositeIsolatedAndUndoAsOne);
     run("wrapStepAndMoveReshapeTheTree", wrapStepAndMoveReshapeTheTree);
     run("severalItemsWrapStepAndMove", severalItemsWrapStepAndMove);
+    run("rowSettingsOnSeveralLayers", rowSettingsOnSeveralLayers);
     run("groupFloatsCommitsAndCancels", groupFloatsCommitsAndCancels);
     return failed != 0;
 }

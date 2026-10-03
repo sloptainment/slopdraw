@@ -6,6 +6,7 @@
 #include <QString>
 #include <QTransform>
 #include <QSize>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -177,6 +178,14 @@ public:
     // Deleting a group deletes its children too, as one undo step.
     // Every layer op (add, delete, move, visibility, opacity) is one undo step, in the same history as strokes.
     bool deleteLayer(int layer);
+    // The same settings on several layers (#444), each call one undo step and false, no step, when nothing changed. Groups and the Background are skipped (#474 takes groups);
+    // setAlphaLock also skips Vector Layers, rasterizeLayers Raster Layers.
+    bool setVisible(const std::vector<int>& layers, bool visible);
+    bool setOpacity(const std::vector<int>& layers, double opacity);
+    bool setAlphaLock(const std::vector<int>& layers, bool on);
+    bool setInheritAlpha(const std::vector<int>& layers, bool on);
+    bool rasterizeLayers(const std::vector<int>& layers);
+    bool deleteLayers(const std::vector<int>& layers);
     bool moveLayer(int from, int to);
     // References, last on top; never layers, never in render(). add and set are one undo step each; preview is none (live drags), finish with set.
     const std::vector<Reference>& references() const { return refs_; }
@@ -234,6 +243,8 @@ private:
     bool relocate(const std::vector<std::pair<int, int>>& blocks, int at, int depth, bool group = false);
     // The blocks the items stand for, ascending, none inside another; empty if an index is bad or is the Background.
     std::vector<std::pair<int, int>> blocksOf(const std::vector<int>& items) const;
+    // One Tree step in which `change` edits each of the layers that are not the Background or a group; it returns whether it changed that layer. False, no step, if none did.
+    bool editLayers(const std::vector<int>& layers, const std::function<bool(Layer&)>& change);
     // Applies s (undo: reverse = true) to layers_.
     void apply(const Step& s, bool reverse);
     void applyMove(int from, int to);

@@ -699,6 +699,67 @@ bool Document::deleteLayer(int layer) {
     return true;
 }
 
+bool Document::editLayers(const std::vector<int>& layers, const std::function<bool(Layer&)>& change) {
+    auto v = layers_;
+    bool any = false;
+    for (int i : layers)
+        if (i > 0 && i < int(v.size()) && !v[i].group) any |= change(v[i]);
+    if (!any) return false;
+    seal();
+    Step s;
+    s.kind = Tree;
+    s.items = layers_;
+    s.newItems = v;
+    s.to = s.layer = current_;
+    push(s);
+    apply(s, false);
+    return true;
+}
+
+bool Document::setVisible(const std::vector<int>& layers, bool visible) {
+    return editLayers(layers, [&](Layer& l) { return std::exchange(l.visible, visible) != visible; });
+}
+
+bool Document::setOpacity(const std::vector<int>& layers, double opacity) {
+    return editLayers(layers, [&](Layer& l) { return std::exchange(l.opacity, opacity) != opacity; });
+}
+
+bool Document::setAlphaLock(const std::vector<int>& layers, bool on) {
+    return editLayers(layers, [&](Layer& l) { return !l.vector && std::exchange(l.alphaLock, on) != on; });
+}
+
+bool Document::setInheritAlpha(const std::vector<int>& layers, bool on) {
+    return editLayers(layers, [&](Layer& l) { return std::exchange(l.inheritAlpha, on) != on; });
+}
+
+bool Document::rasterizeLayers(const std::vector<int>& layers) {
+    return editLayers(layers, [](Layer& l) {
+        bool v = std::exchange(l.vector, false);
+        if (v) l.paths.clear();
+        return v;
+    });
+}
+
+bool Document::deleteLayers(const std::vector<int>& layers) {
+    std::vector<int> gone;
+    for (int i : layers)
+        if (i > 0 && i < int(layers_.size()) && !layers_[i].group) gone.push_back(i);
+    std::sort(gone.begin(), gone.end());
+    gone.erase(std::unique(gone.begin(), gone.end()), gone.end());
+    if (gone.empty()) return false;
+    seal();
+    Step s;
+    s.kind = Tree;
+    s.items = s.newItems = layers_;
+    for (auto it = gone.rbegin(); it != gone.rend(); ++it) s.newItems.erase(s.newItems.begin() + *it);
+    if (!wellFormed(s.newItems)) return false;
+    s.to = current_;
+    s.layer = std::max(0, current_ - int(std::count_if(gone.begin(), gone.end(), [&](int i) { return i <= current_; })));
+    push(s);
+    apply(s, false);
+    return true;
+}
+
 bool Document::moveLayer(int from, int to) {
     int n = int(layers_.size());
     if (from < 1 || to < 1 || from >= n || to >= n || from == to) return false;
