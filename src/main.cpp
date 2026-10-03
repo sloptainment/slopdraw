@@ -85,6 +85,21 @@ public:
     double pathWidth() const { return pathWidth_; }
     Document::PaintMode paintMode() const { return paintMode_; }
     bool selecting() const { return objectTool_; }
+    // The Reference tool's picks' opacity for Tool Options (the first pick's), none without picks (#544).
+    std::optional<double> refOpacity() const {
+        if (!referenceTool_ || refPicks_.empty()) return std::nullopt;
+        return s_.doc.references()[*refPicks_.begin()].opacity;
+    }
+    // Sets the picks' opacity: live previews with no undo step, else one References step from the list before the preview.
+    void setRefOpacity(double o, bool live) {
+        if (!refOpacity()) return;
+        if (!opacityBefore_) opacityBefore_ = s_.doc.references();
+        auto refs = *opacityBefore_;
+        for (int i : refPicks_) refs[i].opacity = o;
+        if (live) s_.doc.previewReferences(refs);
+        else s_.doc.previewReferences(*opacityBefore_), s_.doc.setReferences(refs), opacityBefore_.reset();
+        update();
+    }
     std::vector<Document::VPath> pickedPaths() const {  // Select's picks, for Tool Options to show (#303)
         std::vector<Document::VPath> ps;
         for (int i : picked()) ps.push_back(s_.doc.paths(s_.doc.current())[i]);
@@ -1058,7 +1073,8 @@ private:
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false, referenceTool_ = false;
     std::set<int> refPicks_;  // the Reference tool's picked references, indexes into Document::references()
-    std::vector<Reference> refsBefore_;  // the references when a Reference tool drag began
+    std::vector<Reference> refsBefore_;
+    std::optional<std::vector<Reference>> opacityBefore_;  // the references when an opacity slider drag began  // the references when a Reference tool drag began
     double pathWidth_ = 10;  // px
     Document::PaintMode paintMode_ = Document::PaintMode::Stroke;
     QColor penStroke_ = Qt::black, penFill_ = QColor(0x2d, 0x5d, 0x9a);  // the Pen's Stroke and Fill swatches
@@ -1504,6 +1520,18 @@ int main(int argc, char** argv) {
     lassoFinish->setChecked(true);
     QObject::connect(lassoFinish, &QCheckBox::toggled, canvas, &Canvas::setLassoFinishLine);
     lassoCol->addWidget(lassoFinish);
+    auto* refBox = new QWidget;  // the Reference tool's picks' Opacity (#544), shown only with picks
+    auto* refRow = new QHBoxLayout(refBox);
+    refRow->setContentsMargins(0, 0, 0, 0);
+    auto* refOpacity = new QSlider(Qt::Horizontal);  // percent
+    refOpacity->setRange(1, 100);
+    auto* refOpacityValue = new QLabel;
+    QObject::connect(refOpacity, &QSlider::valueChanged, [canvas, refOpacity, refOpacityValue](int v) { canvas->setRefOpacity(v / 100.0, refOpacity->isSliderDown()); refOpacityValue->setText(QString("%1 %").arg(v)); });
+    QObject::connect(refOpacity, &QSlider::sliderReleased, [canvas, refOpacity] { canvas->setRefOpacity(refOpacity->value() / 100.0, false); });
+    refRow->addWidget(new QLabel("Opacity"));
+    refRow->addWidget(refOpacity);
+    refRow->addWidget(refOpacityValue);
+    refBox->hide();
     auto* widthBox = new QWidget;
     auto* widthRow = new QHBoxLayout(widthBox);
     widthRow->setContentsMargins(0, 0, 0, 0);
@@ -1662,6 +1690,13 @@ int main(int argc, char** argv) {
     canvas->onPaint = [=] {
         onPaintBefore();
         if (canvas->selecting()) showPicks();
+        auto o = canvas->refOpacity();
+        refBox->setVisible(o.has_value());
+        if (o && !refOpacity->isSliderDown()) {
+            QSignalBlocker b(refOpacity);
+            refOpacity->setValue(std::lround(*o * 100));
+            refOpacityValue->setText(QString("%1 %").arg(refOpacity->value()));
+        }
         if (canvas->editingNodes()) editTypes->setVisible(!canvas->bezierSelected()), bezierTypes->setVisible(canvas->bezierSelected());
     };
     auto* optionsPanel = new QWidget;
@@ -1669,6 +1704,7 @@ int main(int argc, char** argv) {
     optionsCol->addWidget(eraseBox);
     optionsCol->addWidget(brushBox);
     optionsCol->addWidget(lassoBox);
+    optionsCol->addWidget(refBox);
     optionsCol->addWidget(curveBox);
     optionsCol->addWidget(widthBox);
     optionsCol->addWidget(paintBox);
