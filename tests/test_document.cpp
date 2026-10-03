@@ -1327,7 +1327,9 @@ static bool toolFollowsLayerKind() {
         && toolForLayer(false, SelectTool) == SelectTool && toolForLayer(true, SelectTool) == SelectTool  // Select fits both kinds (#221)
         && toolForLayer(false, BoxSelectTool) == BoxSelectTool && toolForLayer(true, BoxSelectTool) == SpiroPenTool  // Box Select fits Raster Layers only (#204)
         && toolForLayer(true, BoxSelectTool, BrushTool, NodeKnotEditTool) == NodeKnotEditTool
-        && toolForLayer(false, ReferenceTool) == ReferenceTool && toolForLayer(true, ReferenceTool) == ReferenceTool;  // fits every kind (#539)
+        && toolForLayer(false, ReferenceTool) == ReferenceTool && toolForLayer(true, ReferenceTool) == ReferenceTool  // fits every kind (#539)
+        && toolForLayer(false, BrushTool, BrushTool, SpiroPenTool, true) == SelectTool && toolForLayer(true, SpiroPenTool, BrushTool, SpiroPenTool, true) == SelectTool  // a group takes Select alone (#458)
+        && toolFitsKind(false, SelectTool, true) && !toolFitsKind(false, ReferenceTool, true) && !toolFitsKind(false, BrushTool, true) && !toolFitsKind(true, NodeKnotEditTool, true);
 }
 
 // A path paints by its mode (#298): Stroke the Power Stroke in color, Fill only the inside in fillColor, Both fill under stroke. An

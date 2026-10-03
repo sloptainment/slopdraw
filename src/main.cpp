@@ -193,7 +193,7 @@ public:
     // Edit > Copy / Cut on a Raster Layer (#506): the Box Select rectangle (a floating piece where it now lies), else the whole layer, onto the
     // system clipboard as an image; Cut then clears it as one undo step. Does nothing on a Vector Layer.
     void copy(bool cut) {
-        if (!hasDoc() || s_.doc.vector(s_.doc.current())) return;
+        if (!hasDoc() || s_.doc.vector(s_.doc.current()) || s_.doc.isGroup(s_.doc.current())) return;
         QRect all = s_.doc.image(0).rect();
         QRect r = !rasterBox() ? all : floating_ ? floatM_.mapRect(box_) & all : box_;
         QGuiApplication::clipboard()->setImage(s_.doc.image(s_.doc.current()).copy(r));
@@ -1937,15 +1937,18 @@ int main(int argc, char** argv) {
     }
     toolCol->addStretch();
     // Only the tools that fit the current layer's kind are enabled, so their keys do nothing on the other kind (#170); a switch that disables the tool picks the last one used on the new kind.
+    bool inGroup = false;
     kindChanged = [&] {
-        bool has = canvas->hasDoc(), vec = canvas->doc().vector(canvas->doc().current());
+        bool has = canvas->hasDoc(), vec = canvas->doc().vector(canvas->doc().current()), grp = has && canvas->doc().isGroup(canvas->doc().current());
         canvas->setEnabled(has);  // a disabled widget gets no pointer or key events
         for (auto* w : {colorDock->widget(), layerPanel, optionsPanel, navPanel}) w->setEnabled(has);
         for (auto* a : docActions) a->setEnabled(has);
         auto tools = toolGroup->actions();
-        for (int i = 0; i < 7; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i));
+        for (int i = 0; i < 7; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i, grp));
         brushPanel->setEnabled(has && !vec);
-        int now = toolForLayer(vec, tools.indexOf(toolGroup->checkedAction()), lastTool[0], lastTool[1]);
+        int now = toolForLayer(vec, tools.indexOf(toolGroup->checkedAction()), lastTool[0], lastTool[1], grp);
+        if (inGroup && !grp) now = lastTool[vec];  // leaving a group restores the kind's last tool (#161)
+        inGroup = grp;
         if (!tools[now]->isChecked()) tools[now]->trigger();
     };
     kindChanged();
