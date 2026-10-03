@@ -1637,6 +1637,10 @@ int main(int argc, char** argv) {
         std::function<void(int, int, int)> onDrop;
         int gap_ = -1, inside_ = -1, pressed_ = -1, from_ = -1;
         QPoint pressPos_;
+        std::function<void(int, Qt::KeyboardModifiers)> onClick;
+        std::set<int> sel;  // the Document indexes selected with Ctrl/Shift (#475); empty means the current item alone. Dropped by refresh() once the Document has taken another step
+        int selStep = 0;
+        std::vector<int> items(int current) const { return sel.empty() ? std::vector<int>{current} : std::vector<int>(sel.begin(), sel.end()); }
         // A press that made the row current would rebuild the rows under the mouse and lose the drag; so the row becomes current on release, and the drag starts here.
         void mousePressEvent(QMouseEvent* e) override {
             auto* it = itemAt(e->pos());
@@ -1652,7 +1656,7 @@ int main(int argc, char** argv) {
             drag->exec(Qt::MoveAction);
         }
         void mouseReleaseEvent(QMouseEvent* e) override {
-            if (pressed_ >= 0 && itemAt(e->pos())) setCurrentItem(itemAt(e->pos()));
+            if (pressed_ >= 0 && itemAt(e->pos())) onClick(itemAt(e->pos())->data(Qt::UserRole).toInt(), e->modifiers());
             pressed_ = -1;
         }
         void dragEnterEvent(QDragEnterEvent* e) override { e->accept(); }
@@ -1698,6 +1702,7 @@ int main(int argc, char** argv) {
     layerList->setDropIndicatorShown(false);
     auto* layerOpacity = new QSlider(Qt::Horizontal);  // percent, of the current layer
     layerOpacity->setRange(0, 100);
+    layerList->setSelectionMode(QAbstractItemView::ExtendedSelection);
     auto* layerOpacityValue = new QLabel;
     QObject::connect(layerOpacity, &QSlider::valueChanged, [layerOpacityValue](int v) { layerOpacityValue->setText(QString("%1 %").arg(v)); });
     std::function<void()> kindChanged;  // set with the Tools dock below; refresh() runs on every current-layer change
@@ -1810,7 +1815,9 @@ int main(int argc, char** argv) {
         }
         layerList->setCurrentRow(currentRow);
         layerOpacity->setValue(std::lround(d.opacity(d.current()) * 100));
+        if (layerList->selStep != d.stepId()) layerList->sel.clear();
         layerOpacityValue->setText(QString("%1 %").arg(layerOpacity->value()));
+        for (int r = 0; r < layerList->count(); r++) if (layerList->sel.count(layerList->item(r)->data(Qt::UserRole).toInt())) layerList->item(r)->setSelected(true);
         canvas->update();
         if (kindChanged) kindChanged();
         if (updateTitle) updateTitle();
@@ -1826,6 +1833,27 @@ int main(int argc, char** argv) {
     };
     QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
         if (row < 0) return;
+    layerList->onClick = [canvas, layerList, refresh](int i, Qt::KeyboardModifiers m) {  // Ctrl toggles a row, Shift selects from the current row; the clicked row is current
+        Document& d = canvas->doc();
+        auto& sel = layerList->sel;
+        if (!(m & (Qt::ControlModifier | Qt::ShiftModifier))) sel.clear();
+        else if (m & Qt::ShiftModifier) {
+            int a = -1, b = -1;
+            for (int r = 0; r < layerList->count(); r++) {
+                int k = layerList->item(r)->data(Qt::UserRole).toInt();
+                if (k == d.current()) a = r;
+                if (k == i) b = r;
+            }
+            sel.clear();
+            for (int r = std::min(a < 0 ? b : a, b); r <= std::max(a, b); r++) sel.insert(layerList->item(r)->data(Qt::UserRole).toInt());
+        } else {
+            if (sel.empty()) sel.insert(d.current());
+            if (!sel.erase(i)) sel.insert(i);
+        }
+        d.setCurrent(i);
+        layerList->selStep = d.stepId();
+        refresh();
+    };
         canvas->doc().setCurrent(layerList->item(row)->data(Qt::UserRole).toInt());
         refresh();
     });
@@ -1863,7 +1891,7 @@ int main(int argc, char** argv) {
     const std::initializer_list<LayerOp> layerOps{
         {"+ Raster", "Add &Raster", [](Document& d) { d.addLayer(); }},
         {"+ Vector", "Add &Vector", [](Document& d) { d.addVectorLayer(); }},
-        {"+ Group", "Add &Group", [](Document& d) { d.addGroup(); }},
+        {"+ Group", "Add &Group", [layerList](Document& d) { if (layerList->sel.size() > 1) d.wrap(layerList->items(d.current())); else d.addGroup(); }},
         {"↑", "&Up", [](Document& d) { d.stepItem(d.current(), true); }},
         {"↓", "Dow&n", [](Document& d) { d.stepItem(d.current(), false); }},
         {"🗑", "&Delete", [](Document& d) { d.deleteLayer(d.current()); }}};
@@ -2538,7 +2566,7 @@ int main(int argc, char** argv) {
         docActions.push_back(a);
         QObject::connect(a, &QAction::triggered, [canvas, refresh, op = l.op] { op(canvas->doc()); refresh(); });
     }
-    QObject::connect(key(layerMenu->addAction("&Group current item"), {QKeySequence("Ctrl+G")}), &QAction::triggered, [canvas, refresh] { canvas->doc().wrap(canvas->doc().current()); refresh(); });
+    QObject::connect(key(layerMenu->addAction("&Group current item"), {QKeySequence("Ctrl+G")}), &QAction::triggered, [canvas, refresh, layerList] { canvas->doc().wrap(layerList->items(canvas->doc().current())); refresh(); });
 
     auto* toolsMenu = window.menuBar()->addMenu("&Tools");
     toolsMenu->addActions(toolGroup->actions());
