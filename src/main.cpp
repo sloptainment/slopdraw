@@ -50,6 +50,7 @@
 #include <set>
 #include <optional>
 #include <QTabletEvent>
+#include <QStyleHints>
 #include <QTimer>
 #include <QWheelEvent>
 #include <cmath>
@@ -468,7 +469,7 @@ protected:
         if (knotDrag_ >= 0) return dragKnotTo(e->position());
         if (nodeDrag_) return dragNodesTo(e->position());
         if (handleDrag_ >= 0) return dragHandleTo(e->position());
-        if (cropEdge_) return cropDragTo(e->position());
+        if (cropEdge_ || cropGrab_) return cropDragTo(e->position());
         if (moveDrag_) return dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
         if (penDrag_) return pen_.drag(s_.view.toDoc(e->position()));
         if (boxing_) return;
@@ -492,15 +493,22 @@ protected:
     }
     // Double-click on a reference in the Reference tool enters crop mode on it (#546); elsewhere a second press, as Qt's default.
     void mouseDoubleClickEvent(QMouseEvent* e) override {
-        int i = referenceTool_ && e->button() == Qt::LeftButton && !space_ ? referenceAt(s_.doc.references(), s_.view.toDoc(e->position())) : -1;
-        if (i < 0 || cropping_ >= 0) return QWidget::mouseDoubleClickEvent(e);
+        if (!(referenceTool_ && e->button() == Qt::LeftButton && !space_ && enterCrop(e->position()))) QWidget::mouseDoubleClickEvent(e);
+    }
+    bool enterCrop(QPointF pos) {
+        int i = referenceAt(s_.doc.references(), s_.view.toDoc(pos));
+        if (i < 0 || cropping_ >= 0) return false;
         moveDrag_ = boxing_ = false;
         refPicks_ = {i};
         cropping_ = i;
         cropBefore_ = s_.doc.references();
         update();
+        return true;
     }
-    void mouseReleaseEvent(QMouseEvent*) override { cropEdge_.reset(); endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
+    // A tablet press makes no mouse events, so no mouseDoubleClickEvent: time two presses ourselves, with the slack a pen needs (it never lands twice on one pixel).
+    ulong lastTabletPress_ = 0;
+    QPointF lastTabletPos_;
+    void mouseReleaseEvent(QMouseEvent*) override { cropEdge_.reset(); cropGrab_.reset(); endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
@@ -510,11 +518,15 @@ protected:
         if (e->button() == Qt::MiddleButton && e->type() != QEvent::TabletMove) { dragging_ = e->type() == QEvent::TabletPress; last_ = e->position(); return; }  // barrel button pans like the mouse's middle button
         if (dragging_) return panZoom(e->position(), e->modifiers());
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
-        if (e->type() == QEvent::TabletRelease) { cropEdge_.reset(); endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
+        if (e->type() == QEvent::TabletRelease) { cropEdge_.reset(); cropGrab_.reset(); endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
         else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && !bucketTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
-        else if (referenceTool_) { if (e->type() == QEvent::TabletPress) refPress(e->position(), e->modifiers()); else if (cropEdge_) cropDragTo(e->position()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
+        else if (referenceTool_) { if (e->type() == QEvent::TabletPress) {
+            bool dbl = e->timestamp() - lastTabletPress_ <= ulong(QGuiApplication::styleHints()->mouseDoubleClickInterval()) && (e->position() - lastTabletPos_).manhattanLength() <= 4 * QGuiApplication::styleHints()->startDragDistance();
+            lastTabletPress_ = e->timestamp(); lastTabletPos_ = e->position();
+            if (!(dbl && enterCrop(e->position()))) refPress(e->position(), e->modifiers());
+        } else if (cropEdge_ || cropGrab_) cropDragTo(e->position()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); else if (handleDrag_ >= 0) dragHandleTo(e->position()); }
         else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (boxTool_) { if (e->type() == QEvent::TabletPress) boxPress(e->position()); }
@@ -563,7 +575,7 @@ private:
         if (objectTool_ && groupBox()) return "Drag inside the box moves the group · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts it back";
         if (objectTool_ && rasterBox()) return "Drag inside the box moves the pixels · handles scale · circle rotates · right-click flips · Enter or click outside commits · Esc puts them back";
         if (objectTool_ && !s_.doc.vector(s_.doc.current())) return "Make a rectangle with Box Select first, then Select transforms its pixels";
-        if (cropping_ >= 0) return "Drag an edge or corner to crop · the whole picture is kept · Enter or click outside finishes";
+        if (cropping_ >= 0) return "Drag an edge or corner to crop, inside to move the crop · the whole picture is kept · Enter or click outside finishes";
         if (referenceTool_ && refPicks_.empty()) return "Click a reference to pick it · Shift+click toggles · drag a box on empty canvas picks the ones it touches · File > Import Reference Image adds a picture";
         if (referenceTool_) return QString("%1 picked · drag inside the box moves them · a corner scales · the circle rotates · right-click flips · Delete removes them · click or drag a box to pick again · Shift adds").arg(refPicks_.size());
         if (boxTool_ && box_.isEmpty()) return "Drag a rectangle to select pixels";
@@ -713,7 +725,9 @@ private:
         if (cropping_ >= 0) {  // crop mode: an edge starts a crop drag, the picture keeps the mode, anywhere else leaves it
             cropEdge_ = cropEdgeUnder(pos);
             const Reference& r = s_.doc.references()[cropping_];
-            if (cropEdge_ || QRectF(r.image.rect()).contains(r.transform.inverted().map(s_.view.toDoc(pos)))) return;
+            QPointF ip = r.transform.inverted().map(s_.view.toDoc(pos));
+            if (!cropEdge_ && r.crop.contains(ip)) cropGrab_ = ip, cropGrabFrom_ = r.crop;  // inside the crop: a drag moves it
+            if (cropEdge_ || cropGrab_ || QRectF(r.image.rect()).contains(ip)) return;
             return endCrop();
         }
         bool shift = mods & Qt::ShiftModifier;
@@ -774,7 +788,11 @@ private:
     void cropDragTo(QPointF pos) {
         auto refs = s_.doc.references();
         Reference& r = refs[cropping_];
-        r.crop = cropTo(r.crop, r.image.size(), *cropEdge_, (r.transform * s_.view.matrix()).inverted().map(pos));
+        QPointF ip = (r.transform * s_.view.matrix()).inverted().map(pos);
+        if (cropGrab_) {
+            QRectF c = cropGrabFrom_.translated(ip - *cropGrab_);
+            r.crop = c.translated(std::clamp(c.x(), 0.0, r.image.width() - c.width()) - c.x(), std::clamp(c.y(), 0.0, r.image.height() - c.height()) - c.y());
+        } else r.crop = cropTo(r.crop, r.image.size(), *cropEdge_, ip);
         s_.doc.previewReferences(refs);
         update();
     }
@@ -785,6 +803,7 @@ private:
         bool changed = refs[cropping_].crop != cropBefore_[cropping_].crop;
         cropping_ = -1;
         cropEdge_.reset();
+        cropGrab_.reset();
         if (changed) s_.doc.previewReferences(cropBefore_), s_.doc.setReferences(refs);
         unsetCursor();
         update();
@@ -1358,6 +1377,8 @@ private:
     std::vector<Reference> refsBefore_;
     int cropping_ = -1;  // the reference in crop mode (#546), -1 for none
     std::optional<QPoint> cropEdge_;  // the crop edge being dragged
+    std::optional<QPointF> cropGrab_;  // where in the image a crop move began, and the crop then
+    QRectF cropGrabFrom_;
     std::vector<Reference> cropBefore_;  // the references when crop mode began
     std::optional<std::vector<Reference>> opacityBefore_;  // the references when an opacity slider drag began  // the references when a Reference tool drag began
     double pathWidth_ = 10;  // px
