@@ -119,7 +119,7 @@ public:
     void retypeSelected(BezierType t) {
         if (!bezierSelected() || nodeSel_.empty()) return;
         auto paths = s_.doc.paths(s_.doc.current());
-        paths[selected_].bezier = retypeBezier(paths[selected_].bezier, nodeSel_, t);
+        paths[selected_].bezier = retypeBezier(paths[selected_].bezier, nodeSel_, t, paths[selected_].closed);
         s_.doc.setPaths(s_.doc.current(), paths);
         update();
     }
@@ -217,7 +217,7 @@ protected:
             if (cursor_ && !penDrag_) nodes.push_back({s_.view.toDoc(*cursor_).x(), s_.view.toDoc(*cursor_).y(), pen_.bezier ? SpiroType::Corner : pen_.type});
             std::optional<QPainterPath> path;
             if (pen_.bezier) {  // a Bezier path in progress: the dragged handles shape it (#309)
-                Document::VPath v{{}, false, Qt::black, 1, {}, Document::PathKind::Bezier};
+                Document::VPath v{{}, pen_.closing, Qt::black, 1, {}, Document::PathKind::Bezier};  // closed while a press on the first node is down (#368)
                 v.bezier = pen_.bezierNodes();
                 if (nodes.size() > v.bezier.size()) v.bezier.push_back({{nodes.back().x, nodes.back().y}, {nodes.back().x, nodes.back().y}, {nodes.back().x, nodes.back().y}, BezierType::Cusp});
                 path = Document::curve(v);
@@ -334,7 +334,7 @@ protected:
         else s_.view.pan(d);
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
+    void mouseReleaseEvent(QMouseEvent*) override { endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
     void tabletEvent(QTabletEvent* e) override {
         if (space_) return e->ignore();  // Qt turns it into mouse events, so Space+pen drag pans
         e->accept();
@@ -344,7 +344,7 @@ protected:
         if (e->button() == Qt::MiddleButton && e->type() != QEvent::TabletMove) { dragging_ = e->type() == QEvent::TabletPress; last_ = e->position(); return; }  // barrel button pans like the mouse's middle button
         if (dragging_) return panZoom(e->position(), e->modifiers());
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
-        if (e->type() == QEvent::TabletRelease) { endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
+        if (e->type() == QEvent::TabletRelease) { endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
         else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
@@ -395,13 +395,15 @@ private:
         if (objectTool_) return QString("%1 picked · drag inside the box moves them · drag a handle scales (Shift keeps the ratio on a corner) · Delete removes them · click or drag a box to pick again · Shift adds").arg(picked().size());
         return "Draw · Shift+drag sizes the brush · Ctrl+click picks a color · E toggles erase";
     }
-    // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node.
+    // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node. In Bezier the close waits
+    // for release, so a drag first pulls the first node's handles (#368).
     void spiroClick(QPointF pos, bool corner = false) {
         QPointF d = s_.view.toDoc(pos);
-        if (pen_.nodes.size() > 2 && pen_.onFirst(d, 6 / s_.view.screenRadius(1))) finishPath(true);
+        if (pen_.nodes.size() > 2 && pen_.onFirst(d, 6 / s_.view.screenRadius(1))) { if (pen_.bezier) pen_.closing = penDrag_ = true; else finishPath(true); }
         else pen_.click(d, corner), penDrag_ = pen_.bezier;
         update();
     }
+    void endPenClose() { if (pen_.closing) finishPath(true), pen_.closing = false; }
     // Select tool: a click within 6 screen px of a path of the current Vector Layer selects it; any other click deselects.
     void selectAt(QPointF pos) {
         selected_ = s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
@@ -412,6 +414,11 @@ private:
     // only that node (Shift toggles it); anywhere else it selects a path and clears the node selection (Shift+click there changes nothing).
     void selectPress(QPointF pos, Qt::KeyboardModifiers mods) {
         int i = knotAt(pos);
+        int n = selected_ < 0 ? -1 : s_.doc.nodeAt(s_.doc.current(), selected_, s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
+        if (i >= 0 && n >= 0) {  // a knot handle near a node (the t=0 knot by node 0): the nearer one takes the press (#368)
+            QPointF d = s_.view.toDoc(pos), np(s_.doc.nodes(s_.doc.current(), selected_)[n].x, s_.doc.nodes(s_.doc.current(), selected_)[n].y);
+            if (QLineF(np, d).length() <= QLineF(s_.doc.knotHandles(s_.doc.current(), selected_)[i], d).length()) i = -1;
+        }
         if (i >= 0) {
             knotDrag_ = i;
             knotsBefore_ = s_.doc.knots(s_.doc.current(), selected_);
@@ -422,7 +429,6 @@ private:
             pathBefore_ = s_.doc.paths(s_.doc.current())[selected_];
             return;
         }
-        int n = selected_ < 0 ? -1 : s_.doc.nodeAt(s_.doc.current(), selected_, s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
         if (n < 0 && (mods & Qt::ShiftModifier)) return;
         if (n < 0) return selectAt(pos);
         if (mods & Qt::ShiftModifier) {

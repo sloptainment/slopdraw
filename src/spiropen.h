@@ -19,14 +19,15 @@ struct SpiroPen {
     std::vector<SpiroNode> nodes;  // in Bezier, all Corners: Spiro draws them as the same straight segments, so the preview is shared
 
     std::vector<QPointF> outs;  // Bezier: each node's out handle, parallel to nodes; the in handle mirrors it (#309)
+    bool closing = false;  // Bezier: a press on the first node is down, so drag pulls node 0's handle and release closes (#368)
 
     void click(QPointF p, bool corner = false) { nodes.push_back({p.x(), p.y(), corner || bezier ? SpiroType::Corner : type}); outs.push_back(p); }  // Shift+click places a Corner (#274)
     // True when p is within tol of the first node: clicking there closes the path.
     bool onFirst(QPointF p, double tol) const { return !nodes.empty() && std::hypot(p.x() - nodes[0].x, p.y() - nodes[0].y) <= tol; }
     void backspace() { if (!nodes.empty()) nodes.pop_back(), outs.pop_back(); }
-    void cancel() { nodes.clear(); outs.clear(); }
-    // Bezier: the last node's out handle follows the pointer (press-drag, #309).
-    void drag(QPointF p) { if (bezier && !outs.empty()) outs.back() = p; }
+    void cancel() { nodes.clear(); outs.clear(); closing = false; }
+    // Bezier: the last node's out handle follows the pointer (press-drag, #309); while closing, the first node's (#368).
+    void drag(QPointF p) { if (bezier && !outs.empty()) (closing ? outs.front() : outs.back()) = p; }
     // The nodes as Bezier nodes: dragged ones Symmetric, the rest Cusps with handles on their points.
     std::vector<BezierNode> bezierNodes() const {
         std::vector<BezierNode> b;
@@ -89,12 +90,21 @@ inline std::vector<SpiroNode> retypeNodes(std::vector<SpiroNode> nodes, const st
 }
 
 // The Bezier nodes with those at the selected indexes set to type t (Node/Knot edit picker, #314): the out handle (the in one if out
-// sits on the point) stays, and moveHandle turns the other to suit, collinear for Smooth, mirrored for Symmetric.
-inline std::vector<BezierNode> retypeBezier(std::vector<BezierNode> nodes, const std::set<int>& selected, BezierType t) {
+// sits on the point) stays, and moveHandle turns the other to suit, collinear for Smooth, mirrored for Symmetric. A node with both
+// handles on its point (an undragged pen click) gets them pulled out along previous -> next, a third of the way to each (#368).
+inline std::vector<BezierNode> retypeBezier(std::vector<BezierNode> nodes, const std::set<int>& selected, BezierType t, bool closed = false) {
+    const int c = int(nodes.size());
     for (int i : selected)
-        if (i >= 0 && i < int(nodes.size())) {
+        if (i >= 0 && i < c) {
             auto& n = nodes[i];
             n.type = t;
+            if (t != BezierType::Cusp && n.in == n.p && n.out == n.p && c > 1) {
+                QPointF prev = i > 0 || closed ? nodes[(i + c - 1) % c].p : n.p, next = i < c - 1 || closed ? nodes[(i + 1) % c].p : n.p;
+                QPointF d = next - prev;
+                double len = std::hypot(d.x(), d.y());
+                if (len > 0) n.out = n.p + d / len * (QLineF(n.p, next).length() / 3), n.in = n.p - d / len * (QLineF(prev, n.p).length() / 3);
+                if (n.out == n.p) n.out = 2 * n.p - n.in;  // an open end: mirror the one handle it got
+            }
             bool out = n.out != n.p;
             n = moveHandle(n, out, out ? n.out : n.in);
         }

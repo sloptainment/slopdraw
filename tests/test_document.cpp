@@ -1486,6 +1486,37 @@ static bool bezierRetypeAlignsHandles() {
     return smooth && sym && c[0].in == QPointF(40, 40);
 }
 
+// Closing a Bezier path with a press-drag on the first node (#368): drag to (20,8) pulls node 0's out to (20,8), in to (-4,8),
+// Symmetric; the path finishes closed with those handles. Without a drag node 0 stays a Cusp.
+static bool bezierPenCloseDragPullsFirstNode() {
+    Document doc(QSize(64, 64));
+    doc.addVectorLayer();
+    SpiroPen pen;
+    pen.bezier = true;
+    for (QPointF p : {QPointF(8, 8), QPointF(56, 8), QPointF(56, 56)}) pen.click(p);
+    pen.closing = true;
+    pen.drag({20, 8});
+    bool done = pen.finish(doc, true, Qt::black, 6);
+    const auto& b = doc.paths(1)[0].bezier;
+    return done && doc.paths(1)[0].closed && b.size() == 3 && b[0].type == BezierType::Symmetric && b[0].out == QPointF(20, 8) && b[0].in == QPointF(-4, 8)
+        && b[2].type == BezierType::Cusp && !pen.closing;
+}
+
+// Retyping a node whose handles both sit on its point (an undragged pen click, as node 0 usually is) pulls them out along the line
+// from the previous to the next node, a third of the way to each (#368). Square (0,0) (30,0) (30,30) (0,30), closed: node 0's
+// neighbours are (0,30) and (30,0), so Smooth gives handles 10 long on the diagonal: out (7.07,-7.07), in (-7.07,7.07). Open, node 0 has only (30,0): out (10,0), in (-10,0).
+static bool bezierRetypePullsCollapsedHandles() {
+    std::vector<BezierNode> n;
+    for (QPointF p : {QPointF(0, 0), QPointF(30, 0), QPointF(30, 30), QPointF(0, 30)}) n.push_back({p, p, p, BezierType::Cusp});
+    auto c = retypeBezier(n, {0}, BezierType::Smooth, true);
+    double h = 10 / std::sqrt(2.0);
+    bool closed = c[0].type == BezierType::Smooth && QLineF(c[0].out, QPointF(h, -h)).length() < 1e-9 && QLineF(c[0].in, QPointF(-h, h)).length() < 1e-9;
+    auto o = retypeBezier(n, {0}, BezierType::Symmetric, false);
+    bool open = o[0].out == QPointF(10, 0) && o[0].in == QPointF(-10, 0);
+    auto k = retypeBezier(n, {0}, BezierType::Cusp, true);
+    return closed && open && k[0].out == QPointF(0, 0) && k[0].in == QPointF(0, 0);
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1497,6 +1528,8 @@ int main() {
     run("bezierNodesDragWithHandles", bezierNodesDragWithHandles);
     run("bezierHandleMovesPerType", bezierHandleMovesPerType);
     run("bezierRetypeAlignsHandles", bezierRetypeAlignsHandles);
+    run("bezierPenCloseDragPullsFirstNode", bezierPenCloseDragPullsFirstNode);
+    run("bezierRetypePullsCollapsedHandles", bezierRetypePullsCollapsedHandles);
     run("penPaintModeGoesOnNextPath", penPaintModeGoesOnNextPath);
     run("penFillSwatchGoesOnNextPath", penFillSwatchGoesOnNextPath);
     run("viewMapsAndRoundTrips", viewMapsAndRoundTrips);
