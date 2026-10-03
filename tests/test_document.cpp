@@ -1779,6 +1779,34 @@ static bool inheritAlphaCutsByWhatIsBelow() {
     return v.paths(1).size() == paths.size() && v.paths(1)[0].nodes.size() == paths[0].nodes.size();
 }
 
+// #465: Inherit Alpha is scoped to a group; its bottom item ignores the flag, a group can inherit, Alpha Lock on a group is refused.
+// Items bottom to top: 0 Background, 1 L3 (depth 1), 2 L2, 3 L1 (depth 2), 4 GroupB (depth 1), 5 GroupA.
+static bool inheritAlphaIsScopedToGroups() {
+    Document doc(QSize(64, 64));
+    for (int i = 0; i < 5; i++) doc.addLayer();
+    doc.setCurrent(1);
+    doc.fill(Qt::red, {{0, 0}, {48, 0}, {48, 64}, {0, 64}});
+    doc.setCurrent(2);
+    doc.fill(Qt::blue, {{0, 0}, {16, 0}, {16, 64}, {0, 64}});
+    doc.setCurrent(3);
+    doc.fill(Qt::green, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+    QImage r = doc.image(1), b = doc.image(2), g = doc.image(3);
+    doc.restoreLayer(1, r, "L3", true, 1, false, false, 1, false);
+    doc.restoreLayer(2, b, "L2", true, 1, false, false, 2, false);
+    doc.restoreLayer(3, g, "L1", true, 1, false, true, 2, false);
+    doc.restoreLayer(4, QImage(), "B", true, 1, false, false, 1, true);
+    doc.restoreLayer(5, QImage(), "A", true, 1, false, false, 0, true);
+    auto c = [&](int x) { return doc.render().pixelColor(x, 10); };
+    if (c(10) != QColor(Qt::green) || c(40) != QColor(Qt::red) || c(60) != QColor(Qt::white)) return false;  // 1: cut by L2 only, not L3
+    doc.setInheritAlpha(3, false);
+    doc.setInheritAlpha(2, true);
+    if (c(10) != QColor(Qt::green) || c(40) != QColor(Qt::green)) return false;  // 2: bottom item of its group shows whole
+    doc.setInheritAlpha(2, false);
+    doc.setInheritAlpha(4, true);
+    if (c(40) != QColor(Qt::green) || c(60) != QColor(Qt::white)) return false;  // 3: the group is cut by L3 below it
+    return !doc.setAlphaLock(4, true) && !doc.alphaLock(4);  // 4
+}
+
 // #536: references live beside the layers; add and replace are one undo step each, preview none, and render() never sees them.
 static bool referencesAreOneUndoStepEachAndNeverRendered() {
     Document doc(QSize(32, 32));
@@ -1991,6 +2019,7 @@ int main() {
     run("referencesAreOneUndoStepEachAndNeverRendered", referencesAreOneUndoStepEachAndNeverRendered);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);
     run("inheritAlphaCutsByWhatIsBelow", inheritAlphaCutsByWhatIsBelow);
+    run("inheritAlphaIsScopedToGroups", inheritAlphaIsScopedToGroups);
     run("alphaLockHoldsAlphaUnderPaint", alphaLockHoldsAlphaUnderPaint);
     run("bezierNodesDragWithHandles", bezierNodesDragWithHandles);
     run("bezierHandleMovesPerType", bezierHandleMovesPerType);

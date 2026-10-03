@@ -592,7 +592,7 @@ void Document::setOpacity(int layer, double opacity) {
 }
 
 bool Document::setAlphaLock(int layer, bool on) {
-    if (layers_[layer].vector) return false;
+    if (layers_[layer].vector || layers_[layer].group) return false;
     if (layers_[layer].alphaLock == on) return true;
     seal();
     Step s;
