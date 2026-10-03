@@ -205,5 +205,6 @@ private:
     // The current layer as it was when the stroke in progress began; null when none is in progress.
     // Shares pixels with that layer until the first dab detaches it, so starting a stroke copies once.
     QImage strokeStart_;
+    bool pasting_ = false;  // a floatImage is in progress (strokeStart_ alone can't tell it from an unsealed stroke)
     int floatFrom_ = -1;  // while a paste floats in a layer it added: the layer that was current before; seal turns that layer into one Add step
 };

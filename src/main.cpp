@@ -67,7 +67,7 @@ class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
     void setDocument(Document doc, QString path = {}) { Session s{std::move(doc), View(), path, 0}; s.saved = s.doc.stepId(); setSession(std::move(s)); }
-    void setSession(Session s) { cropping_ = -1; s_ = std::move(s); floating_ = false; floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
+    void setSession(Session s) { cropping_ = -1; s_ = std::move(s); floating_ = false; pasted_ = QImage(); floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
     Document& doc() { return s_.doc; }
     Session& session() { return s_; }
     Session takeSession() { commitFloat(); endCrop(); pen_.cancel(); return std::move(s_); }  // the tab being left: a lifted piece lands, an unfinished path drops; setSession must follow
@@ -202,6 +202,20 @@ public:
         update();
         if (onLayersChange) onLayersChange();
     }
+    // Edit > Paste (#508): img floats in a new Raster Layer, centred on the document point at, under Select's Transform box (the shell has switched to Select).
+    void paste(const QImage& img, QPointF at) {
+        commitFloat();
+        endCrop();
+        pasted_ = img;
+        box_ = QRect(QPoint(int(at.x() - img.width() / 2.0), int(at.y() - img.height() / 2.0)), img.size());
+        floating_ = floatPiece({});
+        boxLayer_ = s_.doc.current();
+        update();
+        if (onLayersChange) onLayersChange();
+    }
+    // Where Ctrl+V centres a paste: the pointer over the canvas, else (menu Paste, pointer elsewhere) the Document centre.
+    QPointF pastePoint() const { return cursor_ ? s_.view.toDoc(*cursor_) : QRectF(s_.doc.image(0).rect()).center(); }
+    std::function<void()> onPasteEnd;  // a paste ended by Enter or a click outside: the shell gives the previous tool back
     void mirror() { s_.view.mirrorAt(rect().center()); update(); }
     // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
     bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && eraseBrush_; }
@@ -221,7 +235,7 @@ public:
         return true;
     }
     void finishPath(bool closed) {
-        if (floating_) return commitFloat();
+        if (floating_) return endPaste();
         if (cropping_ >= 0) return endCrop();  // Enter leaves crop mode (#546)
         if (spiroTool_) pen_.finish(s_.doc, closed, penStroke_, pathWidth_, paintMode_, penFill_);  // refused on a Raster Layer
         update();
@@ -745,7 +759,7 @@ private:
         QPointF d = s_.view.toDoc(pos);
         auto handle = frameHandleAt(f, d, 6 / s_.view.screenRadius(1));
         bool rotate = onRotateHandle(pos);
-        if (!handle && !rotate && !f.rect.contains(f.toDoc().inverted().map(d))) return commitFloat();
+        if (!handle && !rotate && !f.rect.contains(f.toDoc().inverted().map(d))) return endPaste();
         moveFrame_ = f;
         moveDrag_ = true;
         handle_ = handle;
@@ -753,10 +767,23 @@ private:
         moveStart_ = d;
         dragM_ = {};
     }
+    // The floating piece drawn through m: box_'s lifted pixels, or a pasted image sitting on box_ in its own new layer (#508). commit makes it one undo step.
+    bool floatPiece(const QTransform& m, bool commit = false) {
+        if (pasted_.isNull()) return commit ? s_.doc.transformRect(box_, m) : s_.doc.floatRect(box_, m);
+        QTransform at = QTransform::fromTranslate(box_.left(), box_.top()) * m;
+        return commit ? s_.doc.pasteImage(pasted_, at, true) : s_.doc.floatImage(pasted_, at, true);
+    }
+    // Enter or a click outside: commit, and a paste gives the tool before it back (onPasteEnd).
+    void endPaste() {
+        bool pasting = !pasted_.isNull();
+        commitFloat();
+        if (pasting && onPasteEnd) onPasteEnd();
+    }
     // The piece's pixels are in the document again: one undo step, and the selection ends.
     void commitFloat() {
         if (!floating_) return;
-        s_.doc.transformRect(box_, floatM_);
+        floatPiece(floatM_, true);
+        pasted_ = QImage();
         floating_ = false;
         floatM_ = {};
         frame_.reset();
@@ -767,6 +794,7 @@ private:
     void cancelFloat() {
         if (!floating_) return;
         s_.doc.cancelFloat();
+        pasted_ = QImage();
         floating_ = false;
         floatM_ = {};
         frame_.reset();
@@ -846,7 +874,7 @@ private:
             if (referenceTool_ && handle_) dragM_ = frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), true);  // aspect always kept
             if (referenceTool_) return s_.doc.previewReferences(transformReferences(refsBefore_, refPicks_, dragM_));
             if (rasterBox()) {  // lift on the first drag; every drag resamples from the untouched pixels
-                floating_ = s_.doc.floatRect(box_, floatM_ * dragM_);
+                floating_ = floatPiece(floatM_ * dragM_);
                 return;
             }
             auto moved = transformPaths(pathsBefore_, picked_, dragM_);  // live preview moves nodes only; widths follow on release
@@ -892,7 +920,7 @@ private:
         QTransform m = flipMatrix(f.rect.center(), chosen == h);
         if (rasterBox()) {  // joins the floating piece; the commit is the one undo step
             floatM_ = floatM_ * m;
-            floating_ = s_.doc.floatRect(box_, floatM_);
+            floating_ = floatPiece(floatM_);
             frame_ = frameAfter(f, m);
             return update();
         }
@@ -1166,6 +1194,7 @@ private:
     std::optional<QPoint> handle_;  // the box handle being dragged (scale), none for a move
     BoxFrame moveFrame_;  // the box when a drag began
     std::optional<BoxFrame> frame_;  // the box a rotate left, until the next pick
+    QImage pasted_;  // the image a paste floats (#508); null when the floating piece is a lifted Box Select rectangle
     bool floating_ = false;  // a raster selection's piece is lifted: the layer shows box_'s pixels moved through floatM_, not yet an undo step
     QTransform floatM_;
     bool scaleWidths_ = false;  // Select's Scale widths: transforms scale Width Knot widths too
@@ -2104,6 +2133,16 @@ int main(int argc, char** argv) {
     editMenu->addSeparator();
     QObject::connect(key(editMenu->addAction("Cu&t"), {QKeySequence("Ctrl+X")}), &QAction::triggered, [canvas] { canvas->copy(true); });
     QObject::connect(key(editMenu->addAction("&Copy"), {QKeySequence("Ctrl+C")}), &QAction::triggered, [canvas] { canvas->copy(false); });
+    QAction* beforePaste = nullptr;  // the tool Paste switched away from; Enter or a click outside brings it back
+    QObject::connect(key(editMenu->addAction("&Paste"), {QKeySequence("Ctrl+V")}), &QAction::triggered, [canvas, toolGroup, &beforePaste] {
+        QImage img = QGuiApplication::clipboard()->image();
+        if (img.isNull()) return;  // text or nothing on the clipboard: no paste
+        QPointF at = canvas->pastePoint();
+        beforePaste = toolGroup->checkedAction();
+        toolGroup->actions()[SelectTool]->trigger();
+        canvas->paste(img.convertToFormat(QImage::Format_RGBA8888), at);
+    });
+    canvas->onPasteEnd = [&beforePaste] { if (beforePaste) beforePaste->trigger(); beforePaste = nullptr; };
 
     auto* viewMenu = window.menuBar()->addMenu("&View");
     QObject::connect(key(viewMenu->addAction("&Mirror"), {QKeySequence("M")}), &QAction::triggered, [canvas] { canvas->mirror(); });

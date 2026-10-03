@@ -1823,6 +1823,21 @@ static bool pastedImageFloatsAndCommitsOnce() {
     return live && cancelled && same && undone && fresh && freshUndone && freshCancel && refused;
 }
 
+// A brush stroke still unsealed when a paste starts (#508) is its own undo step: the paste goes into the new layer and the stroke stays.
+static bool pasteAfterLiveStrokeKeepsTheStroke() {
+    auto pencil = loadBrush(TEST_PENCIL);
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.stroke(pencil, waveAt(32));
+    QImage stroked = doc.image(1);
+    QImage red(4, 4, QImage::Format_RGBA8888);
+    red.fill(Qt::red);
+    bool pasted = doc.pasteImage(red, {}, true) && doc.layerCount() == 3 && doc.image(1) == stroked && doc.image(2).pixelColor(1, 1) == QColor(Qt::red);
+    bool undone = doc.undo() && doc.layerCount() == 2 && doc.image(1) == stroked;
+    return pasted && undone;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1910,6 +1925,7 @@ int main() {
     run("rewidthPathScalesKnots", rewidthPathScalesKnots);
     run("transformRectMovesPixelsAndUndoesOnce", transformRectMovesPixelsAndUndoesOnce);
     run("pastedImageFloatsAndCommitsOnce", pastedImageFloatsAndCommitsOnce);
+    run("pasteAfterLiveStrokeKeepsTheStroke", pasteAfterLiveStrokeKeepsTheStroke);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("bezierPenPlacesCornersAndFinishes", bezierPenPlacesCornersAndFinishes);
     run("bezierPenDragMakesSymmetricNode", bezierPenDragMakesSymmetricNode);

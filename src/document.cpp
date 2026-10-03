@@ -654,6 +654,7 @@ void Document::cancelFloat() {
     if (strokeStart_.isNull()) return;
     layers_[current_].image = strokeStart_;
     strokeStart_ = QImage();
+    pasting_ = false;
     if (floatFrom_ < 0) return;
     layers_.pop_back();
     current_ = floatFrom_;
@@ -661,9 +662,10 @@ void Document::cancelFloat() {
 }
 
 bool Document::floatImage(const QImage& img, const QTransform& m, bool newLayer) {
-    if (strokeStart_.isNull()) {
+    if (!pasting_) {
         if (!newLayer && layers_[current_].vector) return false;
-        seal();
+        seal();  // a stroke still in progress is its own step
+        pasting_ = true;
         history_.resize(applied_);  // a new edit discards the redo branch
         if (newLayer) {
             floatFrom_ = current_;
@@ -689,6 +691,7 @@ bool Document::pasteImage(const QImage& img, const QTransform& m, bool newLayer)
 
 void Document::seal() {
     if (strokeStart_.isNull()) return;
+    pasting_ = false;
     if (floatFrom_ >= 0) {  // a paste into a layer it added: the layer, pixels and all, is one Add step
         Step s;
         s.kind = Add;
@@ -731,7 +734,7 @@ void Document::push(Step s) {
 }
 
 int Document::stepId() {
-    seal();
+    if (!pasting_) seal();  // a floating paste is not a step yet: the window title asks on every Layers refresh (#508)
     return applied_ ? history_[applied_ - 1].id : baseId_;
 }
 
