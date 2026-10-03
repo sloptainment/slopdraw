@@ -67,6 +67,12 @@ Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget) {
 
 QImage Document::render() const { return compose(0, int(layers_.size()), 0); }
 
+QImage Document::groupImage(int group) const {
+    int lo = group;
+    while (lo > 0 && layers_[lo - 1].depth > layers_[group].depth) lo--;
+    return compose(lo, group, layers_[group].depth + 1);
+}
+
 QImage Document::compose(int lo, int hi, int d) const {
     QImage out(layers_[0].image.size(), QImage::Format_RGBA8888);
     out.fill(Qt::transparent);

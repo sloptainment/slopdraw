@@ -1481,10 +1481,23 @@ int main(int argc, char** argv) {
         nav->refresh();
         QSignalBlocker b1(layerList), b2(layerOpacity);
         layerList->clear();
-        for (int i = d.layerCount() - 1; i >= 0; i--) {  // a row: eye, kind icon, thumbnail, name (#169)
+        int currentRow = -1;
+        for (int i = d.layerCount() - 1; i >= 0; i--) {  // a row: colour bars, eye, kind icon, thumbnail, name (#169); a group row ends in its arrow (#457)
+            const bool group = d.isGroup(i);
             auto* row = new QWidget;
             auto* h = new QHBoxLayout(row);
             h->setContentsMargins(2, 2, 2, 2);
+            static const char* const hues[] = {"#d9534f", "#5aa0ff", "#7fd27f", "#c58af9"};
+            std::vector<int> bars;  // the enclosing groups, outermost first, then the row's own if it is a group
+            for (int j = i + 1, depth = d.depth(i); j < d.layerCount() && depth > 0; j++)
+                if (d.depth(j) < depth) { bars.insert(bars.begin(), j); depth = d.depth(j); }
+            if (group) bars.push_back(i);
+            for (int g : bars) {
+                auto* bar = new QFrame;
+                bar->setFixedWidth(4);
+                bar->setStyleSheet(QString("background: %1;").arg(hues[g % 4]));
+                h->addWidget(bar);
+            }
             auto* eye = new QToolButton;
             eye->setAutoRaise(true);
             eye->setCheckable(true);
@@ -1500,14 +1513,24 @@ int main(int argc, char** argv) {
             tp.fill(QColor(200, 200, 200));  // so a transparent layer's thumbnail still shows
             QPainter tpp(&tp);
             tpp.setRenderHint(QPainter::SmoothPixmapTransform);
-            tpp.drawImage(tp.rect(), d.image(i));
+            tpp.drawImage(tp.rect(), group ? d.groupImage(i) : d.image(i));
             thumb->setPixmap(tp);
             h->addWidget(eye);
-            h->addWidget(new QLabel(d.vector(i) ? "✒" : "🖌"));
+            h->addWidget(new QLabel(group ? (d.collapsed(i) ? "📁" : "📂") : d.vector(i) ? "✒" : "🖌"));
             h->addWidget(thumb);
-            h->addWidget(new QLabel(d.name(i)), 1);
+            auto* name = new QLabel(d.name(i));
+            if (group) name->setStyleSheet("font-weight: bold;");
+            h->addWidget(name, 1);
+            if (group) {
+                auto* arrow = new QToolButton;
+                arrow->setAutoRaise(true);
+                arrow->setText(d.collapsed(i) ? "▸" : "▾");
+                QObject::connect(arrow, &QToolButton::clicked, [canvas, i] { canvas->doc().setCollapsed(i, !canvas->doc().collapsed(i)); canvas->onLayersChange(); });
+                h->addWidget(arrow);
+            }
             // flag icons at the right end (#468): Alpha Lock (Raster Layer rows; Vector rows keep a blank slot) and Inherit Alpha, grey outline off, white on a blue tile on
             for (bool lock : {true, false}) {
+                if (group) break;
                 if (lock && d.vector(i)) { h->addSpacing(24 + h->spacing()); continue; }
                 auto* fb = new QToolButton;
                 fb->setCheckable(true);
@@ -1550,10 +1573,14 @@ int main(int argc, char** argv) {
                 h->addWidget(fb);
             }
             auto* it = new QListWidgetItem(layerList);
+            it->setData(Qt::UserRole, i);
             it->setSizeHint(row->sizeHint());
             layerList->setItemWidget(it, row);
+            if (i == d.current()) currentRow = layerList->count() - 1;
+            if (group && d.collapsed(i))  // a collapsed group's children have no rows
+                for (int gd = d.depth(i); i > 0 && d.depth(i - 1) > gd;) i--;
         }
-        layerList->setCurrentRow(d.layerCount() - 1 - d.current());
+        layerList->setCurrentRow(currentRow);
         layerOpacity->setValue(std::lround(d.opacity(d.current()) * 100));
         layerOpacityValue->setText(QString("%1 %").arg(layerOpacity->value()));
         canvas->update();
@@ -1563,14 +1590,30 @@ int main(int argc, char** argv) {
     canvas->onLayersChange = refresh;
     QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
         if (row < 0) return;
-        canvas->doc().setCurrent(canvas->doc().layerCount() - 1 - row);
+        canvas->doc().setCurrent(layerList->item(row)->data(Qt::UserRole).toInt());
         refresh();
     });
+    // double-click a group row (not its eye or arrow, which take the click) opens or closes it; a filter, because refresh() rebuilds the rows on the first click
+    struct DoubleClick : QObject {
+        std::function<bool(QPoint)> on;
+        bool eventFilter(QObject*, QEvent* e) override { return e->type() == QEvent::MouseButtonDblClick && on(static_cast<QMouseEvent*>(e)->pos()); }
+    };
+    auto* dbl = new DoubleClick;
+    dbl->on = [canvas, layerList](QPoint pos) {
+        auto* it = layerList->itemAt(pos);
+        if (!it) return false;
+        int i = it->data(Qt::UserRole).toInt();
+        if (!canvas->doc().isGroup(i)) return false;
+        canvas->doc().setCollapsed(i, !canvas->doc().collapsed(i));
+        canvas->onLayersChange();
+        return true;
+    };
+    layerList->viewport()->installEventFilter(dbl);
     layerList->setContextMenuPolicy(Qt::CustomContextMenu);  // right-click a row: Rasterize, enabled on a Vector Layer only (#200)
     QObject::connect(layerList, &QListWidget::customContextMenuRequested, [canvas, layerList, refresh](QPoint pos) {
-        int row = layerList->row(layerList->itemAt(pos));
-        if (row < 0) return;
-        int i = canvas->doc().layerCount() - 1 - row;
+        auto* it = layerList->itemAt(pos);
+        if (!it) return;
+        int i = it->data(Qt::UserRole).toInt();
         QMenu menu;
         menu.addAction("Rasterize")->setEnabled(canvas->doc().vector(i));
         if (menu.exec(layerList->viewport()->mapToGlobal(pos)) && canvas->doc().rasterizeLayer(i)) refresh();
@@ -1584,8 +1627,9 @@ int main(int argc, char** argv) {
     const std::initializer_list<LayerOp> layerOps{
         {"+ Raster", "Add &Raster", [](Document& d) { d.addLayer(); }},
         {"+ Vector", "Add &Vector", [](Document& d) { d.addVectorLayer(); }},
-        {"↑", "&Up", [](Document& d) { if (d.moveLayer(d.current(), d.current() + 1)) d.setCurrent(d.current() + 1); }},
-        {"↓", "Dow&n", [](Document& d) { if (d.moveLayer(d.current(), d.current() - 1)) d.setCurrent(d.current() - 1); }},
+        {"+ Group", "Add &Group", [](Document& d) { d.addGroup(); }},
+        {"↑", "&Up", [](Document& d) { d.stepItem(d.current(), true); }},
+        {"↓", "Dow&n", [](Document& d) { d.stepItem(d.current(), false); }},
         {"🗑", "&Delete", [](Document& d) { d.deleteLayer(d.current()); }}};
     int layerOpIndex = 0;
     for (const auto& l : layerOps) {
@@ -2211,6 +2255,7 @@ int main(int argc, char** argv) {
         docActions.push_back(a);
         QObject::connect(a, &QAction::triggered, [canvas, refresh, op = l.op] { op(canvas->doc()); refresh(); });
     }
+    QObject::connect(key(layerMenu->addAction("&Group current item"), {QKeySequence("Ctrl+G")}), &QAction::triggered, [canvas, refresh] { canvas->doc().wrap(canvas->doc().current()); refresh(); });
 
     auto* toolsMenu = window.menuBar()->addMenu("&Tools");
     toolsMenu->addActions(toolGroup->actions());

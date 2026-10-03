@@ -120,6 +120,8 @@ public:
     // Groups (#424): every item has a depth (0 = root); a group has no pixels and sits directly above its children, the run below it that is deeper.
     int depth(int layer) const { return layers_[layer].depth; }
     bool isGroup(int layer) const { return layers_[layer].group; }
+    // A group's children composited into one transparent image, at their own opacity and visibility (not the group's).
+    QImage groupImage(int group) const;
     // Adds an empty group directly above the current item, at its depth, and makes it current; returns its index. One undo step.
     int addGroup();
     // Wraps item `layer` (with its block) in a new group at its place and returns the group's index, which becomes current; -1, no step, for the Background or a bad index. One undo step.
