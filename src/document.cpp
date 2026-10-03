@@ -96,8 +96,9 @@ int Document::addLayer() {
     seal();
     Step s;
     s.kind = Add;
-    s.layer = int(layers_.size());
-    s.na = "Layer " + QString::number(s.layer);
+    s.layer = current_ + 1;
+    s.to = layers_[current_].depth;
+    s.na = "Layer " + QString::number(layers_.size());
     push(s);
     apply(s, false);
     return current_;
@@ -121,12 +122,99 @@ int Document::addGroup() {
     return current_;
 }
 
+int Document::blockStart(int i) const {
+    int lo = i;
+    if (layers_[i].group) while (lo > 0 && layers_[lo - 1].depth > layers_[i].depth) lo--;
+    return lo;
+}
+
+bool Document::wellFormed(const std::vector<Layer>& v) {
+    if (v.back().depth != 0) return false;
+    for (size_t i = v.size() - 1; i > 0; i--)
+        if (v[i - 1].depth < 0 || v[i - 1].depth > v[i].depth + v[i].group) return false;
+    return true;
+}
+
+bool Document::relocate(int lo, int hi, int at, int depth) {
+    std::vector<Layer> v = layers_;
+    std::vector<int> ids(v.size());
+    for (size_t i = 0; i < ids.size(); i++) ids[i] = int(i);
+    std::vector<Layer> block(v.begin() + lo, v.begin() + hi + 1);
+    std::vector<int> blockIds(ids.begin() + lo, ids.begin() + hi + 1);
+    for (Layer& l : block) l.depth += depth - v[hi].depth;
+    v.erase(v.begin() + lo, v.begin() + hi + 1);
+    ids.erase(ids.begin() + lo, ids.begin() + hi + 1);
+    v.insert(v.begin() + at, block.begin(), block.end());
+    ids.insert(ids.begin() + at, blockIds.begin(), blockIds.end());
+    if (at < 1 || depth < 0 || !wellFormed(v) || (at == lo && depth == layers_[hi].depth)) return false;
+    seal();
+    Step s;
+    s.kind = Tree;
+    s.items = layers_;
+    s.newItems = v;
+    s.to = current_;
+    s.layer = int(std::find(ids.begin(), ids.end(), current_) - ids.begin());  // the current item keeps its identity
+    push(s);
+    apply(s, false);
+    return true;
+}
+
+int Document::wrap(int layer) {
+    if (layer < 1 || layer >= int(layers_.size())) return -1;
+    seal();
+    Step s;
+    s.kind = Tree;
+    s.items = layers_;
+    s.to = current_;
+    s.newItems = layers_;
+    for (int i = blockStart(layer); i <= layer; i++) s.newItems[i].depth++;
+    Layer g;
+    g.name = "Group " + QString::number(layers_.size());
+    g.depth = layers_[layer].depth;
+    g.group = true;
+    s.newItems.insert(s.newItems.begin() + layer + 1, g);
+    s.layer = layer + 1;
+    push(s);
+    apply(s, false);
+    return current_;
+}
+
+bool Document::stepItem(int layer, bool up) {
+    int n = int(layers_.size());
+    if (layer < 1 || layer >= n) return false;
+    int lo = blockStart(layer), d = layers_[layer].depth, size = layer - lo + 1;
+    // `at` is an index of the list without the block
+    if (up) {
+        int j = layer + 1;
+        if (j >= n) return false;
+        int dj = layers_[j].depth;
+        if (dj < d) return relocate(lo, layer, j + 1 - size, d - 1);  // j is the group: out above it
+        if (dj == d) return relocate(lo, layer, layers_[j].group && !layers_[j].collapsed ? j - size : j + 1 - size, d + (layers_[j].group && !layers_[j].collapsed));  // an empty group, or a layer
+        int k = j;
+        while (layers_[k].depth > d) k++;  // the group above whose block j ends
+        return layers_[k].collapsed ? relocate(lo, layer, k + 1 - size, d) : relocate(lo, layer, lo, d + 1);
+    }
+    int j = lo - 1;
+    int dj = layers_[j].depth;
+    if (dj < d) return relocate(lo, layer, lo, d - 1);  // the bottom of its group: out below the group's block
+    if (!layers_[j].group) return relocate(lo, layer, j, d);
+    return layers_[j].collapsed ? relocate(lo, layer, blockStart(j), d) : relocate(lo, layer, j, d + 1);
+}
+
+bool Document::moveItem(int layer, int gap, int depth) {
+    if (layer < 1 || layer >= int(layers_.size()) || gap < 1 || gap > int(layers_.size())) return false;
+    int lo = blockStart(layer);
+    if (gap > lo && gap <= layer) return false;
+    return relocate(lo, layer, gap > layer ? gap - (layer - lo + 1) : gap, depth);
+}
+
 int Document::addVectorLayer() {
     seal();
     Step s;
     s.kind = Add;
-    s.layer = int(layers_.size());
-    s.na = "Layer " + QString::number(s.layer);
+    s.layer = current_ + 1;
+    s.to = layers_[current_].depth;
+    s.na = "Layer " + QString::number(layers_.size());
     s.vector = true;
     push(s);
     apply(s, false);
@@ -588,8 +676,14 @@ void Document::apply(const Step& s, bool reverse) {
     switch (s.kind) {
     case Pixels: paste(layers_[s.layer].image, reverse ? s.before : s.after, s.rect.topLeft()); break;
     case Add:
-        if (reverse) { remove(); break; }
+        if (reverse) {
+            bool onIt = current_ == s.layer;
+            remove();
+            if (onIt) current_ = s.layer - 1;  // back to the item below it
+            break;
+        }
         insert({true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), s.na});
+        layers_[s.layer].depth = s.to;
         layers_[s.layer].image.fill(Qt::transparent);
         if (!s.after.isNull()) layers_[s.layer].image = s.after;  // a paste into a new layer (#504)
         layers_[s.layer].vector = s.vector;

@@ -122,6 +122,17 @@ public:
     bool isGroup(int layer) const { return layers_[layer].group; }
     // Adds an empty group directly above the current item, at its depth, and makes it current; returns its index. One undo step.
     int addGroup();
+    // Wraps item `layer` (with its block) in a new group at its place and returns the group's index, which becomes current; -1, no step, for the Background or a bad index. One undo step.
+    int wrap(int layer);
+    // Steps item `layer` with its block one place up or down (#425): past a plain item, out of its group at the group's top or bottom edge, into an expanded group next to it
+    // (up: as its bottom item, down: as its top item), past a collapsed group whole. Refuses (false, no step) at the ends and below the Background. The current item keeps its identity.
+    bool stepItem(int layer, bool up);
+    // Moves item `layer` with its block so its block starts at gap `gap` (0..layerCount, counted in the list as it is now: before the item at that index) at `depth`; one undo step.
+    // Refuses (false, no step) a gap inside its own block, below the Background, a depth that leaves a group without its place, or a move that changes nothing.
+    bool moveItem(int layer, int gap, int depth);
+    // Whether a group hides its children's rows in the Layers dock. Not undoable, not saved.
+    bool collapsed(int layer) const { return layers_[layer].collapsed; }
+    void setCollapsed(int layer, bool on) { layers_[layer].collapsed = on; }
     // Alpha Lock (#427): a Raster Layer flag, one undo step (a same-value call is none). A Vector Layer refuses it: returns false, no step.
     bool alphaLock(int layer) const { return layers_[layer].alphaLock; }
     bool setAlphaLock(int layer, bool on);
@@ -176,6 +187,7 @@ private:
         bool inheritAlpha = false;
         int depth = 0;
         bool group = false;  // no pixels: image is null
+        bool collapsed = false;
     };
     enum Kind { Pixels, Add, Delete, Move, Visible, Opacity, Name, AlphaLock, InheritAlpha, PathAdd, Knots, Nodes, Rasterize, Paths, References, Tree };
     struct Step {
@@ -195,6 +207,10 @@ private:
     };
     // Discards the redo branch, appends s as applied, and drops the oldest steps past the budget.
     void push(Step s);
+    // The first index of the block that ends at item i (i itself for a layer).
+    int blockStart(int i) const;
+    // Puts items [lo, hi] at index `at` of the list without them, depth shifted so the top item's is `depth`, as one Tree step; false, no step, if that changes nothing or breaks the tree.
+    bool relocate(int lo, int hi, int at, int depth);
     // Applies s (undo: reverse = true) to layers_.
     void apply(const Step& s, bool reverse);
     void applyMove(int from, int to);
@@ -203,6 +219,8 @@ private:
 
     // The items [lo, hi), all at depth d or deeper, composited into one transparent image: each level on its own, groups at their opacity.
     QImage compose(int lo, int hi, int d) const;
+    // A list is a tree when, reading down from the top item (depth 0), depth only grows by one, right after a group (#424).
+    static bool wellFormed(const std::vector<Layer>& v);
     // Redraws a Vector Layer's image from its paths.
     static void rasterize(Layer& l);
     std::vector<Layer> layers_;  // bottom to top, never empty

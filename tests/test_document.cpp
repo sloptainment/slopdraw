@@ -1876,6 +1876,70 @@ static bool groupsCompositeIsolatedAndUndoAsOne() {
     return doc.layerCount() == 1 && doc.undo() && doc.layerCount() == 5;
 }
 
+// #455: wrap, step and move on a small tree. Items read bottom to top as name+depth, e.g. "bg0 a0 b1 G0".
+static std::string tree(const Document& d) {
+    std::string s;
+    for (int i = 0; i < d.layerCount(); i++) s += (i ? " " : "") + d.name(i).toStdString() + std::to_string(d.depth(i));
+    return s;
+}
+
+static Document flat(int n) {
+    Document d(QSize(8, 8));
+    d.setName(0, "bg");
+    for (int i = 0; i < n; i++) {
+        d.addLayer();
+        d.setName(i + 1, QString(QChar('a' + i)));
+    }
+    return d;
+}
+
+static bool wrapStepAndMoveReshapeTheTree() {
+    Document d = flat(3);
+    d.setCurrent(2);
+    int g = d.wrap(2);  // 1: b ends inside a new group at its place
+    d.setName(g, "G");
+    if (g != 3 || !d.isGroup(3) || tree(d) != "bg0 a0 b1 G0 c0" || d.current() != 3) return false;
+    d.undo();
+    d.undo();  // the rename is a step too
+    if (tree(d) != "bg0 a0 b0 c0" || d.current() != 2) return false;
+    d.redo();
+    d.redo();
+    if (d.wrap(0) != -1) return false;  // the Background is never wrapped
+    // 2: into an expanded group from below and from above, out at either edge
+    if (!d.stepItem(1, true) || tree(d) != "bg0 a1 b1 G0 c0") return false;
+    if (!d.stepItem(4, false) || tree(d) != "bg0 a1 b1 c1 G0") return false;
+    if (!d.stepItem(3, true) || tree(d) != "bg0 a1 b1 G0 c0") return false;
+    if (!d.stepItem(1, false) || tree(d) != "bg0 a0 b1 G0 c0") return false;
+    // 2: past a collapsed group; a plain swap; refusal at the Background
+    d.setCollapsed(3, true);
+    if (!d.collapsed(3) || !d.stepItem(1, true) || tree(d) != "bg0 b1 G0 a0 c0") return false;
+    d.undo();
+    if (tree(d) != "bg0 a0 b1 G0 c0") return false;
+    Document f = flat(2);
+    if (!f.stepItem(1, true) || tree(f) != "bg0 b0 a0" || f.stepItem(1, false) || f.stepItem(0, true) || tree(f) != "bg0 b0 a0") return false;
+    // 3: a group steps and moves with its block, depths shifted
+    d.setCollapsed(3, false);
+    if (!d.stepItem(3, true) || tree(d) != "bg0 a0 c0 b1 G0") return false;
+    if (d.current() != 4) return false;  // the current item (G) keeps its identity
+    Document m = flat(3);
+    m.setCurrent(2);
+    m.wrap(2);  // bg0 a0 b1 G0 c0
+    m.wrap(4);  // bg0 a0 b1 G0 c1 H0
+    if (!m.moveItem(3, 5, 1) || tree(m) != "bg0 a0 c1 b2 Group 41 Group 50") return false;  // G's block into H, one deeper
+    if (m.moveItem(4, 4, 1)) return false;  // 4: a gap inside its own block
+    if (!m.moveItem(4, 1, 0) || tree(m) != "bg0 b1 Group 40 a0 c1 Group 50") return false;
+    m.undo();
+    if (tree(m) != "bg0 a0 c1 b2 Group 41 Group 50") return false;
+    // 5: a new layer lands above the current child, in its group
+    Document e = flat(2);
+    e.wrap(1);  // bg0 a1 Group 3 b0
+    e.setCurrent(1);
+    e.addLayer();
+    if (e.depth(2) != 1 || e.isGroup(2) || e.current() != 2 || e.layerCount() != 5) return false;
+    e.undo();
+    return e.current() == 1 && e.layerCount() == 4;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1983,5 +2047,6 @@ int main() {
     run("removeBezierJoinsNeighbours", removeBezierJoinsNeighbours);
     run("splitBezierKeepsTheShape", splitBezierKeepsTheShape);
     run("groupsCompositeIsolatedAndUndoAsOne", groupsCompositeIsolatedAndUndoAsOne);
+    run("wrapStepAndMoveReshapeTheTree", wrapStepAndMoveReshapeTheTree);
     return failed != 0;
 }
