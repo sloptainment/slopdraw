@@ -115,6 +115,8 @@ public:
     void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); update(); }
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
     void setLassoOpacity(float o) { lassoOpacity_ = o; }
+    void setBucketOpacity(float o) { bucketOpacity_ = o; }  // Bucket Fill's own Opacity and Threshold, apart from Lasso Fill's (#607)
+    void setBucketThreshold(int t) { bucketThreshold_ = t; }
     void setSmoothing(int n) { smooth_.n = n; }  // the Brush's Stabilizer, 0 = off (#292)  // Lasso Fill's own, apart from the Brush's (#213)
     void setFinishLine(bool on) { finishLine_ = on; }
     void setLassoSmoothing(int n) { lassoSmooth_.n = n; }  // Lasso Fill's own Stabilizer, apart from the Brush's (#261)
@@ -164,7 +166,7 @@ public:
     // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_: picks and deletes whole paths), 5 Box Select (boxTool_).
     void setTool(int t) {
         commitFloat();
-        fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4; boxTool_ = t == 5; referenceTool_ = t == ReferenceTool;
+        fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4; boxTool_ = t == 5; referenceTool_ = t == ReferenceTool; bucketTool_ = t == BucketFillTool;
         if (selectTool_) { selected_ = -1; nodeSel_.clear(); others_.clear(); }
         if (!spiroTool_) pen_.cancel();
         picked_.clear();
@@ -232,15 +234,15 @@ public:
     std::function<void()> onPasteEnd;  // a paste ended by Enter or a click outside: the shell gives the previous tool back
     void mirror() { s_.view.mirrorAt(rect().center()); update(); }
     // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
-    bool erase() const { return fillTool_ ? eraseFill_ : !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && eraseBrush_; }
+    bool erase() const { return fillTool_ ? eraseFill_ : bucketTool_ ? eraseBucket_ : !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && eraseBrush_; }
     void setErase(bool on) {
-        if (spiroTool_ || selectTool_ || objectTool_ || boxTool_) return;
-        if (!fillTool_ && eraseBrush_ != on) {  // the Brush keeps a Size and Opacity per mode: swap in the other mode's
+        if (spiroTool_ || selectTool_ || objectTool_ || boxTool_ || referenceTool_) return;
+        if (!fillTool_ && !bucketTool_ && eraseBrush_ != on) {  // the Brush keeps a Size and Opacity per mode: swap in the other mode's
             float r = radius(), o = opacity();
             setRadius(otherRadius_), setOpacity(otherOpacity_);
             otherRadius_ = r, otherOpacity_ = o;
         }
-        (fillTool_ ? eraseFill_ : eraseBrush_) = on;
+        (fillTool_ ? eraseFill_ : bucketTool_ ? eraseBucket_ : eraseBrush_) = on;
     }
     void setScaleWidths(bool on) { scaleWidths_ = on; }
     // The picks' width in Select, knots scaled (#305), else a new Vector Path's width in px, from the Spiro Pen's Tool Options
@@ -427,7 +429,7 @@ protected:
             p.setBrush(Qt::NoBrush);
             p.drawRect(marked);
         }
-        if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && !referenceTool_) {  // brush outline: dark with a light line beside it, readable on any color
+        if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && !referenceTool_ && !bucketTool_) {  // brush outline: dark with a light line beside it, readable on any color
             p.resetTransform();
             p.setRenderHint(QPainter::Antialiasing);
             double r = s_.view.screenRadius(radius());
@@ -441,7 +443,7 @@ protected:
     void mousePressEvent(QMouseEvent* e) override {
         dragging_ = e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && space_);
         last_ = e->position();
-        resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && (e->modifiers() & Qt::ShiftModifier);
+        resizing_ = e->button() == Qt::LeftButton && !space_ && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && !bucketTool_ && (e->modifiers() & Qt::ShiftModifier);
         if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier) && !editKnot(e->position(), e->modifiers())) pickAt(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && (e->modifiers() & Qt::ControlModifier)) return;
         else if (referenceTool_) { if (e->button() == Qt::LeftButton && !space_) refPress(e->position(), e->modifiers()); else if (e->button() == Qt::RightButton) refMenu(e->globalPosition().toPoint()); }
@@ -452,6 +454,7 @@ protected:
         else if (e->button() == Qt::LeftButton && !space_ && boxTool_) boxPress(e->position());
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && spiroTool_) spiroClick(e->position(), e->modifiers() & Qt::ShiftModifier);
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && fillTool_) lassoAt(e->position(), erase());
+        else if (bucketTool_) { if (e->button() == Qt::LeftButton && !space_) bucketAt(e->position()); }
         else if (e->button() == Qt::LeftButton && !space_ && !resizing_ && !objectTool_ && !boxTool_) paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
     }
     void mouseMoveEvent(QMouseEvent* e) override {
@@ -505,13 +508,14 @@ protected:
         bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
         if (e->type() == QEvent::TabletRelease) { cropEdge_.reset(); endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
         else if (e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier)) { if (!editKnot(e->position(), e->modifiers())) pickAt(e->position()); }
-        else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
+        else if (e->type() == QEvent::TabletPress && !selectTool_ && !objectTool_ && !boxTool_ && !spiroTool_ && !referenceTool_ && !bucketTool_ && (e->modifiers() & Qt::ShiftModifier)) { resizing_ = true; last_ = e->position(); }
         else if (resizing_) resizeTo(e->position());
         else if (referenceTool_) { if (e->type() == QEvent::TabletPress) refPress(e->position(), e->modifiers()); else if (cropEdge_) cropDragTo(e->position()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (selectTool_) { if (e->type() == QEvent::TabletPress) selectPress(e->position(), e->modifiers()); else if (knotDrag_ >= 0) dragKnotTo(e->position()); else if (nodeDrag_) dragNodesTo(e->position()); else if (handleDrag_ >= 0) dragHandleTo(e->position()); }
         else if (objectTool_) { if (e->type() == QEvent::TabletPress) objectPress(e->position(), e->modifiers()); else if (moveDrag_) dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier); }
         else if (boxTool_) { if (e->type() == QEvent::TabletPress) boxPress(e->position()); }
         else if (spiroTool_) { if (e->type() == QEvent::TabletPress) { if (e->button() == Qt::RightButton) finishPath(false); else spiroClick(e->position(), e->modifiers() & Qt::ShiftModifier); } else if (penDrag_) pen_.drag(s_.view.toDoc(e->position())); }  // the barrel button arrives as right (#178)
+        else if (bucketTool_) { if (e->type() == QEvent::TabletPress) bucketAt(e->position()); }
         else if (fillTool_ && (e->type() == QEvent::TabletPress || lassoing_)) lassoAt(e->position(), erase() || eraser);
         else if (!objectTool_ && !boxTool_ && (e->pointerType() == QPointingDevice::PointerType::Pen || e->pointerType() == QPointingDevice::PointerType::Eraser) && (e->type() == QEvent::TabletPress || painting_))
             paintAt(e->position(), e->pressure(), e->xTilt() / 60, e->yTilt() / 60, e->timestamp(),  // libmypaint tilt is -1..1 for +-60 degrees
@@ -562,6 +566,7 @@ private:
         if (boxTool_) return "Delete clears the pixels · drag a new rectangle to replace it · click outside or Esc clears the selection";
         if (objectTool_ && picked().empty()) return "Click a path to pick it · Shift+click toggles · drag a box on empty canvas picks the paths it touches";
         if (objectTool_) return QString("%1 picked · drag inside the box moves them · drag a handle scales (Shift keeps the ratio on a corner) · Delete removes them · click or drag a box to pick again · Shift adds").arg(picked().size());
+        if (bucketTool_) return "Click fills the connected region within Threshold · Ctrl+click picks a color · E toggles erase";
         return "Draw · Shift+drag sizes the brush · Ctrl+click picks a color · E toggles erase";
     }
     // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node. In Bezier the close waits
@@ -1219,6 +1224,14 @@ private:
         lasso_.push_back({m.x, m.y});
         update();
     }
+    // Bucket Fill: a click fills the connected region under it in the current colour (#607).
+    void bucketAt(QPointF pos) {
+        QPointF d = s_.view.toDoc(pos);
+        QColor c = color_;
+        c.setAlphaF(bucketOpacity_);
+        s_.doc.bucketFill({int(std::floor(d.x())), int(std::floor(d.y()))}, c, bucketThreshold_, 0, true, true, eraseBucket_);
+        update();
+    }
     void endLasso() {
         if (!lassoing_) return;
         lassoing_ = false;
@@ -1347,9 +1360,10 @@ private:
     Document::PaintMode paintMode_ = Document::PaintMode::Stroke;
     QColor penStroke_ = Qt::black, penFill_ = QColor(0x2d, 0x5d, 0x9a);  // the Pen's Stroke and Fill swatches
     bool fillActive_ = false;
-    float lassoOpacity_ = 1;
+    float lassoOpacity_ = 1, bucketOpacity_ = 1;
+    int bucketThreshold_ = 15;
     float otherRadius_ = radius(), otherOpacity_ = opacity();  // the Brush's Size and Opacity for the mode it isn't in
-    bool fillTool_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
+    bool fillTool_ = false, bucketTool_ = false, eraseBucket_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
 };
 
 // Hue ring around a saturation/value square. Dragging either calls onChange with the new color; setColor moves it from outside.
@@ -1906,6 +1920,29 @@ int main(int argc, char** argv) {
     lassoFinish->setChecked(true);
     QObject::connect(lassoFinish, &QCheckBox::toggled, canvas, &Canvas::setLassoFinishLine);
     lassoCol->addWidget(lassoFinish);
+    auto* bucketBox = new QWidget;  // Bucket Fill's own Threshold (0-255) and Opacity (#607)
+    auto* bucketCol = new QVBoxLayout(bucketBox);
+    bucketCol->setContentsMargins(0, 0, 0, 0);
+    auto* thresholdRow = new QHBoxLayout;
+    auto* threshold = new QSlider(Qt::Horizontal);
+    threshold->setRange(0, 255);
+    auto* thresholdValue = new QLabel;
+    QObject::connect(threshold, &QSlider::valueChanged, [canvas, thresholdValue](int v) { canvas->setBucketThreshold(v); thresholdValue->setText(QString::number(v)); });
+    threshold->setValue(15);
+    thresholdRow->addWidget(new QLabel("Threshold"));
+    thresholdRow->addWidget(threshold);
+    thresholdRow->addWidget(thresholdValue);
+    bucketCol->addLayout(thresholdRow);
+    auto* bucketOpacityRow = new QHBoxLayout;
+    auto* bucketOpacity = new QSlider(Qt::Horizontal);  // percent
+    bucketOpacity->setRange(1, 100);
+    auto* bucketOpacityValue = new QLabel;
+    QObject::connect(bucketOpacity, &QSlider::valueChanged, [canvas, bucketOpacityValue](int v) { canvas->setBucketOpacity(v / 100.f); bucketOpacityValue->setText(QString("%1 %").arg(v)); });
+    bucketOpacity->setValue(100);
+    bucketOpacityRow->addWidget(new QLabel("Opacity"));
+    bucketOpacityRow->addWidget(bucketOpacity);
+    bucketOpacityRow->addWidget(bucketOpacityValue);
+    bucketCol->addLayout(bucketOpacityRow);
     auto* refBox = new QWidget;  // the Reference tool's picks' Opacity (#544), shown only with picks
     auto* refRow = new QHBoxLayout(refBox);
     refRow->setContentsMargins(0, 0, 0, 0);
@@ -2029,9 +2066,10 @@ int main(int argc, char** argv) {
     QObject::connect(scaleWidths, &QCheckBox::toggled, [canvas](bool on) { canvas->setScaleWidths(on); });
     auto showOptions = [=](int tool) {
         scaleWidths->setVisible(tool == SelectTool);
-        eraseBox->setVisible(tool <= LassoFillTool);
+        eraseBox->setVisible(tool <= LassoFillTool || tool == BucketFillTool);
         brushBox->setVisible(tool == BrushTool);
         lassoBox->setVisible(tool == LassoFillTool);
+        bucketBox->setVisible(tool == BucketFillTool);
         widthBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
         paintBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
         swatchBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
@@ -2090,6 +2128,7 @@ int main(int argc, char** argv) {
     optionsCol->addWidget(eraseBox);
     optionsCol->addWidget(brushBox);
     optionsCol->addWidget(lassoBox);
+    optionsCol->addWidget(bucketBox);
     optionsCol->addWidget(refBox);
     optionsCol->addWidget(curveBox);
     optionsCol->addWidget(widthBox);
@@ -2115,10 +2154,11 @@ int main(int argc, char** argv) {
         {"\u2316 Node", "N"}, // Node/Knot edit (N)
         {"\u25AD Select", "S"}, // Select (S)
         {"\u2B1A Box", ""}, // Box Select
-        {"\U0001F5BC Reference", "R"} // Reference (R, #535)
+        {"\U0001F5BC Reference", "R"}, // Reference (R, #535)
+        {"\U0001FAA3 Bucket Fill", "G"} // Bucket Fill (G, #607)
     };
     int lastTool[2] = {BrushTool, SpiroPenTool};  // last tool used on a Raster, a Vector Layer (#161); Select fits both, so it is no one's last
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
         auto* a = toolGroup->addAction(kTools[i].text);
         a->setCheckable(true);
         a->setChecked(i == 0);
@@ -2140,7 +2180,7 @@ int main(int argc, char** argv) {
         for (auto* w : {colorDock->widget(), layerPanel, optionsPanel, navPanel}) w->setEnabled(has);
         for (auto* a : docActions) a->setEnabled(has);
         auto tools = toolGroup->actions();
-        for (int i = 0; i < 7; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i, grp));
+        for (int i = 0; i < 8; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i, grp));
         brushPanel->setEnabled(has && !vec);
         int now = toolForLayer(vec, tools.indexOf(toolGroup->checkedAction()), lastTool[0], lastTool[1], grp);
         if (inGroup && !grp) now = lastTool[vec];  // leaving a group restores the kind's last tool (#161)

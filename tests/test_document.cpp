@@ -2048,6 +2048,12 @@ static bool bucketFillStopsAtARing() {
         && doc.colorAt({8, 8}) == Qt::black && doc.colorAt({9, 16}) == Qt::black && doc.colorAt({2, 2}) == Qt::white && doc.colorAt({25, 16}) == Qt::white;
 }
 
+// Bucket Fill fits a Raster Layer alone: not a Vector Layer, not a group (#607).
+static bool bucketFillToolFitsRasterOnly() {
+    return toolFitsKind(false, BucketFillTool) && !toolFitsKind(true, BucketFillTool) && !toolFitsKind(false, BucketFillTool, true)
+        && toolForLayer(true, BucketFillTool, BrushTool, SpiroPenTool) == SpiroPenTool && toolForLayer(false, BucketFillTool) == BucketFillTool;
+}
+
 // Bucket Fill's Threshold, alpha, opacity, erase, Alpha Lock, undo and refusals (#604).
 static bool bucketFillObeysItsRules() {
     QColor red(255, 0, 0);
@@ -2140,6 +2146,7 @@ int main() {
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("bucketFillStopsAtARing", bucketFillStopsAtARing);
     run("bucketFillObeysItsRules", bucketFillObeysItsRules);
+    run("bucketFillToolFitsRasterOnly", bucketFillToolFitsRasterOnly);
     run("bucketFillGrowsAndSmooths", bucketFillGrowsAndSmooths);
     run("bucketFillSamplesMerged", bucketFillSamplesMerged);
     run("referencesDrawFromTheOriginal", referencesDrawFromTheOriginal);
