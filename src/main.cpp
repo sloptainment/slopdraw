@@ -2138,8 +2138,12 @@ int main(int argc, char** argv) {
     editMenu->addSeparator();
     QObject::connect(key(editMenu->addAction("Cu&t"), {QKeySequence("Ctrl+X")}), &QAction::triggered, [canvas] { canvas->copy(true); });
     QObject::connect(key(editMenu->addAction("&Copy"), {QKeySequence("Ctrl+C")}), &QAction::triggered, [canvas] { canvas->copy(false); });
+    auto pasteReference = [canvas, toolGroup](const QImage& img) {  // as an import is placed (#547, #524): the view centre, scaled down to fit, picked
+        toolGroup->actions()[ReferenceTool]->trigger();
+        canvas->importReference(img.convertToFormat(QImage::Format_ARGB32_Premultiplied));
+    };
     QAction* beforePaste = nullptr;  // the tool Paste switched away from; Enter or a click outside brings it back
-    QObject::connect(key(editMenu->addAction("&Paste"), {QKeySequence("Ctrl+V")}), &QAction::triggered, [canvas, toolGroup, &beforePaste] {
+    QObject::connect(key(editMenu->addAction("&Paste"), {QKeySequence("Ctrl+V")}), &QAction::triggered, [canvas, toolGroup, &beforePaste, pasteReference] {
         QImage img = QGuiApplication::clipboard()->image();
         if (img.isNull()) return;  // text or nothing on the clipboard: no paste
         QPointF at = canvas->pastePoint();
@@ -2159,15 +2163,21 @@ int main(int argc, char** argv) {
             menu.addSeparator();
             auto* same = menu.addAction(QString("&Same layer: into “%1”").arg(d.name(d.current())));
             auto* fresh = menu.addAction("&New layer");
+            auto* ref = menu.addAction("&Reference image");
             menu.addAction("Cancel");
             menu.setActiveAction(same);  // Enter takes it
             auto* chosen = menu.exec(canvas->pasteMenuPoint());
+            if (chosen == ref) return pasteReference(img);
             if (chosen != same && chosen != fresh) return;  // Cancel, Esc or a click outside
             newLayer = chosen == fresh;
         }
         beforePaste = toolGroup->checkedAction();
         toolGroup->actions()[SelectTool]->trigger();
         canvas->paste(img.convertToFormat(QImage::Format_RGBA8888), at, newLayer);
+    });
+    QObject::connect(key(editMenu->addAction("Paste as Re&ference Image"), {QKeySequence("Ctrl+Shift+V")}), &QAction::triggered, [pasteReference] {
+        QImage img = QGuiApplication::clipboard()->image();
+        if (!img.isNull()) pasteReference(img);  // any layer kind, no menu (#549)
     });
     canvas->onPasteEnd = [&beforePaste] { if (beforePaste) beforePaste->trigger(); beforePaste = nullptr; };
 
