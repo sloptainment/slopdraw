@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Gui)
 
 # Headless core: QtGui only, never QtWidgets (#35).
-add_library(mydraw_core src/document.cpp src/spiro.cpp src/brush.cpp src/powerstroke.cpp src/ora.cpp vendor/miniz.c)
+add_library(mydraw_core src/document.cpp src/spiro.cpp src/brush.cpp src/powerstroke.cpp src/ora.cpp src/references.cpp vendor/miniz.c)
 target_include_directories(mydraw_core PUBLIC src vendor)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MYPAINT REQUIRED IMPORTED_TARGET libmypaint)

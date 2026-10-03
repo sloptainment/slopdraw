@@ -9,6 +9,7 @@
 #include <QTemporaryDir>
 #include <QXmlStreamReader>
 #include "powerstroke.h"
+#include "references.h"
 #include "spiro.h"
 #include "spiropen.h"
 #include "stabilizer.h"
@@ -1700,6 +1701,34 @@ static bool referencesAreOneUndoStepEachAndNeverRendered() {
     return doc.references().empty();
 }
 
+// #537: references draw from their original's pixels at the on-screen scale, hard past 1:1, cropped, at their opacity.
+static bool referencesDrawFromTheOriginal() {
+    QImage board(2000, 2000, QImage::Format_ARGB32_Premultiplied);  // one-pixel checkerboard
+    for (int y = 0; y < 2000; y++)
+        for (int x = 0; x < 2000; x++) board.setPixel(x, y, (x + y) % 2 ? 0xffffffff : 0xff000000);
+    auto draw = [](const Reference& r, const QTransform& view) {
+        QImage out(40, 40, QImage::Format_ARGB32_Premultiplied);
+        out.fill(Qt::transparent);
+        QPainter p(&out);
+        drawReferences(p, {r}, view);
+        return out;
+    };
+    // 1: placed at 0.1, viewed at 10x around document (50,50): every pixel alternates, as the original does
+    Reference r{board, QTransform::fromScale(0.1, 0.1), QRectF(0, 0, 2000, 2000), 1};
+    QTransform view = QTransform::fromTranslate(-50, -50) * QTransform::fromScale(10, 10);
+    QImage a = draw(r, view);
+    for (int x = 0; x < 39; x++)
+        if (qGray(a.pixel(x, 20)) == qGray(a.pixel(x + 1, 20)) || (qGray(a.pixel(x, 20)) != 0 && qGray(a.pixel(x, 20)) != 255)) return false;
+    // 2: enlarged 4x past 1:1, only pure black and white, in 4-pixel runs
+    QImage b = draw(r, QTransform::fromScale(40, 40));
+    for (int x = 0; x < 40; x++)
+        if (qGray(b.pixel(x, 0)) != ((x / 4) % 2 ? 255 : 0)) return false;
+    // 3: cropped to image x 0..2: columns past 8 px stay empty; 4: opacity 0.5 halves alpha
+    Reference c{board, QTransform(), QRectF(0, 0, 2, 2000), 0.5};
+    QImage d = draw(c, QTransform::fromScale(4, 4));
+    return qAlpha(d.pixel(20, 0)) == 0 && std::abs(qAlpha(d.pixel(2, 0)) - 128) <= 1;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -1708,6 +1737,7 @@ int main() {
         failed += !ok;
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
+    run("referencesDrawFromTheOriginal", referencesDrawFromTheOriginal);
     run("referencesAreOneUndoStepEachAndNeverRendered", referencesAreOneUndoStepEachAndNeverRendered);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);
     run("inheritAlphaCutsByWhatIsBelow", inheritAlphaCutsByWhatIsBelow);

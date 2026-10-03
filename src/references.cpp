@@ -1,0 +1,36 @@
+#include "references.h"
+#include <cmath>
+#include <map>
+
+// The original, then smooth halvings down to one pixel, cached by the original's cacheKey.
+// ponytail: never evicted; drop entries for keys no longer in any list if memory matters.
+static const std::vector<QImage>& pyramid(const QImage& image) {
+    static std::map<qint64, std::vector<QImage>> cache;
+    auto& levels = cache[image.cacheKey()];
+    if (levels.empty()) {
+        levels.push_back(image);
+        while (levels.back().width() > 1 || levels.back().height() > 1) {
+            const QImage& l = levels.back();
+            levels.push_back(l.scaled(std::max(1, l.width() / 2), std::max(1, l.height() / 2), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        }
+    }
+    return levels;
+}
+
+void drawReferences(QPainter& p, const std::vector<Reference>& refs, const QTransform& view) {
+    p.save();
+    for (const Reference& r : refs) {
+        if (r.image.isNull()) continue;
+        QTransform m = r.transform * view;
+        double scale = std::sqrt(std::abs(m.determinant()));  // screen px per image px
+        const auto& levels = pyramid(r.image);
+        size_t k = 0;
+        while (k + 1 < levels.size() && double(levels[k + 1].width()) / r.image.width() >= scale) k++;
+        p.setTransform(m);
+        p.setClipRect(r.crop);
+        p.setOpacity(r.opacity);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, scale < 1);
+        p.drawImage(QRectF(r.image.rect()), levels[k]);
+    }
+    p.restore();
+}
