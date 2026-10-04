@@ -117,6 +117,7 @@ public:
     void setRadius(float r) { if (brush_) setBrushRadius(brush_.get(), r); update(); }
     void setOpacity(float o) { if (brush_) setBrushOpacity(brush_.get(), o); }
     void setLassoOpacity(float o) { lassoOpacity_ = o; }
+    float lassoOpacity() const { return lassoOpacity_; }
     void setBucketOpacity(float o) { bucketOpacity_ = o; }  // Bucket Fill's own Opacity and Threshold, apart from Lasso Fill's (#607)
     void setBucketThreshold(int t) { bucketThreshold_ = t; }
     void setBucketExpand(int px) { bucketExpand_ = px; }  // Expand/shrink, Sample merged and Antialiased, passed to the core fill (#608)
@@ -183,6 +184,7 @@ public:
         update();
         if (onToolChange) onToolChange(t);
     }
+    void setShowReferences(bool on) { showRefs_ = on; update(); }  // View > Show References (#540): not saved, not an undo step
     // The Edit, View and Tools menu actions call these; their keys are window-wide shortcuts.
     void undo(bool redo) {
         commitFloat();  // so undo takes the whole piece back
@@ -247,6 +249,7 @@ public:
             setRadius(otherRadius_), setOpacity(otherOpacity_);
             otherRadius_ = r, otherOpacity_ = o;
         }
+        if (fillTool_ && eraseFill_ != on) std::swap(lassoOpacity_, otherLassoOpacity_);  // Lasso Fill's Opacity per mode too
         (fillTool_ ? eraseFill_ : bucketTool_ ? eraseBucket_ : eraseBrush_) = on;
     }
     void setScaleWidths(bool on) { scaleWidths_ = on; }
@@ -341,8 +344,8 @@ protected:
             p.drawImage(0, 0, r.image);
             p.restore();
         }
-        drawReferences(p, s_.doc.references(), s_.view.matrix());  // above the document image, beyond its edge too (#539)
-        for (int i : refPicks_) {  // the picked references' outlines, dashed
+        if (showRefs_) drawReferences(p, s_.doc.references(), s_.view.matrix());  // above the document image, beyond its edge too (#539)
+        if (showRefs_) for (int i : refPicks_) {  // the picked references' outlines, dashed
             const Reference& r = s_.doc.references()[i];
             p.save();
             p.resetTransform();
@@ -1231,7 +1234,7 @@ private:
     }
     void pickAt(QPointF pos) {
         QPointF d = s_.view.toDoc(pos);
-        QColor c = s_.doc.colorAt({int(std::floor(d.x())), int(std::floor(d.y()))});  // the pixel under the point, not the nearest corner
+        QColor c = pickColorAt(s_.doc, d, showRefs_);
         if (!c.isValid() || !brush_ || selectTool_) return;  // Node/Knot edit: a Ctrl+click no knot or node gesture took does nothing
         setColor(c);
         if (onColorPick) onColorPick(c);
@@ -1373,6 +1376,7 @@ private:
     int penLayer_ = -1;  // the layer the Spiro Pen's unfinished path was started on
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
     bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false, referenceTool_ = false;
+    bool showRefs_ = true;
     std::set<int> refPicks_;  // the Reference tool's picked references, indexes into Document::references()
     std::vector<Reference> refsBefore_;
     int cropping_ = -1;  // the reference in crop mode (#546), -1 for none
@@ -1385,7 +1389,7 @@ private:
     Document::PaintMode paintMode_ = Document::PaintMode::Stroke;
     QColor penStroke_ = Qt::black, penFill_ = QColor(0x2d, 0x5d, 0x9a);  // the Pen's Stroke and Fill swatches
     bool fillActive_ = false;
-    float lassoOpacity_ = 1, bucketOpacity_ = 1;
+    float lassoOpacity_ = 1, otherLassoOpacity_ = 1, bucketOpacity_ = 1;
     int bucketThreshold_ = 15, bucketExpand_ = 0;
     bool bucketMerged_ = true, bucketAA_ = true;
     float otherRadius_ = radius(), otherOpacity_ = opacity();  // the Brush's Size and Opacity for the mode it isn't in
@@ -1635,12 +1639,12 @@ int main(int argc, char** argv) {
     // the drop is handed over as the dragged item's Document index, the gap row and the inside row (-1 for none); refresh() rebuilds the rows.
     struct LayerList : QListWidget {
         std::function<void(int, int, int)> onDrop;
-        int gap_ = -1, inside_ = -1, pressed_ = -1, from_ = -1;
-        QPoint pressPos_;
         std::function<void(int, Qt::KeyboardModifiers)> onClick;
         std::set<int> sel;  // the Document indexes selected with Ctrl/Shift (#475); empty means the current item alone. Dropped by refresh() once the Document has taken another step
         int selStep = 0;
         std::vector<int> items(int current) const { return sel.empty() ? std::vector<int>{current} : std::vector<int>(sel.begin(), sel.end()); }
+        int gap_ = -1, inside_ = -1, pressed_ = -1, from_ = -1;
+        QPoint pressPos_;
         // A press that made the row current would rebuild the rows under the mouse and lose the drag; so the row becomes current on release, and the drag starts here.
         void mousePressEvent(QMouseEvent* e) override {
             auto* it = itemAt(e->pos());
@@ -1700,9 +1704,9 @@ int main(int argc, char** argv) {
     layerList->setAcceptDrops(true);
     layerList->viewport()->setAcceptDrops(true);
     layerList->setDropIndicatorShown(false);
+    layerList->setSelectionMode(QAbstractItemView::ExtendedSelection);
     auto* layerOpacity = new QSlider(Qt::Horizontal);  // percent, of the current layer
     layerOpacity->setRange(0, 100);
-    layerList->setSelectionMode(QAbstractItemView::ExtendedSelection);
     auto* layerOpacityValue = new QLabel;
     QObject::connect(layerOpacity, &QSlider::valueChanged, [layerOpacityValue](int v) { layerOpacityValue->setText(QString("%1 %").arg(v)); });
     std::function<void()> kindChanged;  // set with the Tools dock below; refresh() runs on every current-layer change
@@ -1813,11 +1817,11 @@ int main(int argc, char** argv) {
             if (group && d.collapsed(i))  // a collapsed group's children have no rows
                 for (int gd = d.depth(i); i > 0 && d.depth(i - 1) > gd;) i--;
         }
-        layerList->setCurrentRow(currentRow);
-        layerOpacity->setValue(std::lround(d.opacity(d.current()) * 100));
         if (layerList->selStep != d.stepId()) layerList->sel.clear();
-        layerOpacityValue->setText(QString("%1 %").arg(layerOpacity->value()));
+        layerList->setCurrentRow(currentRow);
         for (int r = 0; r < layerList->count(); r++) if (layerList->sel.count(layerList->item(r)->data(Qt::UserRole).toInt())) layerList->item(r)->setSelected(true);
+        layerOpacity->setValue(std::lround(d.opacity(d.current()) * 100));
+        layerOpacityValue->setText(QString("%1 %").arg(layerOpacity->value()));
         canvas->update();
         if (kindChanged) kindChanged();
         if (updateTitle) updateTitle();
@@ -1832,8 +1836,6 @@ int main(int argc, char** argv) {
         else moved = gap < layerList->count() && d.moveItems(items, at(gap) + 1, d.depth(at(gap)));  // above that row, at its level
         if (moved) QTimer::singleShot(0, [canvas] { canvas->onLayersChange(); });
     };
-    QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
-        if (row < 0) return;
     layerList->onClick = [canvas, layerList, refresh](int i, Qt::KeyboardModifiers m) {  // Ctrl toggles a row, Shift selects from the current row; the clicked row is current
         Document& d = canvas->doc();
         auto& sel = layerList->sel;
@@ -1855,6 +1857,8 @@ int main(int argc, char** argv) {
         layerList->selStep = d.stepId();
         refresh();
     };
+    QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, refresh](int row) {
+        if (row < 0) return;
         canvas->doc().setCurrent(layerList->item(row)->data(Qt::UserRole).toInt());
         refresh();
     });
@@ -2540,6 +2544,10 @@ int main(int argc, char** argv) {
 
     auto* viewMenu = window.menuBar()->addMenu("&View");
     QObject::connect(key(viewMenu->addAction("&Mirror"), {QKeySequence("M")}), &QAction::triggered, [canvas] { canvas->mirror(); });
+    auto* showRefs = key(viewMenu->addAction("Show &References"), {QKeySequence("Shift+R")});
+    showRefs->setCheckable(true);
+    showRefs->setChecked(true);
+    QObject::connect(showRefs, &QAction::toggled, [canvas](bool on) { canvas->setShowReferences(on); });
     viewMenu->addSeparator();
     const QList<QDockWidget*> docks = {toolDock, navDock, colorDock, brushDock, layerDock, optionsDock};
     for (auto* dock : docks) viewMenu->addAction(dock->toggleViewAction());
@@ -2574,7 +2582,7 @@ int main(int argc, char** argv) {
     toolsMenu->addSeparator();
     auto* erase = key(toolsMenu->addAction("&Erase mode"), {QKeySequence("E")});
     erase->setCheckable(true);
-    QObject::connect(erase, &QAction::toggled, [canvas, eraseBox, erase, opacity](bool on) { canvas->setErase(on); canvas->onRadiusChange(); opacity->setValue(std::lround(canvas->opacity() * 100)); eraseBox->setChecked(canvas->erase()); erase->setChecked(canvas->erase()); });
+    QObject::connect(erase, &QAction::toggled, [canvas, eraseBox, erase, opacity, lassoOpacity](bool on) { canvas->setErase(on); canvas->onRadiusChange(); opacity->setValue(std::lround(canvas->opacity() * 100)); lassoOpacity->setValue(std::lround(canvas->lassoOpacity() * 100)); eraseBox->setChecked(canvas->erase()); erase->setChecked(canvas->erase()); });
     auto showOptionsFor = canvas->onToolChange;
     canvas->onToolChange = [=](int tool) { showOptionsFor(tool); erase->setChecked(canvas->erase()); };  // the new tool's own Erase
     QObject::connect(eraseBox, &QCheckBox::toggled, erase, &QAction::setChecked);  // each side's setChecked with the same value emits nothing, so they settle
