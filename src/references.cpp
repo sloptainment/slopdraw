@@ -51,6 +51,16 @@ int referenceAt(const std::vector<Reference>& refs, QPointF p) {
     return -1;
 }
 
+QColor pickColorAt(const Document& doc, QPointF p, bool showReferences) {
+    int i = showReferences ? referenceAt(doc.references(), p) : -1;
+    if (i < 0) return doc.colorAt({int(std::floor(p.x())), int(std::floor(p.y()))});  // the pixel under the point, not the nearest corner
+    const Reference& r = doc.references()[i];
+    QPointF q = r.transform.inverted().map(p);
+    QColor c = r.image.pixelColor(std::clamp(int(std::floor(q.x())), 0, r.image.width() - 1), std::clamp(int(std::floor(q.y())), 0, r.image.height() - 1));
+    c.setAlpha(255);
+    return c;
+}
+
 std::set<int> referencesIn(const std::vector<Reference>& refs, const QRectF& box) {
     std::set<int> in;
     for (int i = 0; i < int(refs.size()); i++)

@@ -14,6 +14,9 @@ void drawReferences(QPainter& p, const std::vector<Reference>& refs, const QTran
 QTransform placeReference(QSize image, QSize viewSize, const QTransform& view);
 // The topmost reference whose cropped area holds the document point p, -1 for none (#542).
 int referenceAt(const std::vector<Reference>& refs, QPointF p);
+// Color pick (#541): the document point p's color. With showReferences, the topmost reference under p gives its picture pixel
+// at full strength (opacity ignored, even beyond the document edge); else doc.colorAt, invalid off the document.
+QColor pickColorAt(const Document& doc, QPointF p, bool showReferences);
 // The references whose cropped area touches box (#542).
 std::set<int> referencesIn(const std::vector<Reference>& refs, const QRectF& box);
 // The union of the picked references' cropped areas, in document coordinates: the Transform box.

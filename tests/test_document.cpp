@@ -1306,6 +1306,17 @@ static bool referencesPickAndMove() {
         && near(moved[0].transform.map(QPointF()), {3, 0}) && near(moved[1].transform.map(QPointF()), {5, 5});
 }
 
+// #541: Ctrl+click's color is the topmost shown reference's picture pixel at full strength, else the drawing's.
+static bool pickColorsReferencesFirst() {
+    QImage pic(10, 10, QImage::Format_ARGB32_Premultiplied);
+    pic.fill(Qt::red);
+    Document doc(QSize(64, 64));
+    doc.addReference({pic, QTransform::fromTranslate(60, 60), QRectF(0, 0, 10, 10), 0.2});  // reaches past the document edge
+    return pickColorAt(doc, {62, 62}, true) == Qt::red && pickColorAt(doc, {68, 68}, true) == Qt::red
+        && pickColorAt(doc, {5, 5}, true) == Qt::white && pickColorAt(doc, {62, 62}, false) == Qt::white
+        && !pickColorAt(doc, {68, 68}, false).isValid();
+}
+
 // #546: crop mode finds the crop edge under a point and moves it, never past the picture nor past the other edge.
 static bool cropEdgesMoveWithinThePicture() {
     QRectF crop(0, 0, 100, 50);
@@ -2264,6 +2275,7 @@ int main() {
     run("importedReferenceFitsTheView", importedReferenceFitsTheView);
     run("referencesPickAndMove", referencesPickAndMove);
     run("cropEdgesMoveWithinThePicture", cropEdgesMoveWithinThePicture);
+    run("pickColorsReferencesFirst", pickColorsReferencesFirst);
     run("oraRoundTripsAlphaFlags", oraRoundTripsAlphaFlags);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);
