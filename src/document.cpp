@@ -4,7 +4,7 @@
 #include <QPainterPath>
 #include <QPainterPathStroker>
 #include "powerstroke.h"
-#include "spiropen.h"
+#include "transform.h"
 #include <cstring>
 
 namespace {

@@ -1,5 +1,7 @@
 #include "document.h"
+#include "nodeedit.h"
 #include "spiropen.h"
+#include "transform.h"
 #include "references.h"
 #include "tools.h"
 #include "view.h"
