@@ -28,14 +28,14 @@ public:
     struct VPath {
         std::vector<SpiroNode> nodes;
         bool closed;
-        QColor color;
-        double width;
-        std::vector<WidthKnot> knots;
+        QColor color{};
+        double width{};
+        std::vector<WidthKnot> knots{};
         // color is the stroke color; fillColor paints the inside when mode is Fill or Both (#272).
         PathKind kind = PathKind::Spiro;
         PaintMode mode = PaintMode::Stroke;
         QColor fillColor = Qt::black;
-        std::vector<BezierNode> bezier;  // a Bezier path's nodes; nodes stays empty
+        std::vector<BezierNode> bezier{};  // a Bezier path's nodes; nodes stays empty
     };
     // undoBudget caps the bytes of pixels the undo history keeps (#27); the oldest steps drop first, never the newest.
     explicit Document(QSize size, qsizetype undoBudget = qsizetype(1) << 30);
@@ -211,7 +211,7 @@ private:
         QImage image;
         QString name;
         bool vector = false;
-        std::vector<VPath> paths;
+        std::vector<VPath> paths{};
         bool alphaLock = false;
         bool inheritAlpha = false;
         int depth = 0;

@@ -168,8 +168,8 @@ bool writeOra(const Document& doc, const QString& path) {
     if (!mz_zip_writer_init_heap(&z, 0, 0)) return false;
     bool ok = add(z, "mimetype", "image/openraster", MZ_NO_COMPRESSION) && add(z, "stack.xml", xml, MZ_DEFAULT_COMPRESSION);
     for (int i = 0; ok && i < doc.layerCount(); i++)
-        ok = doc.isGroup(i) || add(z, QString("data/layer%1.png").arg(i).toUtf8().constData(), png(doc.image(i)), MZ_DEFAULT_COMPRESSION)
-          && (!doc.vector(i) || add(z, QString("data/layer%1.svg").arg(i).toUtf8().constData(), svg(doc, i), MZ_DEFAULT_COMPRESSION));
+        ok = doc.isGroup(i) || (add(z, QString("data/layer%1.png").arg(i).toUtf8().constData(), png(doc.image(i)), MZ_DEFAULT_COMPRESSION)
+          && (!doc.vector(i) || add(z, QString("data/layer%1.svg").arg(i).toUtf8().constData(), svg(doc, i), MZ_DEFAULT_COMPRESSION)));
     for (int i = 0; ok && i < int(doc.references().size()); i++)
         ok = add(z, QString("mydraw/reference%1.png").arg(i).toUtf8().constData(), png(doc.references()[i].image), MZ_DEFAULT_COMPRESSION);
     if (ok && !doc.references().empty()) ok = add(z, "mydraw/references.xml", referencesXml(doc), MZ_DEFAULT_COMPRESSION);

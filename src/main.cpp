@@ -1673,7 +1673,7 @@ int main(int argc, char** argv) {
             e->accept();
             viewport()->update();
         }
-        void dragLeaveEvent(QDragLeaveEvent* e) override { gap_ = inside_ = -1; viewport()->update(); }
+        void dragLeaveEvent(QDragLeaveEvent*) override { gap_ = inside_ = -1; viewport()->update(); }
         void dropEvent(QDropEvent* e) override {
             aim(e->position().toPoint());
             e->setDropAction(Qt::IgnoreAction);
