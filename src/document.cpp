@@ -1039,7 +1039,7 @@ void Document::cancelFloat() {
     strokeStart_ = QImage();
     pasting_ = false;
     if (floatFrom_ < 0) return;
-    layers_.pop_back();
+    layers_.erase(layers_.begin() + current_);
     current_ = floatFrom_;
     floatFrom_ = -1;
 }
@@ -1052,9 +1052,10 @@ bool Document::floatImage(const QImage& img, const QTransform& m, bool newLayer)
         history_.resize(applied_);  // a new edit discards the redo branch
         if (newLayer) {
             floatFrom_ = current_;
-            layers_.push_back({true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), "Layer " + QString::number(layers_.size())});
-            layers_.back().image.fill(Qt::transparent);
-            current_ = int(layers_.size()) - 1;
+            Layer l{true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), "Layer " + QString::number(layers_.size())};
+            l.image.fill(Qt::transparent);
+            l.depth = layers_[current_].depth;
+            layers_.insert(layers_.begin() + ++current_, std::move(l));  // directly above the current item, as addLayer does
         }
         strokeStart_ = layers_[current_].image;
     }
@@ -1090,6 +1091,7 @@ void Document::seal() {
         Step s;
         s.kind = Add;
         s.layer = current_;
+        s.to = layers_[current_].depth;
         s.na = layers_[current_].name;
         s.after = layers_[current_].image;
         push(s);

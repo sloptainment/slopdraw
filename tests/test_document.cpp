@@ -1959,6 +1959,30 @@ static bool pasteAfterLiveStrokeKeepsTheStroke() {
     return pasted && undone;
 }
 
+// #627: a pasted new layer goes directly above the current item, at its depth, as +Raster does (#455).
+// Items bottom to top: 0 Background, 1 Layer 1, 2 Layer 2 (depth 1), 3 Group A (depth 0).
+static bool pastedNewLayerGoesAboveTheCurrentItem() {
+    Document doc(QSize(64, 64));
+    doc.addLayer(); doc.addLayer(); doc.addLayer();
+    doc.restoreLayer(2, doc.image(2), "Layer 2", true, 1, false, false, 1, false);
+    doc.restoreLayer(3, QImage(), "Group A", true, 1, false, false, 0, true);
+    QImage red(4, 4, QImage::Format_RGBA8888);
+    red.fill(Qt::red);
+    doc.setCurrent(1);
+    bool below = doc.pasteImage(red, {}, true) && doc.layerCount() == 5 && doc.current() == 2 && doc.depth(2) == 0
+        && doc.image(2).pixelColor(1, 1) == QColor(Qt::red) && doc.depth(3) == 1 && doc.isGroup(4);  // 1
+    bool undone = doc.undo() && doc.layerCount() == 4 && doc.isGroup(3) && doc.depth(2) == 1 && doc.current() == 1;  // 3
+    doc.setCurrent(2);
+    bool inside = doc.pasteImage(red, {}, true) && doc.layerCount() == 5 && doc.current() == 3 && doc.depth(3) == 1
+        && doc.image(3).pixelColor(1, 1) == QColor(Qt::red) && doc.isGroup(4);  // 2
+    doc.undo();
+    doc.setCurrent(1);
+    bool cancelled = doc.floatImage(red, {}, true) && doc.layerCount() == 5 && doc.current() == 2;
+    doc.cancelFloat();
+    cancelled = cancelled && doc.layerCount() == 4 && doc.current() == 1 && doc.isGroup(3);
+    return below && undone && inside && cancelled;
+}
+
 // #454: a group composites its children on their own; groups nest, hide, and delete with their block as one undo step.
 // Items bottom to top: 0 Background, 1 red, 2 blue (both depth 2), 3 inner group (depth 1), 4 outer group (depth 0) at 50%.
 static bool groupsCompositeIsolatedAndUndoAsOne() {
@@ -2348,6 +2372,7 @@ int main() {
     run("transformRectMovesPixelsAndUndoesOnce", transformRectMovesPixelsAndUndoesOnce);
     run("pastedImageFloatsAndCommitsOnce", pastedImageFloatsAndCommitsOnce);
     run("pasteAfterLiveStrokeKeepsTheStroke", pasteAfterLiveStrokeKeepsTheStroke);
+    run("pastedNewLayerGoesAboveTheCurrentItem", pastedNewLayerGoesAboveTheCurrentItem);
     run("spiroPenPlacesNodesAndFinishes", spiroPenPlacesNodesAndFinishes);
     run("bezierPenPlacesCornersAndFinishes", bezierPenPlacesCornersAndFinishes);
     run("bezierPenDragMakesSymmetricNode", bezierPenDragMakesSymmetricNode);
