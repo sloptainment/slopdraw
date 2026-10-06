@@ -14,7 +14,7 @@ pkg_check_modules(MYPAINT REQUIRED IMPORTED_TARGET libmypaint)
 target_link_libraries(mydraw_core PUBLIC Qt6::Gui PkgConfig::MYPAINT)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
-add_executable(mydraw src/main.cpp src/canvas.cpp src/canvas_draw.cpp src/canvas_paint.cpp src/canvas_nodes.cpp src/canvas_select.cpp src/canvas_refs.cpp src/colorpicker.cpp src/navigator.cpp)
+add_executable(mydraw src/main.cpp src/canvas.cpp src/canvas_draw.cpp src/canvas_paint.cpp src/canvas_nodes.cpp src/canvas_select.cpp src/canvas_refs.cpp src/colorpicker.cpp src/navigator.cpp src/layerlist.cpp src/docks.cpp src/layersdock.cpp src/tooloptions.cpp src/toolsdock.cpp src/filemenu.cpp src/newdialog.cpp src/menus.cpp)
 target_link_libraries(mydraw PRIVATE mydraw_core Qt6::Widgets)
 # Power of 10 rule 10 (#622): src/ builds warning-free at the pedantic setting; tests/ and vendor/ C are not held to it (#644).
 target_compile_options(mydraw_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>)

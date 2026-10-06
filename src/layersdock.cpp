@@ -1,0 +1,263 @@
+// The Layers dock and the Layer menu.
+#include "shell.h"
+#include <cmath>
+#include <QDockWidget>
+#include <QFrame>
+#include <QGridLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPushButton>
+#include <QSlider>
+#include <QTimer>
+#include <QToolButton>
+#include <QVBoxLayout>
+#include "layerlist.h"
+#include "navigator.h"
+
+namespace {
+
+struct DoubleClick : QObject {
+    std::function<bool(QPoint)> on;
+    bool eventFilter(QObject*, QEvent* e) override { return e->type() == QEvent::MouseButtonDblClick && on(static_cast<QMouseEvent*>(e)->pos()); }
+};
+
+// The Layers dock's buttons and the Layer menu's items, in one order (#169).
+struct LayerOp { const char* button; const char* menu; std::function<void(Document&)> op; };
+std::vector<LayerOp> layerOps(LayerList* layerList) {
+    return {
+        {"+ Raster", "Add &Raster", [](Document& d) { d.addLayer(); }},
+        {"+ Vector", "Add &Vector", [](Document& d) { d.addVectorLayer(); }},
+        {"+ Group", "Add &Group", [layerList](Document& d) { if (layerList->sel.size() > 1) d.wrap(layerList->items(d.current())); else d.addGroup(); }},
+        {"↑", "&Up", [layerList](Document& d) { d.stepItems(layerList->items(d.current()), true); }},
+        {"↓", "Dow&n", [layerList](Document& d) { d.stepItems(layerList->items(d.current()), false); }},
+        {"🗑", "&Delete", [](Document& d) { d.deleteLayer(d.current()); }}};
+}
+
+}  // namespace
+
+void buildLayersDock(Shell& sh) {
+    Canvas* canvas = sh.canvas;
+    auto* layerList = sh.layerList = new LayerList;
+    layerList->setAcceptDrops(true);
+    layerList->viewport()->setAcceptDrops(true);
+    layerList->setDropIndicatorShown(false);
+    layerList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    auto* layerOpacity = new QSlider(Qt::Horizontal);  // percent, of the current layer
+    layerOpacity->setRange(0, 100);
+    auto* layerOpacityValue = new QLabel;
+    QObject::connect(layerOpacity, &QSlider::valueChanged, [layerOpacityValue](int v) { layerOpacityValue->setText(QString("%1 %").arg(v)); });
+    sh.refresh = [&sh, canvas, layerList, layerOpacity, layerOpacityValue] {
+        Document& d = canvas->doc();
+        sh.nav->refresh();
+        QSignalBlocker b1(layerList), b2(layerOpacity);
+        layerList->clear();
+        int currentRow = -1;
+        for (int i = d.layerCount() - 1; i >= 0; i--) {  // a row: colour bars, eye, kind icon, thumbnail, name (#169); a group row ends in its arrow (#457)
+            const bool group = d.isGroup(i);
+            auto* row = new QWidget;
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(2, 2, 2, 2);
+            static const char* const hues[] = {"#d9534f", "#5aa0ff", "#7fd27f", "#c58af9"};
+            std::vector<int> bars;  // the enclosing groups, outermost first, then the row's own if it is a group
+            for (int j = i + 1, depth = d.depth(i); j < d.layerCount() && depth > 0; j++)
+                if (d.depth(j) < depth) { bars.insert(bars.begin(), j); depth = d.depth(j); }
+            if (group) bars.push_back(i);
+            for (int g : bars) {
+                auto* bar = new QFrame;
+                bar->setFixedWidth(4);
+                bar->setStyleSheet(QString("background: %1;").arg(hues[g % 4]));
+                h->addWidget(bar);
+            }
+            auto* eye = new QToolButton;
+            eye->setAutoRaise(true);
+            eye->setCheckable(true);
+            eye->setChecked(d.visible(i));
+            eye->setText(d.visible(i) ? "👁" : "–");
+            QObject::connect(eye, &QToolButton::toggled, [canvas, eye, i](bool on) {
+                eye->setText(on ? "👁" : "–");
+                canvas->doc().setVisible(i, on);
+                canvas->update();
+            });
+            auto* thumb = new QLabel;
+            QPixmap tp(40, 30);
+            tp.fill(QColor(200, 200, 200));  // so a transparent layer's thumbnail still shows
+            QPainter tpp(&tp);
+            tpp.setRenderHint(QPainter::SmoothPixmapTransform);
+            tpp.drawImage(tp.rect(), group ? d.groupImage(i) : d.image(i));
+            thumb->setPixmap(tp);
+            h->addWidget(eye);
+            h->addWidget(new QLabel(group ? (d.collapsed(i) ? "📁" : "📂") : d.vector(i) ? "✒" : "🖌"));
+            h->addWidget(thumb);
+            auto* name = new QLabel(d.name(i));
+            if (group) name->setStyleSheet("font-weight: bold;");
+            h->addWidget(name, 1);
+            if (group) {
+                auto* arrow = new QToolButton;
+                arrow->setAutoRaise(true);
+                arrow->setText(d.collapsed(i) ? "▸" : "▾");
+                QObject::connect(arrow, &QToolButton::clicked, [canvas, i] { canvas->doc().setCollapsed(i, !canvas->doc().collapsed(i)); canvas->onLayersChange(); });
+                h->addWidget(arrow);
+            }
+            // flag icons at the right end (#468): Alpha Lock (Raster Layer rows; Vector rows keep a blank slot) and Inherit Alpha, grey outline off, white on a blue tile on
+            for (bool lock : {true, false}) {
+                if (group) break;
+                if (lock && d.vector(i)) { h->addSpacing(24 + h->spacing()); continue; }
+                auto* fb = new QToolButton;
+                fb->setCheckable(true);
+                fb->setFixedSize(24, 24);
+                fb->setToolTip(lock ? "Alpha Lock" : "Inherit Alpha");
+                auto paint = [fb, lock](bool on) {
+                    QPixmap pm(18, 18);
+                    pm.fill(Qt::transparent);
+                    QPainter p(&pm);
+                    p.setRenderHint(QPainter::Antialiasing);
+                    QColor c = on ? Qt::white : QColor(102, 102, 102);
+                    p.setPen(QPen(c, 1.5));
+                    if (lock) {
+                        p.drawRoundedRect(QRectF(1.5, 1.5, 15, 15), 1, 1);
+                        p.fillRect(QRectF(1.5, 1.5, 4, 4), c);
+                        p.fillRect(QRectF(9.5, 1.5, 4, 4), c);
+                        p.drawRoundedRect(QRectF(5, 8, 8, 7), 1, 1);
+                        p.drawArc(QRectF(6.5, 3.5, 5, 5), 0, 180 * 16);
+                    } else {
+                        QFont f("serif", 1);
+                        f.setItalic(true);
+                        f.setPixelSize(14);
+                        p.setFont(f);
+                        p.drawText(QPointF(1, 12), "α");
+                        p.drawLine(QPointF(13, 3), QPointF(13, 14));
+                        p.drawPolyline(QPolygonF({QPointF(10, 11), QPointF(13, 14), QPointF(16, 11)}));
+                    }
+                    p.end();
+                    fb->setIcon(pm);
+                    fb->setStyleSheet(on ? "QToolButton { background: #3a5f8f; border: none; border-radius: 4px; }" : "QToolButton { border: none; }");
+                };
+                fb->setChecked(lock ? d.alphaLock(i) : d.inheritAlpha(i));
+                paint(fb->isChecked());
+                QObject::connect(fb, &QToolButton::toggled, [canvas, i, lock, paint](bool on) {
+                    if (lock) canvas->doc().setAlphaLock(i, on);
+                    else canvas->doc().setInheritAlpha(i, on);
+                    paint(on);
+                    canvas->update();
+                });
+                h->addWidget(fb);
+            }
+            auto* it = new QListWidgetItem(layerList);
+            it->setData(Qt::UserRole, i);
+            it->setData(Qt::UserRole + 1, group);
+            it->setSizeHint(row->sizeHint());
+            layerList->setItemWidget(it, row);
+            if (i == d.current()) currentRow = layerList->count() - 1;
+            if (group && d.collapsed(i))  // a collapsed group's children have no rows
+                for (int gd = d.depth(i); i > 0 && d.depth(i - 1) > gd;) i--;
+        }
+        if (layerList->selStep != d.stepId()) layerList->sel.clear();
+        layerList->setCurrentRow(currentRow);
+        for (int r = 0; r < layerList->count(); r++) if (layerList->sel.count(layerList->item(r)->data(Qt::UserRole).toInt())) layerList->item(r)->setSelected(true);
+        layerOpacity->setValue(std::lround(d.opacity(d.current()) * 100));
+        layerOpacityValue->setText(QString("%1 %").arg(layerOpacity->value()));
+        canvas->update();
+        if (sh.kindChanged) sh.kindChanged();
+        if (sh.updateTitle) sh.updateTitle();
+    };
+    canvas->onLayersChange = sh.refresh;
+    layerList->onDrop = [canvas, layerList](int from, int gap, int inside) {  // nothing drops below the Background, or into its own block
+        Document& d = canvas->doc();
+        auto at = [&](int row) { return layerList->item(row)->data(Qt::UserRole).toInt(); };
+        bool moved;
+        auto items = layerList->sel.count(from) ? layerList->items(from) : std::vector<int>{from};  // dragging a selected row drags the whole selection (#446)
+        if (inside >= 0) moved = !layerList->sel.count(at(inside)) && at(inside) != from && d.moveItems(items, at(inside), d.depth(at(inside)) + 1);  // top item of the group
+        else moved = gap < layerList->count() && d.moveItems(items, at(gap) + 1, d.depth(at(gap)));  // above that row, at its level
+        if (moved) QTimer::singleShot(0, [canvas] { canvas->onLayersChange(); });
+    };
+    layerList->onClick = [canvas, layerList, &sh](int i, Qt::KeyboardModifiers m) {  // Ctrl toggles a row, Shift selects from the current row; the clicked row is current
+        Document& d = canvas->doc();
+        auto& sel = layerList->sel;
+        if (!(m & (Qt::ControlModifier | Qt::ShiftModifier))) sel.clear();
+        else if (m & Qt::ShiftModifier) {
+            int a = -1, b = -1;
+            for (int r = 0; r < layerList->count(); r++) {
+                int k = layerList->item(r)->data(Qt::UserRole).toInt();
+                if (k == d.current()) a = r;
+                if (k == i) b = r;
+            }
+            sel.clear();
+            for (int r = std::min(a < 0 ? b : a, b); r <= std::max(a, b); r++) sel.insert(layerList->item(r)->data(Qt::UserRole).toInt());
+        } else {
+            if (sel.empty()) sel.insert(d.current());
+            if (!sel.erase(i)) sel.insert(i);
+        }
+        d.setCurrent(i);
+        layerList->selStep = d.stepId();
+        sh.refresh();
+    };
+    QObject::connect(layerList, &QListWidget::currentRowChanged, [canvas, layerList, &sh](int row) {
+        if (row < 0) return;
+        canvas->doc().setCurrent(layerList->item(row)->data(Qt::UserRole).toInt());
+        sh.refresh();
+    });
+    // double-click a group row (not its eye or arrow, which take the click) opens or closes it; a filter, because refresh() rebuilds the rows on the first click
+    auto* dbl = new DoubleClick;
+    dbl->on = [canvas, layerList](QPoint pos) {
+        auto* it = layerList->itemAt(pos);
+        if (!it) return false;
+        int i = it->data(Qt::UserRole).toInt();
+        if (!canvas->doc().isGroup(i)) return false;
+        canvas->doc().setCollapsed(i, !canvas->doc().collapsed(i));
+        canvas->onLayersChange();
+        return true;
+    };
+    layerList->viewport()->installEventFilter(dbl);
+    layerList->setContextMenuPolicy(Qt::CustomContextMenu);  // right-click a row: Rasterize, enabled on a Vector Layer only (#200)
+    QObject::connect(layerList, &QListWidget::customContextMenuRequested, [canvas, layerList, &sh](QPoint pos) {
+        auto* it = layerList->itemAt(pos);
+        if (!it) return;
+        int i = it->data(Qt::UserRole).toInt();
+        QMenu menu;
+        menu.addAction("Rasterize")->setEnabled(canvas->doc().vector(i));
+        if (menu.exec(layerList->viewport()->mapToGlobal(pos)) && canvas->doc().rasterizeLayer(i)) sh.refresh();
+    });
+    QObject::connect(layerOpacity, &QSlider::valueChanged, [canvas](int v) {
+        canvas->doc().setOpacity(canvas->doc().current(), v / 100.0);
+        canvas->update();
+    });
+    auto* layerButtons = new QGridLayout;
+    int layerOpIndex = 0;
+    for (const auto& l : layerOps(layerList)) {
+        auto* btn = new QPushButton(l.button);
+        btn->setMinimumWidth(1);  // the style's 80px floor would keep the dock about 450px wide; 0 counts as unset and keeps it
+        QObject::connect(btn, &QPushButton::clicked, [canvas, &sh, op = l.op] { op(canvas->doc()); sh.refresh(); });
+        layerButtons->addWidget(btn, layerOpIndex / 3, layerOpIndex % 3);  // three per row
+        layerOpIndex++;
+    }
+    auto* layerPanel = new QWidget;
+    auto* layerCol = new QVBoxLayout(layerPanel);
+    layerCol->addWidget(layerList);
+    layerCol->addLayout(layerButtons);
+    layerCol->addWidget(new QLabel("Opacity"));
+    auto* layerOpacityRow = new QHBoxLayout;
+    layerOpacityRow->addWidget(layerOpacity);
+    layerOpacityRow->addWidget(layerOpacityValue);
+    layerCol->addLayout(layerOpacityRow);
+    sh.layerDock = new QDockWidget("Layers", &sh.window);
+    sh.layerDock->setWidget(layerPanel);
+    sh.window.addDockWidget(Qt::RightDockWidgetArea, sh.layerDock);
+    sh.refresh();
+}
+
+void buildLayerMenu(Shell& sh) {
+    Canvas* canvas = sh.canvas;
+    LayerList* layerList = sh.layerList;
+    auto* layerMenu = sh.window.menuBar()->addMenu("&Layer");
+    for (const auto& l : layerOps(layerList)) {
+        auto* a = layerMenu->addAction(l.menu);
+        sh.docActions.push_back(a);
+        QObject::connect(a, &QAction::triggered, [&sh, canvas, op = l.op] { op(canvas->doc()); sh.refresh(); });
+    }
+    QObject::connect(key(sh, layerMenu->addAction("&Group current item"), {QKeySequence("Ctrl+G")}), &QAction::triggered, [&sh, canvas, layerList] { canvas->doc().wrap(layerList->items(canvas->doc().current())); sh.refresh(); });
+    sh.docActions.push_back(layerMenu->menuAction());
+}
