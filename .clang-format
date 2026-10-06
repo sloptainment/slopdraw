@@ -1,0 +1,16 @@
+BasedOnStyle: LLVM
+BreakBeforeBraces: Allman
+ColumnLimit: 84
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+AllowShortFunctionsOnASingleLine: Inline
+SortIncludes: Never
+AccessModifierOffset: -2
+LambdaBodyIndentation: Signature
+IndentWidth: 2
+ContinuationIndentWidth: 2
+TabWidth: 2
+UseTab: Never
+AlignAfterOpenBracket: AlwaysBreak
+BinPackParameters: false

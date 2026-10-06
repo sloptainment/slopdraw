@@ -5,123 +5,224 @@
 #include <algorithm>
 #include <cmath>
 
-std::shared_ptr<MyPaintBrush> loadBrush(const QString& mybPath) {
-    QFile f(mybPath);
-    if (!f.open(QIODevice::ReadOnly)) return nullptr;
-    std::shared_ptr<MyPaintBrush> b(mypaint_brush_new(), mypaint_brush_unref);
-    if (!mypaint_brush_from_string(b.get(), f.readAll().constData())) return nullptr;
-    return b;
+std::shared_ptr<MyPaintBrush> loadBrush(const QString &mybPath)
+{
+  QFile f(mybPath);
+  if (!f.open(QIODevice::ReadOnly))
+    return nullptr;
+  std::shared_ptr<MyPaintBrush> b(mypaint_brush_new(), mypaint_brush_unref);
+  if (!mypaint_brush_from_string(b.get(), f.readAll().constData()))
+    return nullptr;
+  return b;
 }
 
-std::vector<BrushEntry> listBrushes(const QString& dir) {
-    std::vector<BrushEntry> out;
-    for (const QFileInfo& fi : QDir(dir).entryInfoList({"*.myb"}, QDir::Files))
-        out.push_back({fi.completeBaseName(), fi.filePath()});
-    std::sort(out.begin(), out.end(), [](const BrushEntry& a, const BrushEntry& b) { return a.name < b.name; });  // not QDir::Name: that sorts with ".myb" included
-    return out;
+std::vector<BrushEntry> listBrushes(const QString &dir)
+{
+  std::vector<BrushEntry> out;
+  for (const QFileInfo &fi : QDir(dir).entryInfoList({"*.myb"}, QDir::Files))
+    out.push_back({fi.completeBaseName(), fi.filePath()});
+  std::sort(
+    out.begin(), out.end(), [](const BrushEntry &a, const BrushEntry &b)
+    { return a.name < b.name; }); // not QDir::Name: that sorts with ".myb" included
+  return out;
 }
 
-namespace {
+namespace
+{
 
 // A MyPaintSurface over a QImage; lock_alpha and colorize are ignored.
 // eraser takes dabs out of the alpha (white under alpha lock, which keeps alpha).
-struct ImageSurface : MyPaintSurface {
-    QImage* img;
-    bool eraser, alphaLock;
+struct ImageSurface : MyPaintSurface
+{
+  QImage *img;
+  bool eraser, alphaLock;
 };
 
-// Calls fn(pixel, opacity) for each pixel the dab covers, with libmypaint's hardness falloff (brushmodes.c).
+// Calls fn(pixel, opacity) for each pixel the dab covers, with libmypaint's
+// hardness falloff (brushmodes.c).
 template <class Fn>
-void forEachDabPixel(QImage& img, float x, float y, float radius, float hardness, float aspect, float angle, Fn fn) {
-    hardness = std::clamp(hardness, 0.f, 0.999f);
-    const float sn = std::sin(angle), cs = std::cos(angle), inv_r2 = 1 / (radius * radius);
-    const float slope1 = -(1 / hardness - 1), off2 = hardness / (1 - hardness), slope2 = -hardness / (1 - hardness);
-    const int x0 = std::max(0, int(std::floor(x - radius * aspect - 1))), x1 = std::min(img.width() - 1, int(std::ceil(x + radius * aspect + 1)));
-    const int y0 = std::max(0, int(std::floor(y - radius * aspect - 1))), y1 = std::min(img.height() - 1, int(std::ceil(y + radius * aspect + 1)));
-    for (int py = y0; py <= y1; py++) {
-        uchar* row = img.scanLine(py);
-        for (int px = x0; px <= x1; px++) {
-            const float yy = py + 0.5f - y, xx = px + 0.5f - x;
-            const float yr = (yy * cs - xx * sn) * aspect, xr = yy * sn + xx * cs;
-            const float rr = (yr * yr + xr * xr) * inv_r2;
-            if (rr > 1) continue;
-            fn(row + 4 * px, rr <= hardness ? 1 + rr * slope1 : off2 + rr * slope2);
-        }
+void forEachDabPixel(
+  QImage &img,
+  float x,
+  float y,
+  float radius,
+  float hardness,
+  float aspect,
+  float angle,
+  Fn fn)
+{
+  hardness = std::clamp(hardness, 0.f, 0.999f);
+  const float sn = std::sin(angle), cs = std::cos(angle),
+              inv_r2 = 1 / (radius * radius);
+  const float slope1 = -(1 / hardness - 1), off2 = hardness / (1 - hardness),
+              slope2 = -hardness / (1 - hardness);
+  const int x0 = std::max(0, int(std::floor(x - radius * aspect - 1))),
+            x1 = std::min(img.width() - 1, int(std::ceil(x + radius * aspect + 1)));
+  const int y0 = std::max(0, int(std::floor(y - radius * aspect - 1))),
+            y1 =
+              std::min(img.height() - 1, int(std::ceil(y + radius * aspect + 1)));
+  for (int py = y0; py <= y1; py++)
+  {
+    uchar *row = img.scanLine(py);
+    for (int px = x0; px <= x1; px++)
+    {
+      const float yy = py + 0.5f - y, xx = px + 0.5f - x;
+      const float yr = (yy * cs - xx * sn) * aspect, xr = yy * sn + xx * cs;
+      const float rr = (yr * yr + xr * xr) * inv_r2;
+      if (rr > 1)
+        continue;
+      fn(row + 4 * px, rr <= hardness ? 1 + rr * slope1 : off2 + rr * slope2);
     }
+  }
 }
 
-int drawDab(MyPaintSurface* s, float x, float y, float radius, float r, float g, float b, float opaque, float hardness,
-            float alphaEraser, float aspect, float angle, float, float) {
-    const bool eraser = static_cast<ImageSurface*>(s)->eraser, lock = static_cast<ImageSurface*>(s)->alphaLock;
-    const float rgb[3] = {eraser ? 1 : r, eraser ? 1 : g, eraser ? 1 : b};
-    forEachDabPixel(*static_cast<ImageSurface*>(s)->img, x, y, radius, hardness, aspect, angle, [&](uchar* p, float opa) {
-        const float a = opa * opaque;
-        if (lock) {  // source-atop: destination alpha stays
-            if (p[3] == 0) return;
-            for (int c = 0; c < 3; c++) p[c] = uchar(std::lround(a * rgb[c] * 255 + (1 - a) * p[c]));
-            return;
-        }
-        if (eraser) { p[3] = uchar(std::lround((1 - a) * p[3])); return; }  // destination-out
-        // libmypaint's Normal_and_Eraser on non-premultiplied pixels, so a transparent layer takes paint; alphaEraser 0 is destination-out
-        const float srcA = a * alphaEraser, dstA = p[3] / 255.f, outA = srcA + (1 - a) * dstA;
-        if (outA <= 0) return;
-        for (int c = 0; c < 3; c++) p[c] = uchar(std::lround((srcA * rgb[c] * 255 + (1 - a) * dstA * p[c]) / outA));
-        p[3] = uchar(std::lround(outA * 255));
+int drawDab(
+  MyPaintSurface *s,
+  float x,
+  float y,
+  float radius,
+  float r,
+  float g,
+  float b,
+  float opaque,
+  float hardness,
+  float alphaEraser,
+  float aspect,
+  float angle,
+  float,
+  float)
+{
+  const bool eraser = static_cast<ImageSurface *>(s)->eraser,
+             lock = static_cast<ImageSurface *>(s)->alphaLock;
+  const float rgb[3] = {eraser ? 1 : r, eraser ? 1 : g, eraser ? 1 : b};
+  forEachDabPixel(
+    *static_cast<ImageSurface *>(s)->img, x, y, radius, hardness, aspect, angle,
+    [&](uchar *p, float opa)
+    {
+      const float a = opa * opaque;
+      if (lock)
+      { // source-atop: destination alpha stays
+        if (p[3] == 0)
+          return;
+        for (int c = 0; c < 3; c++)
+          p[c] = uchar(std::lround(a * rgb[c] * 255 + (1 - a) * p[c]));
+        return;
+      }
+      if (eraser)
+      {
+        p[3] = uchar(std::lround((1 - a) * p[3]));
+        return;
+      } // destination-out
+      // libmypaint's Normal_and_Eraser on non-premultiplied pixels, so a
+      // transparent layer takes paint; alphaEraser 0 is destination-out
+      const float srcA = a * alphaEraser, dstA = p[3] / 255.f,
+                  outA = srcA + (1 - a) * dstA;
+      if (outA <= 0)
+        return;
+      for (int c = 0; c < 3; c++)
+        p[c] =
+          uchar(std::lround((srcA * rgb[c] * 255 + (1 - a) * dstA * p[c]) / outA));
+      p[3] = uchar(std::lround(outA * 255));
     });
-    return 1;
+  return 1;
 }
 
-void getColor(MyPaintSurface* s, float x, float y, float radius, float* r, float* g, float* b, float* a) {
-    float sum[3] = {}, sumA = 0, w = 0;  // sum is alpha-weighted, so transparent pixels don't pull the colour toward black
-    forEachDabPixel(*static_cast<ImageSurface*>(s)->img, x, y, radius, 0.5f, 1, 0, [&](uchar* p, float opa) {
-        const float pa = opa * p[3] / 255.f;
-        for (int c = 0; c < 3; c++) sum[c] += pa * p[c] / 255.f;
-        sumA += pa;
-        w += opa;
+void getColor(
+  MyPaintSurface *s,
+  float x,
+  float y,
+  float radius,
+  float *r,
+  float *g,
+  float *b,
+  float *a)
+{
+  float sum[3] = {}, sumA = 0, w = 0; // sum is alpha-weighted, so transparent
+                                      // pixels don't pull the colour toward black
+  forEachDabPixel(
+    *static_cast<ImageSurface *>(s)->img, x, y, radius, 0.5f, 1, 0,
+    [&](uchar *p, float opa)
+    {
+      const float pa = opa * p[3] / 255.f;
+      for (int c = 0; c < 3; c++)
+        sum[c] += pa * p[c] / 255.f;
+      sumA += pa;
+      w += opa;
     });
-    if (!w) { *r = *g = *b = *a = 1; return; }
-    *a = sumA / w;
-    *r = sumA ? sum[0] / sumA : 0; *g = sumA ? sum[1] / sumA : 0; *b = sumA ? sum[2] / sumA : 0;
+  if (!w)
+  {
+    *r = *g = *b = *a = 1;
+    return;
+  }
+  *a = sumA / w;
+  *r = sumA ? sum[0] / sumA : 0;
+  *g = sumA ? sum[1] / sumA : 0;
+  *b = sumA ? sum[2] / sumA : 0;
 }
 
-}  // namespace
+} // namespace
 
-void paintStroke(MyPaintBrush* brush, QImage& layer, const std::vector<PenSample>& samples, bool continuing, bool eraser, bool alphaLock) {
-    ImageSurface s;
-    s.draw_dab = drawDab;
-    s.get_color = getColor;
-    s.begin_atomic = [](MyPaintSurface*) {};
-    s.end_atomic = [](MyPaintSurface*, MyPaintRectangle*) {};
-    s.destroy = nullptr;
-    s.save_png = nullptr;
-    s.refcount = 1;
-    s.img = &layer;
-    s.eraser = eraser;
-    s.alphaLock = alphaLock;
-    if (!continuing) {
-        mypaint_brush_reset(brush);
-        mypaint_brush_new_stroke(brush);
-        // slow_tracking pulls the first sample toward the previous stroke's end unless dtime > libmypaint's max_dtime (5s); a long-dt call at the start point makes the reset land there without painting
-        if (!samples.empty()) {
-            const auto& p = samples.front();
-            mypaint_brush_stroke_to(brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, 6.0);
-        }
+void paintStroke(
+  MyPaintBrush *brush,
+  QImage &layer,
+  const std::vector<PenSample> &samples,
+  bool continuing,
+  bool eraser,
+  bool alphaLock)
+{
+  ImageSurface s;
+  s.draw_dab = drawDab;
+  s.get_color = getColor;
+  s.begin_atomic = [](MyPaintSurface *) {};
+  s.end_atomic = [](MyPaintSurface *, MyPaintRectangle *) {};
+  s.destroy = nullptr;
+  s.save_png = nullptr;
+  s.refcount = 1;
+  s.img = &layer;
+  s.eraser = eraser;
+  s.alphaLock = alphaLock;
+  if (!continuing)
+  {
+    mypaint_brush_reset(brush);
+    mypaint_brush_new_stroke(brush);
+    // slow_tracking pulls the first sample toward the previous stroke's end unless
+    // dtime > libmypaint's max_dtime (5s); a long-dt call at the start point makes
+    // the reset land there without painting
+    if (!samples.empty())
+    {
+      const auto &p = samples.front();
+      mypaint_brush_stroke_to(
+        brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, 6.0);
     }
-    for (const auto& p : samples) mypaint_brush_stroke_to(brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, p.dt);
+  }
+  for (const auto &p : samples)
+    mypaint_brush_stroke_to(
+      brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, p.dt);
 }
 
-void setBrushColor(MyPaintBrush* brush, const QColor& color) {
-    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_COLOR_H, std::max(0.f, color.hsvHueF()));  // hue is -1 for grays
-    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_COLOR_S, color.hsvSaturationF());
-    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_COLOR_V, color.valueF());
+void setBrushColor(MyPaintBrush *brush, const QColor &color)
+{
+  mypaint_brush_set_base_value(
+    brush, MYPAINT_BRUSH_SETTING_COLOR_H,
+    std::max(0.f, color.hsvHueF())); // hue is -1 for grays
+  mypaint_brush_set_base_value(
+    brush, MYPAINT_BRUSH_SETTING_COLOR_S, color.hsvSaturationF());
+  mypaint_brush_set_base_value(
+    brush, MYPAINT_BRUSH_SETTING_COLOR_V, color.valueF());
 }
 
-void setBrushRadius(MyPaintBrush* brush, float radius) {
-    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, std::log(radius));
+void setBrushRadius(MyPaintBrush *brush, float radius)
+{
+  mypaint_brush_set_base_value(
+    brush, MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, std::log(radius));
 }
 
-void setBrushOpacity(MyPaintBrush* brush, float opacity) {
-    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_OPAQUE, opacity);
+void setBrushOpacity(MyPaintBrush *brush, float opacity)
+{
+  mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_OPAQUE, opacity);
 }
 
-float dragRadius(float radius, float dx) { return std::clamp(radius * std::exp(dx * 0.01f), kMinRadius, kMaxRadius); }
+float dragRadius(float radius, float dx)
+{
+  return std::clamp(radius * std::exp(dx * 0.01f), kMinRadius, kMaxRadius);
+}
