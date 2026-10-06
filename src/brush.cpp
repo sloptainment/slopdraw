@@ -23,7 +23,7 @@ std::vector<BrushEntry> listBrushes(const QString& dir) {
 
 namespace {
 
-// A MyPaintSurface over a QImage; the layer is opaque, so alpha_eraser, lock_alpha and colorize are ignored.
+// A MyPaintSurface over a QImage; lock_alpha and colorize are ignored.
 // eraser takes dabs out of the alpha (white under alpha lock, which keeps alpha).
 struct ImageSurface : MyPaintSurface {
     QImage* img;
@@ -51,7 +51,7 @@ void forEachDabPixel(QImage& img, float x, float y, float radius, float hardness
 }
 
 int drawDab(MyPaintSurface* s, float x, float y, float radius, float r, float g, float b, float opaque, float hardness,
-            float, float aspect, float angle, float, float) {
+            float alphaEraser, float aspect, float angle, float, float) {
     const bool eraser = static_cast<ImageSurface*>(s)->eraser, lock = static_cast<ImageSurface*>(s)->alphaLock;
     const float rgb[3] = {eraser ? 1 : r, eraser ? 1 : g, eraser ? 1 : b};
     forEachDabPixel(*static_cast<ImageSurface*>(s)->img, x, y, radius, hardness, aspect, angle, [&](uchar* p, float opa) {
@@ -62,21 +62,26 @@ int drawDab(MyPaintSurface* s, float x, float y, float radius, float r, float g,
             return;
         }
         if (eraser) { p[3] = uchar(std::lround((1 - a) * p[3])); return; }  // destination-out
-        const float dstA = p[3] / 255.f, outA = a + (1 - a) * dstA;  // non-premultiplied source-over, so a transparent layer takes paint
+        // libmypaint's Normal_and_Eraser on non-premultiplied pixels, so a transparent layer takes paint; alphaEraser 0 is destination-out
+        const float srcA = a * alphaEraser, dstA = p[3] / 255.f, outA = srcA + (1 - a) * dstA;
         if (outA <= 0) return;
-        for (int c = 0; c < 3; c++) p[c] = uchar(std::lround((a * rgb[c] * 255 + (1 - a) * dstA * p[c]) / outA));
+        for (int c = 0; c < 3; c++) p[c] = uchar(std::lround((srcA * rgb[c] * 255 + (1 - a) * dstA * p[c]) / outA));
         p[3] = uchar(std::lround(outA * 255));
     });
     return 1;
 }
 
 void getColor(MyPaintSurface* s, float x, float y, float radius, float* r, float* g, float* b, float* a) {
-    float sum[3] = {}, w = 0;
+    float sum[3] = {}, sumA = 0, w = 0;  // sum is alpha-weighted, so transparent pixels don't pull the colour toward black
     forEachDabPixel(*static_cast<ImageSurface*>(s)->img, x, y, radius, 0.5f, 1, 0, [&](uchar* p, float opa) {
-        for (int c = 0; c < 3; c++) sum[c] += opa * p[c] / 255.f;
+        const float pa = opa * p[3] / 255.f;
+        for (int c = 0; c < 3; c++) sum[c] += pa * p[c] / 255.f;
+        sumA += pa;
         w += opa;
     });
-    *r = w ? sum[0] / w : 1; *g = w ? sum[1] / w : 1; *b = w ? sum[2] / w : 1; *a = 1;
+    if (!w) { *r = *g = *b = *a = 1; return; }
+    *a = sumA / w;
+    *r = sumA ? sum[0] / sumA : 0; *g = sumA ? sum[1] / sumA : 0; *b = sumA ? sum[2] / sumA : 0;
 }
 
 }  // namespace

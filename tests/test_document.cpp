@@ -1745,6 +1745,43 @@ static bool alphaLockHoldsAlphaUnderPaint() {
     return strokeOk && fillOk && eraseOk && deleteOk;
 }
 
+// A brush whose Eraser setting is 1 (libmypaint's alpha_eraser 0) takes alpha out of a painted layer, as the Erase box does (#624).
+static bool eraserBrushRemovesAlpha() {
+    auto brush = loadBrush(TEST_PENCIL);
+    if (!brush) return false;
+    mypaint_brush_set_base_value(brush.get(), MYPAINT_BRUSH_SETTING_ERASER, 1);
+    std::vector<PenSample> samples;
+    for (int i = 0; i < 16; i++) samples.push_back({4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 1.f, 0, 0, 0.01});
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.fill(Qt::red, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+    doc.stroke(brush, samples);
+    int minAlpha = 255;
+    for (int y = 0; y < 64; y++)
+        for (int x = 0; x < 64; x++) minAlpha = std::min(minAlpha, doc.image(1).pixelColor(x, y).alpha());
+    return minAlpha < 255;
+}
+
+// A full-smudge brush over a transparent layer picks up transparency, not black (#624).
+static bool smudgeOverTransparentStaysClear() {
+    auto brush = loadBrush(TEST_PENCIL);
+    if (!brush) return false;
+    mypaint_brush_set_base_value(brush.get(), MYPAINT_BRUSH_SETTING_SMUDGE, 1);
+    setBrushColor(brush.get(), Qt::red);
+    std::vector<PenSample> samples;
+    for (int i = 0; i < 16; i++) samples.push_back({4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 1.f, 0, 0, 0.01});
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.stroke(brush, samples);
+    int dark = 0;
+    for (int y = 0; y < 64; y++)
+        for (int x = 0; x < 64; x++) {
+            const QColor c = doc.image(1).pixelColor(x, y);
+            if (c.alpha() > 0 && c.red() + c.green() + c.blue() < 100) dark++;
+        }
+    return dark == 0;
+}
+
 // Inherit Alpha (#429): an item's alpha is cut by everything visible below it (opacity included); the Background ignores the flag; one undo step.
 static bool inheritAlphaCutsByWhatIsBelow() {
     const std::vector<QPointF> all = {{0, 0}, {64, 0}, {64, 64}, {0, 64}};
@@ -2253,6 +2290,8 @@ int main() {
     run("stepIdsTrackTheHistory", stepIdsTrackTheHistory);
     run("colorAtReadsCompositePixel", colorAtReadsCompositePixel);
     run("eraserStrokeErasesAndUndoes", eraserStrokeErasesAndUndoes);
+    run("eraserBrushRemovesAlpha", eraserBrushRemovesAlpha);
+    run("smudgeOverTransparentStaysClear", smudgeOverTransparentStaysClear);
     run("brushColorPaintsInThatColor", brushColorPaintsInThatColor);
     run("brushRadiusAndOpacityChangeTheStroke", brushRadiusAndOpacityChangeTheStroke);
     run("secondStrokeDoesNotJoinFirst", secondStrokeDoesNotJoinFirst);
