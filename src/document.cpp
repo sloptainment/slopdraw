@@ -1046,7 +1046,7 @@ void Document::cancelFloat() {
 
 bool Document::floatImage(const QImage& img, const QTransform& m, bool newLayer) {
     if (!pasting_) {
-        if (!newLayer && layers_[current_].vector) return false;
+        if (!newLayer && (layers_[current_].vector || layers_[current_].group)) return false;
         seal();  // a stroke still in progress is its own step
         pasting_ = true;
         history_.resize(applied_);  // a new edit discards the redo branch

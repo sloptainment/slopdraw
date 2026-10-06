@@ -1914,7 +1914,7 @@ static bool referencesDrawFromTheOriginal() {
 
 // Pasting an image (#504): floatImage draws it through m over the current Raster Layer live (no step, each call from the pixels underneath),
 // cancelFloat puts the layer back, pasteImage commits one undo step. newLayer adds a Raster Layer and pastes into it within that one step.
-// A 10x10 red image moved to (60,60) on a 64x64 document keeps only its 4x4 on the canvas. A Vector Layer refuses the same-layer paste.
+// A 10x10 red image moved to (60,60) on a 64x64 document keeps only its 4x4 on the canvas. A Vector Layer or a group refuses the same-layer paste.
 static bool pastedImageFloatsAndCommitsOnce() {
     Document doc(QSize(64, 64));
     doc.addLayer();
@@ -1937,7 +1937,11 @@ static bool pastedImageFloatsAndCommitsOnce() {
     freshCancel = freshCancel && doc.layerCount() == 3 && doc.current() == 2;
     doc.addVectorLayer();
     bool refused = !doc.pasteImage(red, {}) && !doc.floatImage(red, {});
-    return live && cancelled && same && undone && fresh && freshUndone && freshCancel && refused;
+    doc.addGroup();
+    QImage grouped = doc.render();
+    int items = doc.layerCount(), step = doc.stepId();
+    bool groupRefused = !doc.pasteImage(red, {}) && !doc.floatImage(red, {}) && doc.render() == grouped && doc.layerCount() == items && doc.stepId() == step;
+    return live && cancelled && same && undone && fresh && freshUndone && freshCancel && refused && groupRefused;
 }
 
 // A brush stroke still unsealed when a paste starts (#508) is its own undo step: the paste goes into the new layer and the stroke stays.

@@ -2511,8 +2511,8 @@ int main(int argc, char** argv) {
         QPointF at = canvas->pastePoint();
         bool newLayer = true;
         Document& d = canvas->doc();
-        {  // it always asks (#509, look: #511); a Vector Layer has no Same layer row (#564)
-            bool raster = !d.vector(d.current());
+        {  // it always asks (#509, look: #511); a Vector Layer or group has no Same layer row (#564, #625)
+            bool raster = !d.vector(d.current()) && !d.isGroup(d.current());
             QMenu menu;
             auto* head = new QWidgetAction(&menu);
             auto* box = new QWidget;
