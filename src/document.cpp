@@ -1119,7 +1119,11 @@ void Document::push(Step s) {
     applied_++;
     auto bytes = [&] {
         qsizetype n = 0;
-        for (const Step& s : history_) n += s.before.sizeInBytes() + s.after.sizeInBytes();
+        for (const Step& s : history_) {
+            n += s.before.sizeInBytes() + s.after.sizeInBytes();
+            for (const Layer& l : s.items) n += l.image.sizeInBytes();  // Tree (#628)
+            for (const Layer& l : s.newItems) n += l.image.sizeInBytes();
+        }
         return n;
     };
     while (history_.size() > 1 && bytes() > budget_) {

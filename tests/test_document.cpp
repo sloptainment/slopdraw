@@ -2176,6 +2176,20 @@ static bool groupFloatsCommitsAndCancels() {
     return doc.undo() && doc.render() == before && doc.paths(1)[0].nodes[0].x == 8 && doc.redo() && doc.render() == moved;
 }
 
+// #628: a Tree step's items' and newItems' pixels count toward the undo budget, so with a budget of one byte only the newest group transform stays undoable.
+static bool budgetCountsTreeSteps() {
+    Document doc(QSize(64, 64), 1);
+    doc.addLayer();
+    doc.fill(Qt::red, {{10, 30}, {20, 30}, {20, 40}, {10, 40}});
+    doc.wrap(1);
+    doc.setCurrent(2);
+    if (!doc.isGroup(2)) return false;
+    if (!doc.transformGroup(2, QTransform::fromTranslate(5, 0))) return false;
+    QImage first = doc.render();
+    if (!doc.transformGroup(2, QTransform::fromTranslate(5, 0))) return false;
+    return doc.undo() && doc.render() == first && !doc.undo();
+}
+
 // Bucket Fill (#604): a click fills the region connected to it, stopping at a ring and leaving the ring and the outside alone.
 static bool bucketFillStopsAtARing() {
     Document doc(QSize(32, 32));
@@ -2315,6 +2329,7 @@ int main() {
     run("newStrokeAfterUndoDiscardsRedo", newStrokeAfterUndoDiscardsRedo);
     run("liveFedStrokeIsOneUndoStep", liveFedStrokeIsOneUndoStep);
     run("budgetDropsOldestKeepsNewest", budgetDropsOldestKeepsNewest);
+    run("budgetCountsTreeSteps", budgetCountsTreeSteps);
     run("stepIdsTrackTheHistory", stepIdsTrackTheHistory);
     run("colorAtReadsCompositePixel", colorAtReadsCompositePixel);
     run("eraserStrokeErasesAndUndoes", eraserStrokeErasesAndUndoes);
