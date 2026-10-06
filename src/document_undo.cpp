@@ -68,28 +68,17 @@ void Document::apply(const Step& s, bool reverse) {
     case AlphaLock: layers_[s.layer].alphaLock = reverse ? s.a : s.b; break;
     case InheritAlpha: layers_[s.layer].inheritAlpha = reverse ? s.a : s.b; break;
     case Name: layers_[s.layer].name = reverse ? s.na : s.nb; break;
-    case PathAdd:
-        reverse ? layers_[s.layer].paths.pop_back() : layers_[s.layer].paths.push_back(s.paths[0]);
-        rasterize(layers_[s.layer]);
-        break;
-    case Knots:
-        layers_[s.layer].paths[s.to].knots = reverse ? s.ka : s.kb;
-        rasterize(layers_[s.layer]);
-        break;
-    case Nodes:
-        layers_[s.layer].paths[s.to] = s.paths[reverse ? 0 : 1];
-        rasterize(layers_[s.layer]);
-        break;
-    case Paths:
-        layers_[s.layer].paths = reverse ? s.paths : s.newPaths;
-        rasterize(layers_[s.layer]);
-        break;
+    case PathAdd: reverse ? layers_[s.layer].paths.pop_back() : layers_[s.layer].paths.push_back(s.paths[0]); break;
+    case Knots: layers_[s.layer].paths[s.to].knots = reverse ? s.ka : s.kb; break;
+    case Nodes: layers_[s.layer].paths[s.to] = s.paths[reverse ? 0 : 1]; break;
+    case Paths: layers_[s.layer].paths = reverse ? s.paths : s.newPaths; break;
     case References: refs_ = reverse ? s.refs : s.newRefs; break;
     case Rasterize:  // the image already shows the paths, so only the kind and the paths change
         layers_[s.layer].vector = reverse;
         layers_[s.layer].paths = reverse ? s.paths : std::vector<VPath>{};
         break;
     }
+    if (s.kind == PathAdd || s.kind == Knots || s.kind == Nodes || s.kind == Paths) rasterize(layers_[s.layer]);  // a Vector Layer's image follows its paths
 }
 
 void Document::seal() {

@@ -208,6 +208,13 @@ private:
     void endBox();
     // Select: the Transform box (#206): a 1 px frame, eight 8 px squares on its corners and edge midpoints (grabbable, #231), and the rotate circle (5 px, 24 px up a stem).
     void drawTransformBox(QPainter& p, const BoxFrame& f);
+    // paintEvent's overlays, in its order: crop ghost, references and their picks, then the Spiro Pen's path, Node/Knot edit's
+    // handles, Select's and Box Select's boxes, and last the brush outline.
+    void drawReferenceOverlays(QPainter& p);
+    void drawPenPath(QPainter& p, const QImage& doc);
+    void drawNodeHandles(QPainter& p);
+    void drawSelectOverlays(QPainter& p);
+    void drawBrushOutline(QPainter& p);
     // The Transform box: the frame a rotate drag left, else the picked paths' bounds, unturned (#202).
     BoxFrame frame() const;
     // Whether the screen point is within 6 px of the rotate circle, 24 px up the stem from the box's top edge midpoint.

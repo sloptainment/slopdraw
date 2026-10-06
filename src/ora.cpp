@@ -1,4 +1,5 @@
 #include "ora.h"
+#include <functional>
 #include <QBuffer>
 #include <QFile>
 #include <QXmlStreamReader>
@@ -187,6 +188,27 @@ bool writeOra(const Document& doc, const QString& path) {
     return ok;
 }
 
+// The references in mydraw/references.xml, bottom first (#538); entry reads one zip entry. Files from before #538 have none.
+static std::vector<Reference> readReferences(const std::function<QByteArray(const QString&)>& entry) {
+    std::vector<Reference> refs;
+    QXmlStreamReader rr(entry("mydraw/references.xml"));
+    while (!rr.atEnd()) {
+        rr.readNext();
+        if (!rr.isStartElement() || rr.name() != u"reference") continue;
+        auto a = rr.attributes();
+        auto t = a.value("transform").split(' ');
+        auto c = a.value("crop").split(' ');
+        Reference ref;
+        if (t.size() != 9 || c.size() != 4 || !ref.image.loadFromData(entry("mydraw/" + a.value("src").toString()))) continue;
+        ref.transform = QTransform(t[0].toDouble(), t[1].toDouble(), t[2].toDouble(), t[3].toDouble(), t[4].toDouble(), t[5].toDouble(),
+                                   t[6].toDouble(), t[7].toDouble(), t[8].toDouble());
+        ref.crop = QRectF(c[0].toDouble(), c[1].toDouble(), c[2].toDouble(), c[3].toDouble());
+        ref.opacity = a.value("opacity").toDouble();
+        refs.push_back(ref);
+    }
+    return refs;
+}
+
 std::optional<Document> readOra(const QString& path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return std::nullopt;
@@ -228,25 +250,7 @@ std::optional<Document> readOra(const QString& path) {
             if (!l.svg.isEmpty()) doc->restorePaths(i, readVectorSvg(entry(l.svg)));
         }
     }
-    if (doc) {  // files from before #538 have no mydraw/references.xml: no references
-        std::vector<Reference> refs;
-        QXmlStreamReader rr(entry("mydraw/references.xml"));
-        while (!rr.atEnd()) {
-            rr.readNext();
-            if (!rr.isStartElement() || rr.name() != u"reference") continue;
-            auto a = rr.attributes();
-            auto t = a.value("transform").split(' ');
-            auto c = a.value("crop").split(' ');
-            Reference ref;
-            if (t.size() != 9 || c.size() != 4 || !ref.image.loadFromData(entry("mydraw/" + a.value("src").toString()))) continue;
-            ref.transform = QTransform(t[0].toDouble(), t[1].toDouble(), t[2].toDouble(), t[3].toDouble(), t[4].toDouble(), t[5].toDouble(),
-                                       t[6].toDouble(), t[7].toDouble(), t[8].toDouble());
-            ref.crop = QRectF(c[0].toDouble(), c[1].toDouble(), c[2].toDouble(), c[3].toDouble());
-            ref.opacity = a.value("opacity").toDouble();
-            refs.push_back(ref);
-        }
-        doc->previewReferences(refs);  // no undo step
-    }
+    if (doc) doc->previewReferences(readReferences(entry));  // no undo step
     mz_zip_reader_end(&z);
     return doc;
 }

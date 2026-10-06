@@ -31,6 +31,25 @@ void Document::fill(const QColor& color, const std::vector<QPointF>& points, boo
     seal();  // its own step, so a live stroke after it starts fresh
 }
 
+// The coverage grown (expand > 0) or shrunk by |expand| whole pixels, 4-neighbour, one pixel per pass: dilate sets any neighbour
+// of the region to full coverage, erode drops region pixels that touch outside it (#605).
+static std::vector<float> expandCover(std::vector<float> cover, int w, int h, int expand) {
+    auto at_ = [w](int x, int y) { return size_t(y) * w + x; };
+    for (int i = 0; i < std::abs(expand); ++i) {
+        std::vector<float> next = cover;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
+                for (QPoint d : {QPoint(1, 0), QPoint(-1, 0), QPoint(0, 1), QPoint(0, -1)}) {
+                    int nx = x + d.x(), ny = y + d.y();
+                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;  // the document edge neither grows nor erodes
+                    if (expand > 0 && cover[at_(nx, ny)] > 0) next[at_(x, y)] = std::max(next[at_(x, y)], 1.f);
+                    if (expand < 0 && cover[at_(x, y)] > 0 && cover[at_(nx, ny)] == 0) next[at_(x, y)] = 0;
+                }
+        cover = next;
+    }
+    return cover;
+}
+
 bool Document::bucketFill(const QPoint& at, const QColor& color, int threshold, int expand, bool antialiased, bool sampleMerged, bool eraser) {
     Layer& l = layers_[current_];
     if (l.vector || l.group || !l.image.rect().contains(at)) return false;
@@ -62,19 +81,7 @@ bool Document::bucketFill(const QPoint& at, const QColor& color, int threshold, 
                 todo.push_back(q);
             }
     }
-    // one pixel per pass: dilate sets any neighbour of the region to full coverage, erode drops region pixels that touch outside it
-    for (int i = 0; i < std::abs(expand); ++i) {
-        std::vector<float> next = cover;
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x < w; ++x)
-                for (QPoint d : {QPoint(1, 0), QPoint(-1, 0), QPoint(0, 1), QPoint(0, -1)}) {
-                    int nx = x + d.x(), ny = y + d.y();
-                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;  // the document edge neither grows nor erodes
-                    if (expand > 0 && cover[at_(nx, ny)] > 0) next[at_(x, y)] = std::max(next[at_(x, y)], 1.f);
-                    if (expand < 0 && cover[at_(x, y)] > 0 && cover[at_(nx, ny)] == 0) next[at_(x, y)] = 0;
-                }
-        cover = next;
-    }
+    cover = expandCover(std::move(cover), w, h, expand);
     QImage mask(src.size(), QImage::Format_ARGB32_Premultiplied);
     mask.fill(Qt::transparent);
     QColor paint = eraser ? QColor(255, 255, 255, color.alpha()) : color;

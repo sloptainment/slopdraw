@@ -9,7 +9,6 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QStatusBar>
 #include <QTabBar>
 #include <QVBoxLayout>
 #include <QActionGroup>
@@ -109,11 +108,8 @@ bool canClose(Shell& sh) {
     return true;
 }
 
-}  // namespace
-
-void buildFileMenu(Shell& sh) {
-    Canvas* canvas = sh.canvas;
-    auto* fileMenu = sh.window.menuBar()->addMenu("&File");
+// A tab picked moves its Session into the Canvas, and the one left parks in tabs[] (#280); a tab's close button closes it.
+void wireTabs(Shell& sh) {
     sh.updateTitle = [&sh] { updateTitle(sh); };
     sh.openTab = [&sh](Document doc, QString path) { openTab(sh, std::move(doc), path); };
     QObject::connect(sh.tabBar, &QTabBar::currentChanged, [&sh](int i) {
@@ -125,6 +121,14 @@ void buildFileMenu(Shell& sh) {
     });
     sh.tabBar->setTabsClosable(true);
     QObject::connect(sh.tabBar, &QTabBar::tabCloseRequested, [&sh](int i) { closeTab(sh, i); });
+}
+
+}  // namespace
+
+void buildFileMenu(Shell& sh) {
+    Canvas* canvas = sh.canvas;
+    auto* fileMenu = sh.window.menuBar()->addMenu("&File");
+    wireTabs(sh);
     auto* fileNew = fileMenu->addAction("&New...");
     fileNew->setShortcut(QKeySequence::New);
     QObject::connect(fileNew, &QAction::triggered, [&sh] { if (auto sz = askNewSize(&sh.window)) sh.openTab(Document(*sz), {}); });

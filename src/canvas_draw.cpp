@@ -55,6 +55,19 @@ void Canvas::paintEvent(QPaintEvent*) {
     p.setTransform(s_.view.matrix());
     QImage doc = s_.doc.render();
     p.drawImage(0, 0, doc);
+    drawReferenceOverlays(p);
+    if (lasso_.size() > 1) {
+        QPainterPath lasso;
+        lasso.addPolygon(lasso_);
+        drawInverted(p, doc, lasso);  // the layer is untouched until pen-up
+    }
+    drawPenPath(p, doc);
+    drawNodeHandles(p);
+    drawSelectOverlays(p);
+    drawBrushOutline(p);
+}
+
+void Canvas::drawReferenceOverlays(QPainter& p) {
     if (cropping_ >= 0) {  // crop mode: the hidden part as a faint ghost under the references (#548, #550)
         const Reference& r = s_.doc.references()[cropping_];
         p.save();
@@ -83,11 +96,9 @@ void Canvas::paintEvent(QPaintEvent*) {
             p.drawRect(QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized());
         }
     }
-    if (lasso_.size() > 1) {
-        QPainterPath lasso;
-        lasso.addPolygon(lasso_);
-        drawInverted(p, doc, lasso);  // the layer is untouched until pen-up
-    }
+}
+
+void Canvas::drawPenPath(QPainter& p, const QImage& doc) {
     if (tool_ == SpiroPenTool && !pen_.nodes.empty()) {  // the path so far, plus a node under the pointer that a click would place
         auto nodes = pen_.nodes;
         if (cursor_ && !penDrag_) nodes.push_back({s_.view.toDoc(*cursor_).x(), s_.view.toDoc(*cursor_).y(), pen_.bezier ? SpiroType::Corner : pen_.type});
@@ -109,6 +120,9 @@ void Canvas::paintEvent(QPaintEvent*) {
             p.drawRect(QRectF(pen_.nodes[i].x - r, pen_.nodes[i].y - r, 2 * r, 2 * r));
         }
     }
+}
+
+void Canvas::drawNodeHandles(QPainter& p) {
     auto shown = others_;  // the selected path and the others Shift+click added
     if (selected_ >= 0) shown[selected_] = nodeSel_;
     if (tool_ == NodeKnotEditTool) for (auto& [sp, sel] : shown) {  // a square per Spiro Node of each, filled when selected, then a circle per Width Knot
@@ -135,6 +149,9 @@ void Canvas::paintEvent(QPaintEvent*) {
         double r = 4 / s_.view.screenRadius(1);
         for (QPointF h : s_.doc.knotHandles(s_.doc.current(), sp)) p.drawEllipse(h, r, r);
     }
+}
+
+void Canvas::drawSelectOverlays(QPainter& p) {
     if (tool_ == SelectTool) {  // Select: the picked paths' outlines, and the box being dragged
         QPen pen(Qt::blue, 1);
         pen.setCosmetic(true);
@@ -156,6 +173,9 @@ void Canvas::paintEvent(QPaintEvent*) {
         p.setBrush(Qt::NoBrush);
         p.drawRect(marked);
     }
+}
+
+void Canvas::drawBrushOutline(QPainter& p) {
     if (cursor_ && brush_ && tool_ == BrushTool) {  // brush outline: dark with a light line beside it, readable on any color
         p.resetTransform();
         p.setRenderHint(QPainter::Antialiasing);
