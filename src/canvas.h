@@ -35,7 +35,7 @@ class Canvas : public QWidget {
 public:
     Canvas() { setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
     void setDocument(Document doc, QString path = {}) { Session s{std::move(doc), View(), path, 0}; s.saved = s.doc.stepId(); setSession(std::move(s)); }
-    void setSession(Session s) { cropping_ = -1; s_ = std::move(s); floating_ = false; groupFloat_ = false; groupKeyLayer_ = -1; pasted_ = QImage(); floatM_ = {}; frame_.reset(); selected_ = -1; nodeSel_.clear(); others_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); update(); if (onLayersChange) onLayersChange(); }
+    void setSession(Session s) { cropping_ = -1; s_ = std::move(s); floating_ = false; groupFloat_ = false; groupKeyLayer_ = -1; pasted_ = QImage(); floatM_ = {}; frame_.reset(); clearSelection(); update(); layersChanged(); }
     Document& doc() { return s_.doc; }
     Session& session() { return s_; }
     Session takeSession() { commitFloat(); endCrop(); pen_.cancel(); return std::move(s_); }  // the tab being left: a lifted piece lands, an unfinished path drops; setSession must follow
@@ -43,13 +43,13 @@ public:
     std::function<void()> onLayersChange;  // fired when the layer stack or a layer's pixels may have changed outside the Layers dock (undo, redo, new document, pointer release, path finish)
     // The Color dock and Ctrl+click set this: in the Pen and Select, the Pen's active swatch (#302, #303); elsewhere the brush color.
     void setColor(const QColor& c);
-    QColor color() const { return spiroTool_ || objectTool_ ? (fillActive_ ? penFill_ : penStroke_) : color_; }
+    QColor color() const { return tool_ == SpiroPenTool || tool_ == SelectTool ? (fillActive_ ? penFill_ : penStroke_) : color_; }
     void setFillActive(bool on) { fillActive_ = on; }  // which Pen swatch setColor targets
     QColor penStroke() const { return penStroke_; }
     QColor penFill() const { return penFill_; }
     double pathWidth() const { return pathWidth_; }
     Document::PaintMode paintMode() const { return paintMode_; }
-    bool selecting() const { return objectTool_; }
+    bool selecting() const { return tool_ == SelectTool; }
     // The Reference tool's picks' opacity for Tool Options (the first pick's), none without picks (#544).
     std::optional<double> refOpacity() const;
     // Sets the picks' opacity: live previews with no undo step, else one References step from the list before the preview.
@@ -81,13 +81,13 @@ public:
     void retypeSelected(SpiroType t);
     // Its Bezier list (#314): retypes the selected Bezier nodes of every path, turning their handles to suit, as one setPaths step.
     void retypeSelected(BezierType t);
-    bool editingNodes() const { return selectTool_; }
+    bool editingNodes() const { return tool_ == NodeKnotEditTool; }
     // Node/Knot edit has a Bezier path selected, so the picker lists cusp/smooth/symmetric.
     bool bezierSelected() const;
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
     std::function<void()> onPaint;  // fired on every repaint, so the Navigation rectangle follows any view change
     std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
-    // The shell's tool actions call this with a Tool (tools.h): Node/Knot edit is selectTool_, Select (picks and deletes whole paths) objectTool_, Box Select boxTool_.
+    // The shell's tool actions call this with a Tool (tools.h).
     void setTool(int t);
     void setShowReferences(bool on) { showRefs_ = on; update(); }  // View > Show References (#540): not saved, not an undo step
     // The Edit, View and Tools menu actions call these; their keys are window-wide shortcuts.
@@ -105,8 +105,8 @@ public:
     QPoint pasteMenuPoint() const { return mapToGlobal(cursor_ ? cursor_->toPoint() : rect().center()); }
     std::function<void()> onPasteEnd;  // a paste ended by Enter or a click outside: the shell gives the previous tool back
     void mirror() { s_.view.mirrorAt(rect().center()); update(); }
-    // Erase is the Brush's or Lasso Fill's own (#215); the other tools have none.
-    bool erase() const { return fillTool_ ? eraseFill_ : bucketTool_ ? eraseBucket_ : !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && eraseBrush_; }
+    // Erase is the Brush's, Lasso Fill's or Bucket Fill's own (#215, #607); the other tools have none.
+    bool erase() const { return tool_ == LassoFillTool ? eraseFill_ : tool_ == BucketFillTool ? eraseBucket_ : tool_ == BrushTool && eraseBrush_; }
     void setErase(bool on);
     void setScaleWidths(bool on) { scaleWidths_ = on; }
     // The picks' width in Select, knots scaled (#305), else a new Vector Path's width in px, from the Spiro Pen's Tool Options
@@ -132,7 +132,7 @@ protected:
     // A tablet press makes no mouse events, so no mouseDoubleClickEvent: time two presses ourselves, with the slack a pen needs (it never lands twice on one pixel).
     ulong lastTabletPress_ = 0;
     QPointF lastTabletPos_;
-    void mouseReleaseEvent(QMouseEvent*) override { cropEdge_.reset(); cropGrab_.reset(); endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; if (onLayersChange) onLayersChange(); }
+    void mouseReleaseEvent(QMouseEvent*) override { cropEdge_.reset(); cropGrab_.reset(); endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; layersChanged(); }
     void tabletEvent(QTabletEvent* e) override;
     void leaveEvent(QEvent*) override { cursor_.reset(); update(); }
     // panels showing/hiding move the canvas origin: pan back so the drawing stays put on screen
@@ -144,6 +144,9 @@ protected:
     void keyReleaseEvent(QKeyEvent* e) override;
 
 private:
+    // Ends every selection: Node/Knot edit's path and nodes, Select's and the Reference tool's picks, the Box Select rectangle.
+    void clearSelection() { selected_ = -1; nodeSel_.clear(); others_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); }
+    void layersChanged() { if (onLayersChange) onLayersChange(); }
     // What the next click does for the current tool and state (#177).
     QString hint() const;
     // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node. In Bezier the close waits
@@ -192,7 +195,7 @@ private:
     void commitFloat();
     void cancelFloat();
     // Select with a group current (#462): the Transform box surrounds everything the group draws, no pick needed; its float is the Document's (#461).
-    bool groupBox() const { return hasDoc() && objectTool_ && s_.doc.isGroup(s_.doc.current()) && !groupRect_.isNull(); }
+    bool groupBox() const { return hasDoc() && tool_ == SelectTool && s_.doc.isGroup(s_.doc.current()) && !groupRect_.isNull(); }
     // Refreshes groupRect_ when the group or the document changed (a float keeps the step id, so it never refreshes mid-drag).
     void updateGroupRect();
     // A Box Select rectangle on the current Raster Layer: Select's Transform box shows on it.
@@ -313,7 +316,7 @@ private:
     int boxLayer_ = -1;
     int penLayer_ = -1;  // the layer the Spiro Pen's unfinished path was started on
     int selected_ = -1;  // index of the selected path on the current layer, -1 for none
-    bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false, referenceTool_ = false;
+    Tool tool_ = BrushTool;  // the tool in use (setTool)
     bool showRefs_ = true;
     std::set<int> refPicks_;  // the Reference tool's picked references, indexes into Document::references()
     std::vector<Reference> refsBefore_;  // the references when a Reference tool drag began
@@ -331,5 +334,5 @@ private:
     int bucketThreshold_ = 15, bucketExpand_ = 0;
     bool bucketMerged_ = true, bucketAA_ = true;
     float otherRadius_ = radius(), otherOpacity_ = opacity();  // the Brush's Size and Opacity for the mode it isn't in
-    bool fillTool_ = false, bucketTool_ = false, eraseBucket_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
+    bool eraseBucket_ = false, eraseBrush_ = false, eraseFill_ = false, lassoing_ = false, lassoErase_ = false;
 };

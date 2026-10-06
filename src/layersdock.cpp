@@ -46,10 +46,7 @@ void buildLayersDock(Shell& sh) {
     layerList->viewport()->setAcceptDrops(true);
     layerList->setDropIndicatorShown(false);
     layerList->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    auto* layerOpacity = new QSlider(Qt::Horizontal);  // percent, of the current layer
-    layerOpacity->setRange(0, 100);
-    auto* layerOpacityValue = new QLabel;
-    QObject::connect(layerOpacity, &QSlider::valueChanged, [layerOpacityValue](int v) { layerOpacityValue->setText(QString("%1 %").arg(v)); });
+    auto [layerOpacity, layerOpacityValue, layerOpacityRow] = sliderRow("", 0, 100, "%1 %");  // percent, of the current layer
     sh.refresh = [&sh, canvas, layerList, layerOpacity, layerOpacityValue] {
         Document& d = canvas->doc();
         sh.nav->refresh();
@@ -239,9 +236,6 @@ void buildLayersDock(Shell& sh) {
     layerCol->addWidget(layerList);
     layerCol->addLayout(layerButtons);
     layerCol->addWidget(new QLabel("Opacity"));
-    auto* layerOpacityRow = new QHBoxLayout;
-    layerOpacityRow->addWidget(layerOpacity);
-    layerOpacityRow->addWidget(layerOpacityValue);
     layerCol->addLayout(layerOpacityRow);
     sh.layerDock = new QDockWidget("Layers", &sh.window);
     sh.layerDock->setWidget(layerPanel);

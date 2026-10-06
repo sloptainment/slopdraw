@@ -14,7 +14,10 @@ class QAction;
 class QActionGroup;
 class QCheckBox;
 class QDockWidget;
+class QHBoxLayout;
 class QKeySequence;
+class QLabel;
+class QSlider;
 class QTabBar;
 
 // The window saves its dock state in closeEvent: by aboutToQuit the floating docks are already hidden and would be saved closed.
@@ -48,6 +51,11 @@ struct Shell {
     QCheckBox* eraseBox = nullptr;
     QDockWidget *navDock = nullptr, *colorDock = nullptr, *brushDock = nullptr, *layerDock = nullptr, *optionsDock = nullptr, *toolDock = nullptr;
 };
+
+// A "Label [slider] readout" row (#621 row 6): the readout shows fmt ("%1 px", "%1 %", "%1") of the value and follows the
+// slider. An empty label leaves it out, for a caption above the row.
+struct SliderRow { QSlider* slider; QLabel* value; QHBoxLayout* row; };
+SliderRow sliderRow(const QString& label, int lo, int hi, const char* fmt);
 
 // A window-wide action, so its keys work whichever dock has focus; it needs a document.
 QAction* key(Shell& sh, QAction* a, QList<QKeySequence> keys);

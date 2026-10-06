@@ -21,6 +21,18 @@ struct ZoomSlider : QSlider {
 
 }  // namespace
 
+SliderRow sliderRow(const QString& label, int lo, int hi, const char* fmt) {
+    auto* slider = new QSlider(Qt::Horizontal);
+    slider->setRange(lo, hi);
+    auto* value = new QLabel(QString(fmt).arg(lo));
+    QObject::connect(slider, &QSlider::valueChanged, [value, fmt](int v) { value->setText(QString(fmt).arg(v)); });
+    auto* row = new QHBoxLayout;
+    if (!label.isEmpty()) row->addWidget(new QLabel(label));
+    row->addWidget(slider);
+    row->addWidget(value);
+    return {slider, value, row};
+}
+
 void buildNavigationDock(Shell& sh) {
     Canvas* canvas = sh.canvas;
     auto* nav = sh.nav = new Navigator(canvas);

@@ -5,7 +5,7 @@
 
 void Canvas::retypeSelected(SpiroType t) {
     editType_ = t;
-    if (!selectTool_ || bezierSelected() || nodeSels().empty()) return;
+    if (tool_ != NodeKnotEditTool || bezierSelected() || nodeSels().empty()) return;
     editSelected([&](Document::VPath& v, const std::set<int>& sel) {
         if (v.kind != Document::PathKind::Spiro) return true;
         v.nodes = retypeNodes(v.nodes, sel, t);
@@ -24,7 +24,7 @@ void Canvas::retypeSelected(BezierType t) {
 }
 
 bool Canvas::bezierSelected() const {
-    if (!selectTool_ || selected_ < 0 || selected_ >= int(s_.doc.paths(s_.doc.current()).size())) return false;
+    if (tool_ != NodeKnotEditTool || selected_ < 0 || selected_ >= int(s_.doc.paths(s_.doc.current()).size())) return false;
     return s_.doc.paths(s_.doc.current())[selected_].kind == Document::PathKind::Bezier;
 }
 
@@ -151,7 +151,7 @@ void Canvas::endNodeDrag() {
 }
 
 std::optional<std::pair<int, bool>> Canvas::handleAt(QPointF pos) {
-    if (!selectTool_ || selected_ < 0) return std::nullopt;
+    if (tool_ != NodeKnotEditTool || selected_ < 0) return std::nullopt;
     auto& b = s_.doc.paths(s_.doc.current())[selected_].bezier;
     for (int i : nodeSel_)
         for (bool out : {false, true}) {
@@ -184,7 +184,7 @@ void Canvas::endHandleDrag() {
 }
 
 int Canvas::knotAt(QPointF pos) {
-    if (!selectTool_ || selected_ < 0) return -1;
+    if (tool_ != NodeKnotEditTool || selected_ < 0) return -1;
     auto handles = s_.doc.knotHandles(s_.doc.current(), selected_);
     for (int i = 0; i < int(handles.size()); i++)
         if (QLineF(handles[i], s_.view.toDoc(pos)).length() * s_.view.screenRadius(1) <= 6) return i;
@@ -194,7 +194,7 @@ int Canvas::knotAt(QPointF pos) {
 bool Canvas::editKnot(QPointF pos, Qt::KeyboardModifiers mods) {
     int i = knotAt(pos);
     if (i < 0) {
-        if (!selectTool_ || selected_ < 0 || (mods & Qt::AltModifier) || s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1)) != selected_) return false;
+        if (tool_ != NodeKnotEditTool || selected_ < 0 || (mods & Qt::AltModifier) || s_.doc.pathAt(s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1)) != selected_) return false;
         if (mods & Qt::ShiftModifier) {
             if (bezierSelected()) {
                 auto k = s_.doc.projectKnot(s_.doc.current(), selected_, s_.view.toDoc(pos));

@@ -38,7 +38,7 @@ void Canvas::drawInverted(QPainter& p, const QImage& doc, const QPainterPath& pa
 
 void Canvas::paintEvent(QPaintEvent*) {
     updateGroupRect();
-    if (boxLayer_ != s_.doc.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; if (!referenceTool_) frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
+    if (boxLayer_ != s_.doc.current()) { box_ = QRect(); floating_ = false; floatM_ = {}; if (tool_ != ReferenceTool) frame_.reset(); }  // a layer switch clears the Box Select rectangle; setCurrent already sealed any floating piece
     flushPreview();
     if (penLayer_ != s_.doc.current()) { pen_.cancel(); penLayer_ = s_.doc.current(); }  // a layer switch drops the unfinished path
     QString h = hint();  // every tool or state change calls update(), so paint is where a change of hint is noticed
@@ -73,7 +73,7 @@ void Canvas::paintEvent(QPaintEvent*) {
         p.restore();
     }
     if (cropping_ >= 0) drawCropFrame(p);
-    if (referenceTool_) {  // the Transform box on the picks, and the box being dragged (#542)
+    if (tool_ == ReferenceTool) {  // the Transform box on the picks, and the box being dragged (#542)
         if (!refPicks_.empty() && cropping_ < 0) drawTransformBox(p, frame());
         if (boxing_ && cursor_) {
             QPen pen(Qt::blue, 1, Qt::DashLine);
@@ -88,7 +88,7 @@ void Canvas::paintEvent(QPaintEvent*) {
         lasso.addPolygon(lasso_);
         drawInverted(p, doc, lasso);  // the layer is untouched until pen-up
     }
-    if (spiroTool_ && !pen_.nodes.empty()) {  // the path so far, plus a node under the pointer that a click would place
+    if (tool_ == SpiroPenTool && !pen_.nodes.empty()) {  // the path so far, plus a node under the pointer that a click would place
         auto nodes = pen_.nodes;
         if (cursor_ && !penDrag_) nodes.push_back({s_.view.toDoc(*cursor_).x(), s_.view.toDoc(*cursor_).y(), pen_.bezier ? SpiroType::Corner : pen_.type});
         std::optional<QPainterPath> path;
@@ -111,7 +111,7 @@ void Canvas::paintEvent(QPaintEvent*) {
     }
     auto shown = others_;  // the selected path and the others Shift+click added
     if (selected_ >= 0) shown[selected_] = nodeSel_;
-    if (selectTool_) for (auto& [sp, sel] : shown) {  // a square per Spiro Node of each, filled when selected, then a circle per Width Knot
+    if (tool_ == NodeKnotEditTool) for (auto& [sp, sel] : shown) {  // a square per Spiro Node of each, filled when selected, then a circle per Width Knot
         QPen pen(Qt::blue, 1);
         pen.setCosmetic(true);
         p.setPen(pen);
@@ -127,7 +127,7 @@ void Canvas::paintEvent(QPaintEvent*) {
             p.drawRect(QRectF(nodes[i].x - r, nodes[i].y - r, 2 * r, 2 * r));
         }
     }
-    if (selectTool_) for (auto& [sp, sel] : shown) {  // a handle per Width Knot of each
+    if (tool_ == NodeKnotEditTool) for (auto& [sp, sel] : shown) {  // a handle per Width Knot of each
         QPen pen(Qt::blue, 1);
         pen.setCosmetic(true);
         p.setPen(pen);
@@ -135,7 +135,7 @@ void Canvas::paintEvent(QPaintEvent*) {
         double r = 4 / s_.view.screenRadius(1);
         for (QPointF h : s_.doc.knotHandles(s_.doc.current(), sp)) p.drawEllipse(h, r, r);
     }
-    if (objectTool_) {  // Select: the picked paths' outlines, and the box being dragged
+    if (tool_ == SelectTool) {  // Select: the picked paths' outlines, and the box being dragged
         QPen pen(Qt::blue, 1);
         pen.setCosmetic(true);
         p.setPen(pen);
@@ -148,7 +148,7 @@ void Canvas::paintEvent(QPaintEvent*) {
             p.drawRect(QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized());
         }
     }
-    QRectF marked = boxTool_ && boxing_ && cursor_ ? QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized() : QRectF(box_);  // Box Select: the rectangle, or the one being dragged
+    QRectF marked = tool_ == BoxSelectTool && boxing_ && cursor_ ? QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized() : QRectF(box_);  // Box Select: the rectangle, or the one being dragged
     if (!marked.isEmpty()) {
         QPen pen(Qt::blue, 1, Qt::DashLine);
         pen.setCosmetic(true);
@@ -156,7 +156,7 @@ void Canvas::paintEvent(QPaintEvent*) {
         p.setBrush(Qt::NoBrush);
         p.drawRect(marked);
     }
-    if (cursor_ && brush_ && !fillTool_ && !spiroTool_ && !selectTool_ && !objectTool_ && !boxTool_ && !referenceTool_ && !bucketTool_) {  // brush outline: dark with a light line beside it, readable on any color
+    if (cursor_ && brush_ && tool_ == BrushTool) {  // brush outline: dark with a light line beside it, readable on any color
         p.resetTransform();
         p.setRenderHint(QPainter::Antialiasing);
         double r = s_.view.screenRadius(radius());

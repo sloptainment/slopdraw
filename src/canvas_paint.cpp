@@ -12,7 +12,7 @@ void Canvas::resizeTo(QPointF pos) {
 void Canvas::pickAt(QPointF pos) {
     QPointF d = s_.view.toDoc(pos);
     QColor c = pickColorAt(s_.doc, d, showRefs_);
-    if (!c.isValid() || !brush_ || selectTool_) return;  // Node/Knot edit: a Ctrl+click no knot or node gesture took does nothing
+    if (!c.isValid() || !brush_ || tool_ == NodeKnotEditTool) return;  // Node/Knot edit: a Ctrl+click no knot or node gesture took does nothing
     setColor(c);
     if (onColorPick) onColorPick(c);
 }

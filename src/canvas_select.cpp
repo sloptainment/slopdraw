@@ -10,7 +10,7 @@ std::vector<Document::VPath> Canvas::pickedPaths() const {
 }
 
 void Canvas::setBezier(bool on) {
-    if (objectTool_ && !picked().empty()) {
+    if (tool_ == SelectTool && !picked().empty()) {
         if (on) editPicks([](Document::VPath& p) { if (p.kind == Document::PathKind::Spiro) p = Document::toBezier(p); });
         return;
     }
@@ -18,12 +18,12 @@ void Canvas::setBezier(bool on) {
 }
 
 bool Canvas::editPicks(const std::function<void(Document::VPath&)>& f) {
-    if (!objectTool_ || picked().empty()) return false;
+    if (tool_ != SelectTool || picked().empty()) return false;
     auto ps = s_.doc.paths(s_.doc.current());
     for (int i : picked()) f(ps[i]);
     s_.doc.setPaths(s_.doc.current(), ps);
     update();
-    if (onLayersChange) onLayersChange();
+    layersChanged();
     return true;
 }
 
@@ -101,7 +101,7 @@ void Canvas::commitFloat() {
         groupM_ = {};
         groupFrame_.reset();
         update();
-        if (onLayersChange) onLayersChange();
+        layersChanged();
     }
     if (!floating_) return;
     floatPiece(floatM_, true);
@@ -111,7 +111,7 @@ void Canvas::commitFloat() {
     frame_.reset();
     box_ = QRect();
     update();
-    if (onLayersChange) onLayersChange();
+    layersChanged();
 }
 
 void Canvas::cancelFloat() {
@@ -132,7 +132,7 @@ void Canvas::cancelFloat() {
 }
 
 void Canvas::updateGroupRect() {
-    if (!hasDoc() || !objectTool_ || !s_.doc.isGroup(s_.doc.current())) {  // stepId seals a stroke in progress, so only ask with Select on a group
+    if (!hasDoc() || tool_ != SelectTool || !s_.doc.isGroup(s_.doc.current())) {  // stepId seals a stroke in progress, so only ask with Select on a group
         groupRect_ = QRectF();
         groupKeyLayer_ = -1;
         return;
@@ -156,7 +156,7 @@ void Canvas::boxPress(QPointF pos) {
 void Canvas::deleteBox() {
     if (box_.isEmpty() || boxLayer_ != s_.doc.current() || !s_.doc.clearRect(box_)) return;
     update();
-    if (onLayersChange) onLayersChange();
+    layersChanged();
 }
 
 void Canvas::endBox() {
@@ -165,10 +165,10 @@ void Canvas::endBox() {
     if (cursor_) {
         QRectF box = QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized();
         bool dragged = std::max(box.width(), box.height()) * s_.view.screenRadius(1) > 3;
-        if (boxTool_) {
+        if (tool_ == BoxSelectTool) {
             if (dragged) { box_ = box.toAlignedRect() & s_.doc.image(0).rect(); boxLayer_ = s_.doc.current(); frame_.reset(); }
             else if (!box_.contains(box.topLeft().toPoint())) box_ = QRect();
-        } else if (dragged && referenceTool_) {
+        } else if (dragged && tool_ == ReferenceTool) {
             auto in = referencesIn(s_.doc.references(), box);
             refPicks_.insert(in.begin(), in.end());
         } else if (dragged) {
@@ -180,7 +180,7 @@ void Canvas::endBox() {
 }
 
 BoxFrame Canvas::frame() const {
-    if (referenceTool_) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : frame_ ? *frame_ : BoxFrame{referencesBounds(s_.doc.references(), refPicks_), 0};
+    if (tool_ == ReferenceTool) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : frame_ ? *frame_ : BoxFrame{referencesBounds(s_.doc.references(), refPicks_), 0};
     if (groupBox()) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : groupFrame_ ? *groupFrame_ : BoxFrame{groupRect_, 0};
     if (rasterBox()) return moveDrag_ ? frameAfter(moveFrame_, dragM_) : frame_ ? *frame_ : BoxFrame{QRectF(box_), 0};
     if (moveDrag_ && (rotating_ || frame_)) return frameAfter(moveFrame_, dragM_);
@@ -196,8 +196,8 @@ bool Canvas::onRotateHandle(QPointF pos) const {
 void Canvas::dragMoveTo(QPointF pos, bool shift) {
     preview_ = [=, this] {
         dragM_ = rotating_ ? rotateMatrix(moveFrame_.rect.center(), moveStart_, s_.view.toDoc(pos)) : handle_ ? frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), shift) : QTransform::fromTranslate(s_.view.toDoc(pos).x() - moveStart_.x(), s_.view.toDoc(pos).y() - moveStart_.y());
-        if (referenceTool_ && handle_) dragM_ = frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), true);  // aspect always kept
-        if (referenceTool_) return s_.doc.previewReferences(transformReferences(refsBefore_, refPicks_, dragM_));
+        if (tool_ == ReferenceTool && handle_) dragM_ = frameScaleMatrix(moveFrame_, *handle_, s_.view.toDoc(pos), true);  // aspect always kept
+        if (tool_ == ReferenceTool) return s_.doc.previewReferences(transformReferences(refsBefore_, refPicks_, dragM_));
         if (groupBox()) {
             groupFloat_ = s_.doc.floatGroup(s_.doc.current(), groupM_ * dragM_, scaleWidths_);
             return;
@@ -216,7 +216,7 @@ void Canvas::endMoveDrag() {
     if (!moveDrag_) return;
     flushPreview();
     moveDrag_ = false;
-    if (referenceTool_) {  // one References step from the list the drag began with
+    if (tool_ == ReferenceTool) {  // one References step from the list the drag began with
         if (dragM_.isIdentity()) return;
         s_.doc.previewReferences(refsBefore_);
         s_.doc.setReferences(transformReferences(refsBefore_, refPicks_, dragM_));
@@ -275,7 +275,7 @@ void Canvas::deletePicked() {
     if (picked().empty() || !s_.doc.setPaths(s_.doc.current(), kept)) return;
     picked_.clear();
     update();
-    if (onLayersChange) onLayersChange();
+    layersChanged();
 }
 
 const std::set<int>& Canvas::picked() const {

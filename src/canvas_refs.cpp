@@ -3,7 +3,7 @@
 #include <QMenu>
 
 std::optional<double> Canvas::refOpacity() const {
-    if (!referenceTool_ || refPicks_.empty()) return std::nullopt;
+    if (tool_ != ReferenceTool || refPicks_.empty()) return std::nullopt;
     return s_.doc.references()[*refPicks_.begin()].opacity;
 }
 
@@ -25,7 +25,7 @@ void Canvas::importReference(const QImage& img) {
     refPicks_ = {int(s_.doc.references().size()) - 1};
     frame_.reset();
     update();
-    if (onLayersChange) onLayersChange();
+    layersChanged();
 }
 
 bool Canvas::enterCrop(QPointF pos) {
@@ -125,7 +125,7 @@ void Canvas::endCrop() {
     if (changed) s_.doc.previewReferences(cropBefore_), s_.doc.setReferences(refs);
     unsetCursor();
     update();
-    if (onLayersChange) onLayersChange();
+    layersChanged();
 }
 
 void Canvas::deleteRefPicks() {
@@ -136,5 +136,5 @@ void Canvas::deleteRefPicks() {
     s_.doc.setReferences(kept);
     refPicks_.clear();
     update();
-    if (onLayersChange) onLayersChange();
+    layersChanged();
 }
