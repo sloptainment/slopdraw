@@ -125,20 +125,14 @@ protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
-    void panZoom(QPointF pos, Qt::KeyboardModifiers mods);
     // Double-click on a reference in the Reference tool enters crop mode on it (#546); elsewhere a second press, as Qt's default.
     void mouseDoubleClickEvent(QMouseEvent* e) override;
-    bool enterCrop(QPointF pos);
-    // A tablet press makes no mouse events, so no mouseDoubleClickEvent: time two presses ourselves, with the slack a pen needs (it never lands twice on one pixel).
-    ulong lastTabletPress_ = 0;
-    QPointF lastTabletPos_;
     void mouseReleaseEvent(QMouseEvent*) override { cropEdge_.reset(); cropGrab_.reset(); endSmooth(); endPenClose(); endLasso(); endKnotDrag(); endNodeDrag(); endHandleDrag(); endMoveDrag(); endBox(); dragging_ = painting_ = resizing_ = penDrag_ = false; layersChanged(); }
     void tabletEvent(QTabletEvent* e) override;
     void leaveEvent(QEvent*) override { cursor_.reset(); update(); }
     // panels showing/hiding move the canvas origin: pan back so the drawing stays put on screen
     void moveEvent(QMoveEvent*) override { pinOrigin(); }
     void resizeEvent(QResizeEvent*) override { pinOrigin(); }
-    void pinOrigin() { QPoint o = mapTo(window(), QPoint()); if (origin_) s_.view.pan(*origin_ - o); origin_ = o; }
     void wheelEvent(QWheelEvent* e) override;
     void keyPressEvent(QKeyEvent* e) override;
     void keyReleaseEvent(QKeyEvent* e) override;
@@ -147,6 +141,9 @@ private:
     // Ends every selection: Node/Knot edit's path and nodes, Select's and the Reference tool's picks, the Box Select rectangle.
     void clearSelection() { selected_ = -1; nodeSel_.clear(); others_.clear(); picked_.clear(); refPicks_.clear(); box_ = QRect(); }
     void layersChanged() { if (onLayersChange) onLayersChange(); }
+    void panZoom(QPointF pos, Qt::KeyboardModifiers mods);
+    void pinOrigin() { QPoint o = mapTo(window(), QPoint()); if (origin_) s_.view.pan(*origin_ - o); origin_ = o; }
+    bool enterCrop(QPointF pos);
     // What the next click does for the current tool and state (#177).
     QString hint() const;
     // Spiro Pen: a click near the first node closes the path (6 screen px), any other click places a node. In Bezier the close waits
@@ -264,6 +261,9 @@ private:
     void endSmooth();
     void smoothTick();
     Session s_;
+    // A tablet press makes no mouse events, so no mouseDoubleClickEvent: time two presses ourselves, with the slack a pen needs (it never lands twice on one pixel).
+    ulong lastTabletPress_ = 0;
+    QPointF lastTabletPos_;
     Stabilizer smooth_;
     PenSample raw_{};  // the newest pen sample while smoothing, in document coordinates
     bool smoothErase_ = false, finishLine_ = true;

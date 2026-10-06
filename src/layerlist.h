@@ -14,16 +14,20 @@ struct LayerList : QListWidget {
     std::set<int> sel;  // the Document indexes selected with Ctrl/Shift (#475); empty means the current item alone. Dropped by refresh() once the Document has taken another step
     int selStep = 0;
     std::vector<int> items(int current) const { return sel.empty() ? std::vector<int>{current} : std::vector<int>(sel.begin(), sel.end()); }
-    int gap_ = -1, inside_ = -1, pressed_ = -1, from_ = -1;
-    QPoint pressPos_;
+
+protected:
     // A press that made the row current would rebuild the rows under the mouse and lose the drag; so the row becomes current on release, and the drag starts here.
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     void dragEnterEvent(QDragEnterEvent* e) override { e->accept(); }
-    void aim(QPoint pos);
     void dragMoveEvent(QDragMoveEvent* e) override;
     void dragLeaveEvent(QDragLeaveEvent*) override { gap_ = inside_ = -1; viewport()->update(); }
     void dropEvent(QDropEvent* e) override;
     void paintEvent(QPaintEvent* e) override;
+
+private:
+    void aim(QPoint pos);  // sets gap_ and inside_ for the pointer at pos
+    int gap_ = -1, inside_ = -1, pressed_ = -1, from_ = -1;
+    QPoint pressPos_;
 };

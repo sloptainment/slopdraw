@@ -40,8 +40,6 @@ struct Shell {
     std::function<void()> refresh;  // rebuilds the Layers dock from the Document; runs on every current-layer change
     std::function<void()> kindChanged;  // set with the Tools dock; refresh() runs it
     std::function<void()> updateTitle;  // set with the File menu; refresh() runs it after every edit, undo and redo
-    std::function<bool()> saveActive;  // Save on the active tab; false if cancelled or failed
-    std::function<void(Document, QString)> openTab;  // New and Open: a new tab, made active
     std::function<void(QString)> openPath;  // Open and the command line: a tab per file
     std::function<void()> onEraseChange;  // the Erase action switched mode: Tool Options re-reads the mode's sliders
     QActionGroup* toolGroup = nullptr;
