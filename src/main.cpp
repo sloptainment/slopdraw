@@ -42,11 +42,6 @@
 #include <QMouseEvent>
 #include <algorithm>
 #include <functional>
-#include <qboxlayout.h>
-#include <qdialogbuttonbox.h>
-#include <qlabel.h>
-#include <qlineedit.h>
-#include <qwidget.h>
 #include <set>
 #include <optional>
 #include <QTabletEvent>
@@ -123,7 +118,7 @@ public:
     void setBucketExpand(int px) { bucketExpand_ = px; }  // Expand/shrink, Sample merged and Antialiased, passed to the core fill (#608)
     void setBucketMerged(bool on) { bucketMerged_ = on; }
     void setBucketAntialiased(bool on) { bucketAA_ = on; }
-    void setSmoothing(int n) { smooth_.n = n; }  // the Brush's Stabilizer, 0 = off (#292)  // Lasso Fill's own, apart from the Brush's (#213)
+    void setSmoothing(int n) { smooth_.n = n; }  // the Brush's Stabilizer, 0 = off (#292)
     void setFinishLine(bool on) { finishLine_ = on; }
     void setLassoSmoothing(int n) { lassoSmooth_.n = n; }  // Lasso Fill's own Stabilizer, apart from the Brush's (#261)
     void setLassoFinishLine(bool on) { lassoFinish_ = on; }  // pen-up flushes the Stabilizer to the pen (#293)
@@ -169,7 +164,7 @@ public:
     std::function<void(const QString&)> onHint;  // fired with the status bar line whenever it changes
     std::function<void()> onPaint;  // fired on every repaint, so the Navigation rectangle follows any view change
     std::function<void(int)> onToolChange;  // fired with the new tool (as setTool numbers it), so the Tool Options dock can follow
-    // The shell's tool actions call this: 0 Brush, 1 Lasso Fill, 2 Spiro Pen, 3 Node/Knot edit (selectTool_), 4 Select (objectTool_: picks and deletes whole paths), 5 Box Select (boxTool_).
+    // The shell's tool actions call this with a Tool (tools.h): Node/Knot edit is selectTool_, Select (picks and deletes whole paths) objectTool_, Box Select boxTool_.
     void setTool(int t) {
         commitFloat();
         fillTool_ = t == 1; spiroTool_ = t == 2; selectTool_ = t == 3; objectTool_ = t == 4; boxTool_ = t == 5; referenceTool_ = t == ReferenceTool; bucketTool_ = t == BucketFillTool;
@@ -1378,13 +1373,13 @@ private:
     bool spiroTool_ = false, selectTool_ = false, objectTool_ = false, boxTool_ = false, referenceTool_ = false;
     bool showRefs_ = true;
     std::set<int> refPicks_;  // the Reference tool's picked references, indexes into Document::references()
-    std::vector<Reference> refsBefore_;
+    std::vector<Reference> refsBefore_;  // the references when a Reference tool drag began
     int cropping_ = -1;  // the reference in crop mode (#546), -1 for none
     std::optional<QPoint> cropEdge_;  // the crop edge being dragged
     std::optional<QPointF> cropGrab_;  // where in the image a crop move began, and the crop then
     QRectF cropGrabFrom_;
     std::vector<Reference> cropBefore_;  // the references when crop mode began
-    std::optional<std::vector<Reference>> opacityBefore_;  // the references when an opacity slider drag began  // the references when a Reference tool drag began
+    std::optional<std::vector<Reference>> opacityBefore_;  // the references when an opacity slider drag began
     double pathWidth_ = 10;  // px
     Document::PaintMode paintMode_ = Document::PaintMode::Stroke;
     QColor penStroke_ = Qt::black, penFill_ = QColor(0x2d, 0x5d, 0x9a);  // the Pen's Stroke and Fill swatches
@@ -1634,7 +1629,7 @@ int main(int argc, char** argv) {
     auto* brushDock = new QDockWidget("Brushes", &window);
     brushDock->setWidget(brushPanel);
 
-    // Layers dock: the list runs top layer first, so row = layerCount - 1 - index. refresh() rebuilds it from the Document.
+    // Layers dock: the list runs top item first; each row holds its Document index in Qt::UserRole. refresh() rebuilds it from the Document.
     // Drag a row (#459, #460): the pointer is over a gap between rows (a green bar) or the middle of a group row (a dashed outline, "inside"). Qt moves nothing:
     // the drop is handed over as the dragged item's Document index, the gap row and the inside row (-1 for none); refresh() rebuilds the rows.
     struct LayerList : QListWidget {
@@ -1712,6 +1707,7 @@ int main(int argc, char** argv) {
     std::function<void()> kindChanged;  // set with the Tools dock below; refresh() runs on every current-layer change
     std::function<void()> updateTitle;  // set with the File menu below; refresh() runs it after every edit, undo and redo
     std::vector<QAction*> docActions;  // enabled only while a document is open (#173); filled as the menus are built
+    std::vector<QAction*> notOnGroup;  // also disabled while a group is current: Cut and Copy (#501)
     auto refresh = [canvas, nav, layerList, layerOpacity, layerOpacityValue, &kindChanged, &updateTitle] {
         Document& d = canvas->doc();
         nav->refresh();
@@ -2256,6 +2252,7 @@ int main(int argc, char** argv) {
         canvas->setEnabled(has);  // a disabled widget gets no pointer or key events
         for (auto* w : {colorDock->widget(), layerPanel, optionsPanel, navPanel}) w->setEnabled(has);
         for (auto* a : docActions) a->setEnabled(has);
+        for (auto* a : notOnGroup) a->setEnabled(has && !grp);
         auto tools = toolGroup->actions();
         for (int i = 0; i < 8; i++) tools[i]->setEnabled(has && toolFitsKind(vec, i, grp));
         brushPanel->setEnabled(has && !vec);
@@ -2472,8 +2469,11 @@ int main(int argc, char** argv) {
         col->addWidget(list);
         auto* btns = new QDialogButtonBox;
         auto* go = btns->addButton("Save All", QDialogButtonBox::AcceptRole);
+        auto* discard = btns->addButton("Discard All", QDialogButtonBox::DestructiveRole);  // quits saving nothing, whatever is checked (#271 story 15)
         btns->addButton(QDialogButtonBox::Cancel);
         go->setDefault(true);
+        bool discardAll = false;
+        QObject::connect(discard, &QPushButton::clicked, &dlg, [&] { discardAll = true; dlg.accept(); });
         col->addWidget(btns);
         auto checked = [&] { std::vector<int> c; for (int r = 0; r < list->count(); ++r) if (list->item(r)->checkState() == Qt::Checked) c.push_back(dirty[r]); return c; };
         QObject::connect(list, &QListWidget::itemChanged, [&] {
@@ -2483,6 +2483,7 @@ int main(int argc, char** argv) {
         QObject::connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
         QObject::connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
         if (dlg.exec() != QDialog::Accepted) return false;
+        if (discardAll) return true;
         for (int i : checked()) {
             tabBar->setCurrentIndex(i);  // the tab being saved is shown, and its Save path dialog asks over it
             if (!saveActive()) return false;  // a cancelled path dialog stops the quit
@@ -2498,6 +2499,7 @@ int main(int argc, char** argv) {
     editMenu->addSeparator();
     QObject::connect(key(editMenu->addAction("Cu&t"), {QKeySequence("Ctrl+X")}), &QAction::triggered, [canvas] { canvas->copy(true); });
     QObject::connect(key(editMenu->addAction("&Copy"), {QKeySequence("Ctrl+C")}), &QAction::triggered, [canvas] { canvas->copy(false); });
+    notOnGroup = {editMenu->actions().end()[-2], editMenu->actions().end()[-1]};
     auto pasteReference = [canvas, toolGroup](const QImage& img) {  // as an import is placed (#547, #524): the view centre, scaled down to fit, picked
         toolGroup->actions()[ReferenceTool]->trigger();
         canvas->importReference(img.convertToFormat(QImage::Format_ARGB32_Premultiplied));

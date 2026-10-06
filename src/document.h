@@ -49,7 +49,8 @@ public:
     // eraser = true cuts the shape out of the alpha instead (to white under alpha lock). One call is one undo step.
     void fill(const QColor& color, const std::vector<QPointF>& points, bool eraser = false);
     // Bucket Fill (#604): fills the region of the current Raster Layer 4-connected to `at` whose pixels differ from the clicked one by at most threshold in every RGBA channel,
-    // through fill's compositing (alpha lock, eraser, color's alpha). expand, antialiased and sampleMerged are accepted, not yet honoured (#605, #606).
+    // through fill's compositing (alpha lock, eraser, color's alpha). expand grows (or, negative, shrinks) the region by whole pixels, antialiased softens its edge,
+    // sampleMerged matches against the visible composite instead of the layer (#605, #606).
     // Returns false, changing nothing, for a Vector Layer, a group or a point outside the document. One undo step.
     bool bucketFill(const QPoint& at, const QColor& color, int threshold, int expand = 0, bool antialiased = true, bool sampleMerged = true, bool eraser = false);
     // Clears a rectangle of the current Raster Layer: transparent, white on the background (layer 0). One undo step.
