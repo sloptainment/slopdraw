@@ -282,22 +282,8 @@ void Canvas::tabletEvent(QTabletEvent *e)
   } // barrel button pans like the mouse's middle button
   if (dragging_)
     return panZoom(e->position(), e->modifiers());
-  bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
   if (e->type() == QEvent::TabletRelease)
-  {
-    cropEdge_.reset();
-    cropGrab_.reset();
-    endSmooth();
-    endPenClose();
-    endLasso();
-    endKnotDrag();
-    endNodeDrag();
-    endHandleDrag();
-    endMoveDrag();
-    endBox();
-    painting_ = resizing_ = penDrag_ = false;
-    layersChanged();
-  }
+    release();
   else if (
     e->type() == QEvent::TabletPress && (e->modifiers() & Qt::ControlModifier))
   {
@@ -314,25 +300,34 @@ void Canvas::tabletEvent(QTabletEvent *e)
   }
   else if (resizing_)
     resizeTo(e->position());
-  else if (tool_ == ReferenceTool)
+  else
+    tabletTool(e);
+}
+
+void Canvas::refTablet(QTabletEvent *e)
+{
+  if (e->type() == QEvent::TabletPress)
   {
-    if (e->type() == QEvent::TabletPress)
-    {
-      bool dbl =
-        e->timestamp() - lastTabletPress_ <=
-          ulong(QGuiApplication::styleHints()->mouseDoubleClickInterval()) &&
-        (e->position() - lastTabletPos_).manhattanLength() <=
-          4 * QGuiApplication::styleHints()->startDragDistance();
-      lastTabletPress_ = e->timestamp();
-      lastTabletPos_ = e->position();
-      if (!(dbl && enterCrop(e->position())))
-        refPress(e->position(), e->modifiers());
-    }
-    else if (cropEdge_ || cropGrab_)
-      cropDragTo(e->position());
-    else if (moveDrag_)
-      dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
+    bool dbl = e->timestamp() - lastTabletPress_ <=
+                 ulong(QGuiApplication::styleHints()->mouseDoubleClickInterval()) &&
+               (e->position() - lastTabletPos_).manhattanLength() <=
+                 4 * QGuiApplication::styleHints()->startDragDistance();
+    lastTabletPress_ = e->timestamp();
+    lastTabletPos_ = e->position();
+    if (!(dbl && enterCrop(e->position())))
+      refPress(e->position(), e->modifiers());
   }
+  else if (cropEdge_ || cropGrab_)
+    cropDragTo(e->position());
+  else if (moveDrag_)
+    dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
+}
+
+void Canvas::tabletTool(QTabletEvent *e)
+{
+  bool eraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
+  if (tool_ == ReferenceTool)
+    refTablet(e);
   else if (tool_ == NodeKnotEditTool)
   {
     if (e->type() == QEvent::TabletPress)
@@ -428,20 +423,25 @@ void Canvas::keyReleaseEvent(QKeyEvent *e)
     space_ = false;
 }
 
+QString Canvas::penHint() const
+{
+  if (pen_.nodes.empty())
+    return "Click places the first node";
+  if (pen_.bezier)
+    return "Click adds a corner · Enter or right-click finishes open · click the "
+           "first node or Shift+Enter closes · Backspace drops the last node · Esc "
+           "cancels";
+  return "Click adds a node · Shift+click adds a corner · Enter or right-click "
+         "finishes open · click the first node or Shift+Enter closes · Backspace "
+         "drops the last node · Esc cancels";
+}
+
 QString Canvas::hint() const
 {
   if (!hasDoc())
     return {};
-  if (tool_ == SpiroPenTool && pen_.nodes.empty())
-    return "Click places the first node";
-  if (tool_ == SpiroPenTool && pen_.bezier)
-    return "Click adds a corner · Enter or right-click finishes open · click the "
-           "first node or Shift+Enter closes · Backspace drops the last node · Esc "
-           "cancels";
   if (tool_ == SpiroPenTool)
-    return "Click adds a node · Shift+click adds a corner · Enter or right-click "
-           "finishes open · click the first node or Shift+Enter closes · Backspace "
-           "drops the last node · Esc cancels";
+    return penHint();
   if (tool_ == NodeKnotEditTool && selected_ < 0)
     return "Click a path to select it";
   if (tool_ == NodeKnotEditTool)

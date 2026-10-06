@@ -270,21 +270,7 @@ protected:
   // Double-click on a reference in the Reference tool enters crop mode on it
   // (#546); elsewhere a second press, as Qt's default.
   void mouseDoubleClickEvent(QMouseEvent *e) override;
-  void mouseReleaseEvent(QMouseEvent *) override
-  {
-    cropEdge_.reset();
-    cropGrab_.reset();
-    endSmooth();
-    endPenClose();
-    endLasso();
-    endKnotDrag();
-    endNodeDrag();
-    endHandleDrag();
-    endMoveDrag();
-    endBox();
-    dragging_ = painting_ = resizing_ = penDrag_ = false;
-    layersChanged();
-  }
+  void mouseReleaseEvent(QMouseEvent *) override { release(); }
   void tabletEvent(QTabletEvent *e) override;
   void leaveEvent(QEvent *) override
   {
@@ -300,6 +286,25 @@ protected:
   void keyReleaseEvent(QKeyEvent *e) override;
 
 private:
+  // Pointer up, mouse or tablet: ends every drag, stroke and smoothing.
+  void release()
+  {
+    cropEdge_.reset();
+    cropGrab_.reset();
+    endSmooth();
+    endPenClose();
+    endLasso();
+    endKnotDrag();
+    endNodeDrag();
+    endHandleDrag();
+    endMoveDrag();
+    endBox();
+    dragging_ = painting_ = resizing_ = penDrag_ = false;
+    layersChanged();
+  }
+  // A tablet press or move past the shared handling, routed by tool_.
+  void tabletTool(QTabletEvent *e);
+  void refTablet(QTabletEvent *e);
   // Ends every selection: Node/Knot edit's path and nodes, Select's and the
   // Reference tool's picks, the Box Select rectangle.
   void clearSelection()
@@ -327,6 +332,7 @@ private:
   bool enterCrop(QPointF pos);
   // What the next click does for the current tool and state (#177).
   QString hint() const;
+  QString penHint() const; // hint() for the Spiro Pen
   // Spiro Pen: a click near the first node closes the path (6 screen px), any other
   // click places a node. In Bezier the close waits for release, so a drag first
   // pulls the first node's handles (#368).
@@ -344,6 +350,8 @@ private:
   // it); anywhere else it selects a path and clears the node selection (Shift+click
   // there changes nothing).
   void selectPress(QPointF pos, Qt::KeyboardModifiers mods);
+  // selectPress on node n of the selected path: Shift toggles it, else it drags.
+  void nodePress(QPointF pos, int n, Qt::KeyboardModifiers mods);
   // Makes shown path p the selected one; the old one and its node selection join
   // others_.
   void makePrimary(int p);

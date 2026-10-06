@@ -77,136 +77,162 @@ QListWidget *presetList()
   return list;
 }
 
+// The dialog's widgets, made by makeFields and laid out by layOut.
+struct Fields
+{
+  QListWidget *list = presetList();
+  SizeBox *ws = new SizeBox, *hs = new SizeBox;
+  QToolButton *swap = new QToolButton, *portrait = new QToolButton,
+              *landscape = new QToolButton;
+  QLabel *preview = new QLabel, *info = new QLabel;
+  QDialogButtonBox *btns =
+    new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+};
+
+Fields makeFields()
+{
+  Fields f;
+  for (auto *s : {f.ws, f.hs})
+  {
+    s->setRange(1, 16384);
+    s->setSuffix(" px");
+  } // cap #383
+  f.swap->setText("⇄");
+  f.portrait->setText("Portrait");
+  f.portrait->setCheckable(true);
+  f.landscape->setText("Landscape");
+  f.landscape->setCheckable(true);
+  f.preview->setFixedSize(160, 140);
+  f.preview->setAlignment(Qt::AlignCenter);
+  return f;
+}
+
+void layOut(QDialog &dlg, const Fields &f)
+{
+  auto *form = new QGridLayout;
+  form->addWidget(new QLabel("Width"), 0, 0);
+  form->addWidget(f.ws, 0, 1);
+  form->addWidget(new QLabel("Height"), 1, 0);
+  form->addWidget(f.hs, 1, 1);
+  form->addWidget(f.swap, 1, 2);
+  auto *orient = new QHBoxLayout;
+  orient->addWidget(f.portrait);
+  orient->addWidget(f.landscape);
+  form->addWidget(new QLabel("Orientation"), 2, 0);
+  form->addLayout(orient, 2, 1, 1, 2);
+  form->addWidget(f.preview, 3, 0, 1, 3);
+  form->addWidget(f.info, 4, 0, 1, 3);
+  form->setRowStretch(5, 1);
+  auto *body = new QHBoxLayout;
+  body->addWidget(f.list);
+  body->addLayout(form);
+  auto *col = new QVBoxLayout(&dlg);
+  col->addLayout(body);
+  col->addWidget(f.btns);
+}
+
+// Fields changed: OK, row highlight, orientation, preview and memory line follow.
+void sync(const Fields &f)
+{
+  bool good = f.ws->hasAcceptableInput() && f.hs->hasAcceptableInput();
+  f.btns->button(QDialogButtonBox::Ok)->setEnabled(good);
+  QSize sz(f.ws->value(), f.hs->value());
+  {
+    QSignalBlocker b(f.list);
+    f.list->setCurrentRow(-1);
+    for (int i = 0; i < f.list->count(); ++i)
+      if (good && f.list->item(i)->data(Qt::UserRole).toSize() == sz)
+        f.list->setCurrentRow(i);
+  }
+  f.portrait->setChecked(good && sz.width() < sz.height());
+  f.landscape->setChecked(good && sz.width() >= sz.height());
+  QPixmap pm(f.preview->size());
+  pm.fill(QColor(42, 42, 42));
+  if (good)
+  {
+    QPainter p(&pm);
+    QSize r = sz.scaled(140, 120, Qt::KeepAspectRatio).expandedTo({2, 2});
+    p.fillRect(
+      QRect(QPoint(80 - r.width() / 2, 70 - r.height() / 2), r), Qt::white);
+  }
+  f.preview->setPixmap(pm);
+  f.info->setText(
+    good ? QString("%1 × %2 px · Background layer %3 MB")
+             .arg(sz.width())
+             .arg(sz.height())
+             .arg(sz.width() * double(sz.height()) * 4 / 1048576, 0, 'f', 1)
+         : ""); // RGBA8888 (Document::Document, src/document.cpp)
+}
+
+// Swap, Portrait and Landscape flip width and height.
+void wireOrientation(const Fields &f)
+{
+  auto flip = [=]
+  {
+    int w = f.ws->value();
+    f.ws->setValue(f.hs->value());
+    f.hs->setValue(w);
+  };
+  QObject::connect(f.swap, &QToolButton::clicked, flip);
+  QObject::connect(
+    f.portrait, &QToolButton::clicked,
+    [=]
+    {
+      if (f.ws->value() >= f.hs->value())
+        flip();
+      sync(f);
+    });
+  QObject::connect(
+    f.landscape, &QToolButton::clicked,
+    [=]
+    {
+      if (f.ws->value() < f.hs->value())
+        flip();
+      sync(f);
+    });
+}
+
+void wireFields(const Fields &f)
+{
+  for (auto *s : {f.ws, f.hs})
+  { // typing reaches the lineEdit; setValue (a row, swap) only valueChanged
+    QObject::connect(s->edit(), &QLineEdit::textChanged, [=] { sync(f); });
+    QObject::connect(s, &QSpinBox::valueChanged, [=] { sync(f); });
+  }
+  QObject::connect(
+    f.list, &QListWidget::currentRowChanged,
+    [=](int row)
+    {
+      QSize sz = row < 0 ? QSize() : f.list->item(row)->data(Qt::UserRole).toSize();
+      if (sz.isValid())
+      {
+        f.ws->setValue(sz.width());
+        f.hs->setValue(sz.height());
+      }
+    });
+  wireOrientation(f);
+}
+
 } // namespace
 
 std::optional<QSize> askNewSize(QWidget *parent)
 { // take B of #380: preset list, size fields, orientation, preview
   QDialog dlg(parent);
   dlg.setWindowTitle("New");
-  auto *list = presetList();
-  auto *ws = new SizeBox;
-  auto *hs = new SizeBox;
-  for (auto *s : {ws, hs})
-  {
-    s->setRange(1, 16384);
-    s->setSuffix(" px");
-  } // cap #383
-  auto *swap = new QToolButton;
-  swap->setText("⇄");
-  auto *portrait = new QToolButton;
-  portrait->setText("Portrait");
-  portrait->setCheckable(true);
-  auto *landscape = new QToolButton;
-  landscape->setText("Landscape");
-  landscape->setCheckable(true);
-  auto *preview = new QLabel;
-  preview->setFixedSize(160, 140);
-  preview->setAlignment(Qt::AlignCenter);
-  auto *info = new QLabel;
-  auto *btns =
-    new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-  auto *form = new QGridLayout;
-  form->addWidget(new QLabel("Width"), 0, 0);
-  form->addWidget(ws, 0, 1);
-  form->addWidget(new QLabel("Height"), 1, 0);
-  form->addWidget(hs, 1, 1);
-  form->addWidget(swap, 1, 2);
-  auto *orient = new QHBoxLayout;
-  orient->addWidget(portrait);
-  orient->addWidget(landscape);
-  form->addWidget(new QLabel("Orientation"), 2, 0);
-  form->addLayout(orient, 2, 1, 1, 2);
-  form->addWidget(preview, 3, 0, 1, 3);
-  form->addWidget(info, 4, 0, 1, 3);
-  form->setRowStretch(5, 1);
-  auto *body = new QHBoxLayout;
-  body->addWidget(list);
-  body->addLayout(form);
-  auto *col = new QVBoxLayout(&dlg);
-  col->addLayout(body);
-  col->addWidget(btns);
-
-  auto sync = [=] { // fields changed: OK, row highlight, orientation, preview and
-                    // memory line follow
-    bool good = ws->hasAcceptableInput() && hs->hasAcceptableInput();
-    btns->button(QDialogButtonBox::Ok)->setEnabled(good);
-    QSize sz(ws->value(), hs->value());
-    {
-      QSignalBlocker b(list);
-      list->setCurrentRow(-1);
-      for (int i = 0; i < list->count(); ++i)
-        if (good && list->item(i)->data(Qt::UserRole).toSize() == sz)
-          list->setCurrentRow(i);
-    }
-    portrait->setChecked(good && sz.width() < sz.height());
-    landscape->setChecked(good && sz.width() >= sz.height());
-    QPixmap pm(preview->size());
-    pm.fill(QColor(42, 42, 42));
-    if (good)
-    {
-      QPainter p(&pm);
-      QSize r = sz.scaled(140, 120, Qt::KeepAspectRatio).expandedTo({2, 2});
-      p.fillRect(
-        QRect(QPoint(80 - r.width() / 2, 70 - r.height() / 2), r), Qt::white);
-    }
-    preview->setPixmap(pm);
-    info->setText(
-      good ? QString("%1 × %2 px · Background layer %3 MB")
-               .arg(sz.width())
-               .arg(sz.height())
-               .arg(sz.width() * double(sz.height()) * 4 / 1048576, 0, 'f', 1)
-           : ""); // RGBA8888 (Document::Document, src/document.cpp)
-  };
-  for (auto *s : {ws, hs})
-  { // typing reaches the lineEdit; setValue (a row, swap) only valueChanged
-    QObject::connect(s->edit(), &QLineEdit::textChanged, sync);
-    QObject::connect(s, &QSpinBox::valueChanged, sync);
-  }
-  QObject::connect(
-    list, &QListWidget::currentRowChanged,
-    [=](int row)
-    {
-      QSize sz = row < 0 ? QSize() : list->item(row)->data(Qt::UserRole).toSize();
-      if (sz.isValid())
-      {
-        ws->setValue(sz.width());
-        hs->setValue(sz.height());
-      }
-    });
-  auto flip = [=]
-  {
-    int w = ws->value();
-    ws->setValue(hs->value());
-    hs->setValue(w);
-  };
-  QObject::connect(swap, &QToolButton::clicked, flip);
-  QObject::connect(
-    portrait, &QToolButton::clicked,
-    [=]
-    {
-      if (ws->value() >= hs->value())
-        flip();
-      sync();
-    });
-  QObject::connect(
-    landscape, &QToolButton::clicked,
-    [=]
-    {
-      if (ws->value() < hs->value())
-        flip();
-      sync();
-    });
-  QObject::connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-  QObject::connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  Fields f = makeFields();
+  layOut(dlg, f);
+  wireFields(f);
+  QObject::connect(f.btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  QObject::connect(f.btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
   QSize last = QSettings()
                  .value("newSize", QSize(1920, 1080))
                  .toSize(); // the last size OK'd (#385)
-  ws->setValue(last.width());
-  hs->setValue(last.height());
-  sync();
+  f.ws->setValue(last.width());
+  f.hs->setValue(last.height());
+  sync(f);
   if (dlg.exec() != QDialog::Accepted)
     return std::nullopt;
-  QSize sz(ws->value(), hs->value());
+  QSize sz(f.ws->value(), f.hs->value());
   QSettings().setValue("newSize", sz);
   return sz;
 }

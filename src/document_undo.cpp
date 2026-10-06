@@ -40,7 +40,7 @@ void paste(QImage &dst, const QImage &src, QPoint at)
 
 } // namespace
 
-void Document::apply(const Step &s, bool reverse)
+void Document::applyAddDelete(const Step &s, bool reverse)
 {
   auto insert = [&](Layer l)
   {
@@ -53,35 +53,42 @@ void Document::apply(const Step &s, bool reverse)
     if (current_ > s.layer || current_ >= int(layers_.size()))
       current_--;
   };
-  switch (s.kind)
+  if (s.kind == Delete)
   {
-  case Pixels:
-    paste(layers_[s.layer].image, reverse ? s.before : s.after, s.rect.topLeft());
-    break;
-  case Add:
-    if (reverse)
-    {
-      bool onIt = current_ == s.layer;
-      remove();
-      if (onIt)
-        current_ = s.layer - 1; // back to the item below it
-      break;
-    }
-    insert(
-      {true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), s.na});
-    layers_[s.layer].depth = s.to;
-    layers_[s.layer].image.fill(Qt::transparent);
-    if (!s.after.isNull())
-      layers_[s.layer].image = s.after; // a paste into a new layer (#504)
-    layers_[s.layer].vector = s.vector;
-    break;
-  case Delete:
     if (reverse)
       insert(
         {bool(s.b), s.a, s.before, s.na, s.vector, s.paths, bool(s.to & 1),
          bool(s.to & 2), s.to >> 2});
     else
       remove();
+    return;
+  }
+  if (reverse)
+  {
+    bool onIt = current_ == s.layer;
+    remove();
+    if (onIt)
+      current_ = s.layer - 1; // back to the item below it
+    return;
+  }
+  insert({true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), s.na});
+  layers_[s.layer].depth = s.to;
+  layers_[s.layer].image.fill(Qt::transparent);
+  if (!s.after.isNull())
+    layers_[s.layer].image = s.after; // a paste into a new layer (#504)
+  layers_[s.layer].vector = s.vector;
+}
+
+void Document::apply(const Step &s, bool reverse)
+{
+  switch (s.kind)
+  {
+  case Pixels:
+    paste(layers_[s.layer].image, reverse ? s.before : s.after, s.rect.topLeft());
+    break;
+  case Add:
+  case Delete:
+    applyAddDelete(s, reverse);
     break;
   case Move:
     reverse ? applyMove(s.to, s.layer) : applyMove(s.layer, s.to);

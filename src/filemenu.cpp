@@ -119,17 +119,44 @@ void closeTab(Shell &sh, int i)
   sh.updateTitle();
 }
 
+// The active slot of tabs[] is empty: its Session is the Canvas's.
+Session &session(Shell &sh, int i)
+{
+  return i == sh.active ? sh.canvas->session() : sh.tabs[i];
+}
+
+// One checked row per dirty tab: its name and where it saves.
+QListWidget *dirtyList(Shell &sh, const std::vector<int> &dirty)
+{
+  auto *list = new QListWidget;
+  for (int i : dirty)
+  {
+    QString path = session(sh, i).path;
+    auto *it = new QListWidgetItem(
+      sh.tabBar->tabText(i).chopped(1) + "\n" +
+        (path.isEmpty() ? "never saved: will ask where to save" : path),
+      list);
+    it->setCheckState(Qt::Checked);
+  }
+  return list;
+}
+
+std::vector<int> checkedTabs(QListWidget *list, const std::vector<int> &dirty)
+{
+  std::vector<int> c;
+  for (int r = 0; r < list->count(); ++r)
+    if (list->item(r)->checkState() == Qt::Checked)
+      c.push_back(dirty[r]);
+  return c;
+}
+
 // Dirty tabs are listed as a checklist, all checked: the default button saves the
 // checked and discards the rest (#324)
 bool canClose(Shell &sh)
 {
-  auto session = [&sh](int i) -> Session &
-  {
-    return i == sh.active ? sh.canvas->session() : sh.tabs[i];
-  }; // the active slot of tabs[] is empty
   std::vector<int> dirty;
   for (int i = 0; i < int(sh.tabs.size()); ++i)
-    if (session(i).doc.stepId() != session(i).saved)
+    if (session(sh, i).doc.stepId() != session(sh, i).saved)
       dirty.push_back(i);
   if (dirty.empty())
     return true;
@@ -138,16 +165,7 @@ bool canClose(Shell &sh)
   auto *col = new QVBoxLayout(&dlg);
   col->addWidget(new QLabel("Save changes before quitting?\nUnchecked documents "
                             "are closed without saving."));
-  auto *list = new QListWidget;
-  for (int i : dirty)
-  {
-    QString path = session(i).path;
-    auto *it = new QListWidgetItem(
-      sh.tabBar->tabText(i).chopped(1) + "\n" +
-        (path.isEmpty() ? "never saved: will ask where to save" : path),
-      list);
-    it->setCheckState(Qt::Checked);
-  }
+  auto *list = dirtyList(sh, dirty);
   col->addWidget(list);
   auto *btns = new QDialogButtonBox;
   auto *go = btns->addButton("Save All", QDialogButtonBox::AcceptRole);
@@ -166,19 +184,11 @@ bool canClose(Shell &sh)
       dlg.accept();
     });
   col->addWidget(btns);
-  auto checked = [&]
-  {
-    std::vector<int> c;
-    for (int r = 0; r < list->count(); ++r)
-      if (list->item(r)->checkState() == Qt::Checked)
-        c.push_back(dirty[r]);
-    return c;
-  };
   QObject::connect(
     list, &QListWidget::itemChanged,
     [&]
     {
-      int n = int(checked().size()), m = int(dirty.size()) - n;
+      int n = int(checkedTabs(list, dirty).size()), m = int(dirty.size()) - n;
       go->setText(
         !n  ? "Discard All"
         : m ? QString("Save %1, Discard %2").arg(n).arg(m)
@@ -190,7 +200,7 @@ bool canClose(Shell &sh)
     return false;
   if (discardAll)
     return true;
-  for (int i : checked())
+  for (int i : checkedTabs(list, dirty))
   {
     sh.tabBar->setCurrentIndex(
       i); // the tab being saved is shown, and its Save path dialog asks over it
@@ -221,13 +231,9 @@ void wireTabs(Shell &sh)
     sh.tabBar, &QTabBar::tabCloseRequested, [&sh](int i) { closeTab(sh, i); });
 }
 
-} // namespace
-
-void buildFileMenu(Shell &sh)
+// New, and Open with sh.openPath behind it.
+void addNewOpen(Shell &sh, QMenu *fileMenu)
 {
-  Canvas *canvas = sh.canvas;
-  auto *fileMenu = sh.window.menuBar()->addMenu("&File");
-  wireTabs(sh);
   auto *fileNew = fileMenu->addAction("&New...");
   fileNew->setShortcut(QKeySequence::New);
   QObject::connect(
@@ -237,7 +243,6 @@ void buildFileMenu(Shell &sh)
       if (auto sz = askNewSize(&sh.window))
         openTab(sh, Document(*sz), {});
     });
-
   sh.openPath = [&sh](QString path) { // Open and the command line: a tab per file
     auto doc = readOra(path);
     if (!doc)
@@ -258,21 +263,12 @@ void buildFileMenu(Shell &sh)
       if (!path.isEmpty())
         sh.openPath(path);
     });
-  auto *fileSave = fileMenu->addAction("&Save");
-  sh.docActions.push_back(fileSave);
-  fileSave->setShortcut(QKeySequence::Save);
-  QObject::connect(fileSave, &QAction::triggered, [&sh] { saveActive(sh); });
-  auto *fileSaveAs = fileMenu->addAction("Save &As...");
-  sh.docActions.push_back(fileSaveAs);
-  fileSaveAs->setShortcut(QKeySequence("Ctrl+Shift+S"));
-  QObject::connect(
-    fileSaveAs, &QAction::triggered,
-    [&sh, canvas]
-    {
-      saveTo(
-        sh, QFileDialog::getSaveFileName(
-              &sh.window, "Save As", canvas->session().path, "OpenRaster (*.ora)"));
-    });
+}
+
+// Import Reference Image and Export PNG.
+void addImportExport(Shell &sh, QMenu *fileMenu)
+{
+  Canvas *canvas = sh.canvas;
   auto *fileImportRef = fileMenu->addAction("Import &Reference Image...");
   sh.docActions.push_back(fileImportRef);
   QObject::connect(
@@ -306,6 +302,32 @@ void buildFileMenu(Shell &sh)
       if (!exportPng(canvas->doc(), path))
         QMessageBox::warning(&sh.window, "Export PNG", "Could not write " + path);
     });
+}
+
+} // namespace
+
+void buildFileMenu(Shell &sh)
+{
+  Canvas *canvas = sh.canvas;
+  auto *fileMenu = sh.window.menuBar()->addMenu("&File");
+  wireTabs(sh);
+  addNewOpen(sh, fileMenu);
+  auto *fileSave = fileMenu->addAction("&Save");
+  sh.docActions.push_back(fileSave);
+  fileSave->setShortcut(QKeySequence::Save);
+  QObject::connect(fileSave, &QAction::triggered, [&sh] { saveActive(sh); });
+  auto *fileSaveAs = fileMenu->addAction("Save &As...");
+  sh.docActions.push_back(fileSaveAs);
+  fileSaveAs->setShortcut(QKeySequence("Ctrl+Shift+S"));
+  QObject::connect(
+    fileSaveAs, &QAction::triggered,
+    [&sh, canvas]
+    {
+      saveTo(
+        sh, QFileDialog::getSaveFileName(
+              &sh.window, "Save As", canvas->session().path, "OpenRaster (*.ora)"));
+    });
+  addImportExport(sh, fileMenu);
 
   auto *fileClose = fileMenu->addAction("&Close");
   sh.docActions.push_back(fileClose);

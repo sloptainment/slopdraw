@@ -34,25 +34,61 @@ void Window::closeEvent(QCloseEvent *e)
   QMainWindow::closeEvent(e);
 }
 
-void buildEditMenu(Shell &sh)
+namespace
+{
+
+enum class PasteTo
+{
+  Cancel,
+  Same,
+  New,
+  Reference
+};
+
+// Paste always asks (#509, look: #511); a Vector Layer or group has no Same layer
+// row (#564, #625).
+PasteTo askPasteTo(Canvas *canvas, const QImage &img)
+{
+  Document &d = canvas->doc();
+  bool raster = !d.vector(d.current()) && !d.isGroup(d.current());
+  QMenu menu;
+  auto *head = new QWidgetAction(&menu);
+  auto *box = new QWidget;
+  auto *row = new QHBoxLayout(box);
+  auto *thumb = new QLabel;
+  thumb->setPixmap(QPixmap::fromImage(
+    img.scaled(48, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+  row->addWidget(thumb);
+  row->addWidget(
+    new QLabel(QString("<b>Paste image</b><br>%1 × %2 px")
+                 .arg(img.width())
+                 .arg(img.height())),
+    1);
+  head->setDefaultWidget(box);
+  menu.addAction(head);
+  menu.addSeparator();
+  auto *same =
+    raster
+      ? menu.addAction(QString("&Same layer: into “%1”").arg(d.name(d.current())))
+      : nullptr;
+  auto *fresh = menu.addAction("&New layer");
+  auto *ref = menu.addAction("&Reference image");
+  menu.addAction("Cancel");
+  menu.setActiveAction(raster ? same : fresh); // Enter takes it
+  auto *chosen = menu.exec(canvas->pasteMenuPoint());
+  if (chosen == ref)
+    return PasteTo::Reference;
+  if (chosen && chosen == same)
+    return PasteTo::Same;
+  return chosen && chosen == fresh ? PasteTo::New : PasteTo::Cancel;
+}
+
+// Paste, Paste as Reference Image, and the tool Paste switched away from coming
+// back.
+void addPaste(Shell &sh, QMenu *editMenu)
 {
   Canvas *canvas = sh.canvas;
   QActionGroup *toolGroup = sh.toolGroup;
-  auto *editMenu = sh.window.menuBar()->addMenu("&Edit");
-  QObject::connect(
-    key(sh, editMenu->addAction("&Undo"), {QKeySequence("Ctrl+Z")}),
-    &QAction::triggered, [canvas] { canvas->undo(false); });
-  QObject::connect(
-    key(sh, editMenu->addAction("&Redo"), {QKeySequence("Ctrl+Shift+Z")}),
-    &QAction::triggered, [canvas] { canvas->undo(true); });
-  editMenu->addSeparator();
-  QObject::connect(
-    key(sh, editMenu->addAction("Cu&t"), {QKeySequence("Ctrl+X")}),
-    &QAction::triggered, [canvas] { canvas->copy(true); });
-  QObject::connect(
-    key(sh, editMenu->addAction("&Copy"), {QKeySequence("Ctrl+C")}),
-    &QAction::triggered, [canvas] { canvas->copy(false); });
-  sh.notOnGroup = {editMenu->actions().end()[-2], editMenu->actions().end()[-1]};
   auto pasteReference =
     [canvas,
      toolGroup](const QImage &img) { // as an import is placed (#547, #524): the
@@ -73,45 +109,15 @@ void buildEditMenu(Shell &sh)
       if (img.isNull())
         return; // text or nothing on the clipboard: no paste
       QPointF at = canvas->pastePoint();
-      bool newLayer = true;
-      Document &d = canvas->doc();
-      { // it always asks (#509, look: #511); a Vector Layer or group has no Same
-        // layer row (#564, #625)
-        bool raster = !d.vector(d.current()) && !d.isGroup(d.current());
-        QMenu menu;
-        auto *head = new QWidgetAction(&menu);
-        auto *box = new QWidget;
-        auto *row = new QHBoxLayout(box);
-        auto *thumb = new QLabel;
-        thumb->setPixmap(QPixmap::fromImage(
-          img.scaled(48, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
-        row->addWidget(thumb);
-        row->addWidget(
-          new QLabel(QString("<b>Paste image</b><br>%1 × %2 px")
-                       .arg(img.width())
-                       .arg(img.height())),
-          1);
-        head->setDefaultWidget(box);
-        menu.addAction(head);
-        menu.addSeparator();
-        auto *same =
-          raster ? menu.addAction(
-                     QString("&Same layer: into “%1”").arg(d.name(d.current())))
-                 : nullptr;
-        auto *fresh = menu.addAction("&New layer");
-        auto *ref = menu.addAction("&Reference image");
-        menu.addAction("Cancel");
-        menu.setActiveAction(raster ? same : fresh); // Enter takes it
-        auto *chosen = menu.exec(canvas->pasteMenuPoint());
-        if (chosen == ref)
-          return pasteReference(img);
-        if (!chosen || (chosen != same && chosen != fresh))
-          return; // Cancel, Esc or a click outside
-        newLayer = chosen == fresh;
-      }
+      PasteTo to = askPasteTo(canvas, img);
+      if (to == PasteTo::Reference)
+        return pasteReference(img);
+      if (to == PasteTo::Cancel)
+        return; // Cancel, Esc or a click outside
       *beforePaste = toolGroup->checkedAction();
       toolGroup->actions()[SelectTool]->trigger();
-      canvas->paste(img.convertToFormat(QImage::Format_RGBA8888), at, newLayer);
+      canvas->paste(
+        img.convertToFormat(QImage::Format_RGBA8888), at, to == PasteTo::New);
     });
   QObject::connect(
     key(
@@ -130,6 +136,29 @@ void buildEditMenu(Shell &sh)
       (*beforePaste)->trigger();
     *beforePaste = nullptr;
   };
+}
+
+} // namespace
+
+void buildEditMenu(Shell &sh)
+{
+  Canvas *canvas = sh.canvas;
+  auto *editMenu = sh.window.menuBar()->addMenu("&Edit");
+  QObject::connect(
+    key(sh, editMenu->addAction("&Undo"), {QKeySequence("Ctrl+Z")}),
+    &QAction::triggered, [canvas] { canvas->undo(false); });
+  QObject::connect(
+    key(sh, editMenu->addAction("&Redo"), {QKeySequence("Ctrl+Shift+Z")}),
+    &QAction::triggered, [canvas] { canvas->undo(true); });
+  editMenu->addSeparator();
+  QObject::connect(
+    key(sh, editMenu->addAction("Cu&t"), {QKeySequence("Ctrl+X")}),
+    &QAction::triggered, [canvas] { canvas->copy(true); });
+  QObject::connect(
+    key(sh, editMenu->addAction("&Copy"), {QKeySequence("Ctrl+C")}),
+    &QAction::triggered, [canvas] { canvas->copy(false); });
+  sh.notOnGroup = {editMenu->actions().end()[-2], editMenu->actions().end()[-1]};
+  addPaste(sh, editMenu);
   sh.docActions.push_back(editMenu->menuAction());
 }
 

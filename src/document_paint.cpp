@@ -70,25 +70,12 @@ expandCover(std::vector<float> cover, int w, int h, int expand)
   return cover;
 }
 
-bool Document::bucketFill(
-  const QPoint &at,
-  const QColor &color,
-  int threshold,
-  int expand,
-  bool antialiased,
-  bool sampleMerged,
-  bool eraser)
+// The region flooded 4-neighbour from at over pixels within threshold of its
+// colour (largest channel difference), as per-pixel coverage: 0 outside, 1 inside,
+// or with antialiased a ramp down towards threshold (#605).
+static std::vector<float>
+floodCover(const QImage &src, QPoint at, int threshold, bool antialiased)
 {
-  Layer &l = layers_[current_];
-  if (l.vector || l.group || !l.image.rect().contains(at))
-    return false;
-  seal();
-  history_.resize(applied_); // a new edit discards the redo branch
-  strokeStart_ = l.image;
-  const QImage src =
-    (sampleMerged ? render() : l.image)
-      .convertToFormat(
-        QImage::Format_ARGB32); // render() skips hidden layers and references
   const QRgb target = src.pixel(at);
   auto diff = [&](int x, int y)
   {
@@ -98,7 +85,7 @@ bool Document::bucketFill(
        std::abs(qBlue(c) - qBlue(target)), std::abs(qAlpha(c) - qAlpha(target))});
   };
   const int w = src.width(), h = src.height();
-  auto at_ = [&](int x, int y) { return size_t(y) * w + x; };
+  auto at_ = [w](int x, int y) { return size_t(y) * w + x; };
   std::vector<float> cover(size_t(w) * h); // 0 outside the region
   std::vector<bool> seen(cover.size());
   auto visit = [&](QPoint q)
@@ -125,7 +112,32 @@ bool Document::bucketFill(
         todo.push_back(q);
       }
   }
-  cover = expandCover(std::move(cover), w, h, expand);
+  return cover;
+}
+
+bool Document::bucketFill(
+  const QPoint &at,
+  const QColor &color,
+  int threshold,
+  int expand,
+  bool antialiased,
+  bool sampleMerged,
+  bool eraser)
+{
+  Layer &l = layers_[current_];
+  if (l.vector || l.group || !l.image.rect().contains(at))
+    return false;
+  seal();
+  history_.resize(applied_); // a new edit discards the redo branch
+  strokeStart_ = l.image;
+  const QImage src =
+    (sampleMerged ? render() : l.image)
+      .convertToFormat(
+        QImage::Format_ARGB32); // render() skips hidden layers and references
+  const int w = src.width(), h = src.height();
+  auto at_ = [&](int x, int y) { return size_t(y) * w + x; };
+  std::vector<float> cover =
+    expandCover(floodCover(src, at, threshold, antialiased), w, h, expand);
   QImage mask(src.size(), QImage::Format_ARGB32_Premultiplied);
   mask.fill(Qt::transparent);
   QColor paint = eraser ? QColor(255, 255, 255, color.alpha()) : color;

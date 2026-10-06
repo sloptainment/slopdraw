@@ -19,6 +19,39 @@ struct ToolMemory
   bool inGroup = false;
 };
 
+// Only the tools that fit the current layer's kind are enabled, so their keys do
+// nothing on the other kind (#170); a switch that disables the tool picks the
+// last one used on the new kind.
+void kindChanged(Shell &sh, ToolMemory &memory)
+{
+  Canvas *canvas = sh.canvas;
+  QActionGroup *toolGroup = sh.toolGroup;
+  bool has = canvas->hasDoc(), vec = canvas->doc().vector(canvas->doc().current()),
+       grp = has && canvas->doc().isGroup(canvas->doc().current());
+  canvas->setEnabled(has); // a disabled widget gets no pointer or key events
+  for (auto *w :
+       {sh.colorDock->widget(), sh.layerDock->widget(), sh.optionsDock->widget(),
+        sh.navDock->widget()})
+    w->setEnabled(has);
+  for (auto *a : sh.docActions)
+    a->setEnabled(has);
+  for (auto *a : sh.notOnGroup)
+    a->setEnabled(has && !grp);
+  auto tools = toolGroup->actions();
+  for (int i = 0; i < 8; i++)
+    tools[i]->setEnabled(has && toolFitsKind(vec, i, grp));
+  sh.brushDock->widget()->setEnabled(has && !vec);
+  int now = toolForLayer(
+    vec, tools.indexOf(toolGroup->checkedAction()), memory.lastTool[0],
+    memory.lastTool[1], grp);
+  if (memory.inGroup && !grp)
+    now =
+      memory.lastTool[vec]; // leaving a group restores the kind's last tool (#161)
+  memory.inGroup = grp;
+  if (!tools[now]->isChecked())
+    tools[now]->trigger();
+}
+
 } // namespace
 
 void buildToolsDock(Shell &sh)
@@ -64,38 +97,7 @@ void buildToolsDock(Shell &sh)
     toolCol->addWidget(b);
   }
   toolCol->addStretch();
-  // Only the tools that fit the current layer's kind are enabled, so their keys do
-  // nothing on the other kind (#170); a switch that disables the tool picks the
-  // last one used on the new kind.
-  sh.kindChanged = [&sh, canvas, toolGroup, memory]
-  {
-    bool has = canvas->hasDoc(),
-         vec = canvas->doc().vector(canvas->doc().current()),
-         grp = has && canvas->doc().isGroup(canvas->doc().current());
-    canvas->setEnabled(has); // a disabled widget gets no pointer or key events
-    for (auto *w :
-         {sh.colorDock->widget(), sh.layerDock->widget(), sh.optionsDock->widget(),
-          sh.navDock->widget()})
-      w->setEnabled(has);
-    for (auto *a : sh.docActions)
-      a->setEnabled(has);
-    for (auto *a : sh.notOnGroup)
-      a->setEnabled(has && !grp);
-    auto tools = toolGroup->actions();
-    for (int i = 0; i < 8; i++)
-      tools[i]->setEnabled(has && toolFitsKind(vec, i, grp));
-    sh.brushDock->widget()->setEnabled(has && !vec);
-    int now = toolForLayer(
-      vec, tools.indexOf(toolGroup->checkedAction()), memory->lastTool[0],
-      memory->lastTool[1], grp);
-    if (memory->inGroup && !grp)
-      now =
-        memory
-          ->lastTool[vec]; // leaving a group restores the kind's last tool (#161)
-    memory->inGroup = grp;
-    if (!tools[now]->isChecked())
-      tools[now]->trigger();
-  };
+  sh.kindChanged = [&sh, memory] { kindChanged(sh, *memory); };
   sh.kindChanged();
   sh.toolDock = new QDockWidget("Tools", &sh.window);
   sh.toolDock->setWidget(toolPanel);

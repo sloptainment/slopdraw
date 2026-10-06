@@ -100,6 +100,11 @@ void Canvas::selectPress(QPointF pos, Qt::KeyboardModifiers mods)
   }
   if (n < 0)
     return selectAt(pos);
+  nodePress(pos, n, mods);
+}
+
+void Canvas::nodePress(QPointF pos, int n, Qt::KeyboardModifiers mods)
+{
   if (mods & Qt::ShiftModifier)
   {
     if (!nodeSel_.erase(n))

@@ -115,14 +115,9 @@ QToolButton *flagButton(Canvas *canvas, const Document &d, int i, bool lock)
   return fb;
 }
 
-// One Layers dock row: colour bars, eye, kind icon, thumbnail, name (#169); a group
-// row ends in its arrow (#457).
-QWidget *layerRow(Canvas *canvas, const Document &d, int i)
+// A row's colour bars: one per enclosing group, then its own if it is a group.
+void addGroupBars(QHBoxLayout *h, const Document &d, int i)
 {
-  const bool group = d.isGroup(i);
-  auto *row = new QWidget;
-  auto *h = new QHBoxLayout(row);
-  h->setContentsMargins(2, 2, 2, 2);
   static const char *const hues[] = {"#d9534f", "#5aa0ff", "#7fd27f", "#c58af9"};
   std::vector<int> bars; // the enclosing groups, outermost first, then the row's
                          // own if it is a group
@@ -132,7 +127,7 @@ QWidget *layerRow(Canvas *canvas, const Document &d, int i)
       bars.insert(bars.begin(), j);
       depth = d.depth(j);
     }
-  if (group)
+  if (d.isGroup(i))
     bars.push_back(i);
   for (int g : bars)
   {
@@ -141,6 +136,11 @@ QWidget *layerRow(Canvas *canvas, const Document &d, int i)
     bar->setStyleSheet(QString("background: %1;").arg(hues[g % 4]));
     h->addWidget(bar);
   }
+}
+
+// A row's visibility toggle.
+QToolButton *eyeButton(Canvas *canvas, const Document &d, int i)
+{
   auto *eye = new QToolButton;
   eye->setAutoRaise(true);
   eye->setCheckable(true);
@@ -154,6 +154,18 @@ QWidget *layerRow(Canvas *canvas, const Document &d, int i)
       canvas->doc().setVisible(i, on);
       canvas->update();
     });
+  return eye;
+}
+
+// One Layers dock row: colour bars, eye, kind icon, thumbnail, name (#169); a group
+// row ends in its arrow (#457).
+QWidget *layerRow(Canvas *canvas, const Document &d, int i)
+{
+  const bool group = d.isGroup(i);
+  auto *row = new QWidget;
+  auto *h = new QHBoxLayout(row);
+  h->setContentsMargins(2, 2, 2, 2);
+  addGroupBars(h, d, i);
   auto *thumb = new QLabel;
   QPixmap tp(40, 30);
   tp.fill(QColor(200, 200, 200)); // so a transparent layer's thumbnail still shows
@@ -161,7 +173,7 @@ QWidget *layerRow(Canvas *canvas, const Document &d, int i)
   tpp.setRenderHint(QPainter::SmoothPixmapTransform);
   tpp.drawImage(tp.rect(), group ? d.groupImage(i) : d.image(i));
   thumb->setPixmap(tp);
-  h->addWidget(eye);
+  h->addWidget(eyeButton(canvas, d, i));
   h->addWidget(new QLabel(
     group         ? (d.collapsed(i) ? "📁" : "📂")
     : d.vector(i) ? "✒"
@@ -242,6 +254,43 @@ void refreshLayers(Shell &sh, QSlider *layerOpacity, QLabel *layerOpacityValue)
     sh.updateTitle();
 }
 
+// Ctrl toggles a row, Shift selects from the current row; the clicked row is
+// current.
+void clickRow(Shell &sh, int i, Qt::KeyboardModifiers m)
+{
+  Canvas *canvas = sh.canvas;
+  LayerList *layerList = sh.layerList;
+  Document &d = canvas->doc();
+  auto &sel = layerList->sel;
+  if (!(m & (Qt::ControlModifier | Qt::ShiftModifier)))
+    sel.clear();
+  else if (m & Qt::ShiftModifier)
+  {
+    int a = -1, b = -1;
+    for (int r = 0; r < layerList->count(); r++)
+    {
+      int k = layerList->item(r)->data(Qt::UserRole).toInt();
+      if (k == d.current())
+        a = r;
+      if (k == i)
+        b = r;
+    }
+    sel.clear();
+    for (int r = std::min(a < 0 ? b : a, b); r <= std::max(a, b); r++)
+      sel.insert(layerList->item(r)->data(Qt::UserRole).toInt());
+  }
+  else
+  {
+    if (sel.empty())
+      sel.insert(d.current());
+    if (!sel.erase(i))
+      sel.insert(i);
+  }
+  d.setCurrent(i);
+  layerList->selStep = d.stepId();
+  sh.refresh();
+}
+
 // A row dropped, clicked or made current (#459, #475).
 void wireLayerList(Shell &sh)
 {
@@ -273,41 +322,8 @@ void wireLayerList(Shell &sh)
       if (moved)
         QTimer::singleShot(0, [canvas] { canvas->onLayersChange(); });
     };
-  layerList->onClick =
-    [canvas, layerList, &sh](
-      int i,
-      Qt::KeyboardModifiers m) { // Ctrl toggles a row, Shift selects from the
-                                 // current row; the clicked row is current
-      Document &d = canvas->doc();
-      auto &sel = layerList->sel;
-      if (!(m & (Qt::ControlModifier | Qt::ShiftModifier)))
-        sel.clear();
-      else if (m & Qt::ShiftModifier)
-      {
-        int a = -1, b = -1;
-        for (int r = 0; r < layerList->count(); r++)
-        {
-          int k = layerList->item(r)->data(Qt::UserRole).toInt();
-          if (k == d.current())
-            a = r;
-          if (k == i)
-            b = r;
-        }
-        sel.clear();
-        for (int r = std::min(a < 0 ? b : a, b); r <= std::max(a, b); r++)
-          sel.insert(layerList->item(r)->data(Qt::UserRole).toInt());
-      }
-      else
-      {
-        if (sel.empty())
-          sel.insert(d.current());
-        if (!sel.erase(i))
-          sel.insert(i);
-      }
-      d.setCurrent(i);
-      layerList->selStep = d.stepId();
-      sh.refresh();
-    };
+  layerList->onClick = [&sh](int i, Qt::KeyboardModifiers m)
+  { clickRow(sh, i, m); };
   QObject::connect(
     layerList, &QListWidget::currentRowChanged,
     [canvas, layerList, &sh](int row)

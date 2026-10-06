@@ -429,6 +429,8 @@ private:
     const std::vector<int> &layers, const std::function<bool(Layer &)> &change);
   // Applies s (undo: reverse = true) to layers_.
   void apply(const Step &s, bool reverse);
+  // apply's Add and Delete: a layer comes or goes.
+  void applyAddDelete(const Step &s, bool reverse);
   void applyMove(int from, int to);
   // Turns the stroke in progress (if any) into a Step of history_, and drops the
   // oldest past the budget.

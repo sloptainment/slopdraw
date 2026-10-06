@@ -304,35 +304,21 @@ readReferences(const std::function<QByteArray(const QString &)> &entry)
   return refs;
 }
 
-std::optional<Document> readOra(const QString &path)
+// One stack.xml item: a layer or a group.
+struct OraItem
 {
-  QFile f(path);
-  if (!f.open(QIODevice::ReadOnly))
-    return std::nullopt;
-  QByteArray zip = f.readAll();
-  mz_zip_archive z{};
-  if (!mz_zip_reader_init_mem(&z, zip.constData(), size_t(zip.size()), 0))
-    return std::nullopt;
-  auto entry = [&](const QString &name)
-  {
-    size_t n = 0;
-    void *p =
-      mz_zip_reader_extract_file_to_heap(&z, name.toUtf8().constData(), &n, 0);
-    QByteArray out(static_cast<const char *>(p), qsizetype(n));
-    mz_free(p);
-    return out;
-  };
-  struct L
-  {
-    QString name, src, svg;
-    bool visible;
-    double opacity;
-    bool alphaLock, inheritAlpha, group;
-    int depth;
-  };
-  std::vector<L> layers; // top first, as in stack.xml
-  QSize size;
-  QXmlStreamReader r(entry("stack.xml"));
+  QString name, src, svg;
+  bool visible;
+  double opacity;
+  bool alphaLock, inheritAlpha, group;
+  int depth;
+};
+
+// Parses stack.xml into layers (top first) and the image size; false on bad XML.
+static bool
+readStack(const QByteArray &xml, std::vector<OraItem> &layers, QSize &size)
+{
+  QXmlStreamReader r(xml);
   int nest = 0; // <stack>s open: the root is 1, so an item's depth is nest - 1
   while (!r.atEnd())
   {
@@ -364,13 +350,37 @@ std::optional<Document> readOra(const QString &path)
          a.value(kNs, "alpha-lock") == u"true",
          a.value(kNs, "inherit-alpha") == u"true", false, nest - 1});
   }
+  return !r.hasError();
+}
+
+std::optional<Document> readOra(const QString &path)
+{
+  QFile f(path);
+  if (!f.open(QIODevice::ReadOnly))
+    return std::nullopt;
+  QByteArray zip = f.readAll();
+  mz_zip_archive z{};
+  if (!mz_zip_reader_init_mem(&z, zip.constData(), size_t(zip.size()), 0))
+    return std::nullopt;
+  auto entry = [&](const QString &name)
+  {
+    size_t n = 0;
+    void *p =
+      mz_zip_reader_extract_file_to_heap(&z, name.toUtf8().constData(), &n, 0);
+    QByteArray out(static_cast<const char *>(p), qsizetype(n));
+    mz_free(p);
+    return out;
+  };
+  std::vector<OraItem> layers; // top first, as in stack.xml
+  QSize size;
+  bool parsed = readStack(entry("stack.xml"), layers, size);
   std::optional<Document> doc;
-  if (!r.hasError() && !layers.empty() && !size.isEmpty())
+  if (parsed && !layers.empty() && !size.isEmpty())
   {
     doc.emplace(size);
     for (int i = 0; i < int(layers.size()); i++)
     {
-      const L &l = layers[layers.size() - 1 - i];
+      const OraItem &l = layers[layers.size() - 1 - i];
       QImage img;
       if (
         (i == 0 && (l.group || l.depth)) ||
