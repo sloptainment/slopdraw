@@ -53,7 +53,7 @@ public:
     // sampleMerged matches against the visible composite instead of the layer (#605, #606).
     // Returns false, changing nothing, for a Vector Layer, a group or a point outside the document. One undo step.
     bool bucketFill(const QPoint& at, const QColor& color, int threshold, int expand = 0, bool antialiased = true, bool sampleMerged = true, bool eraser = false);
-    // Clears a rectangle of the current Raster Layer: transparent, white on the background (layer 0). One undo step.
+    // Clears a rectangle of the current Raster Layer to transparent, the background (layer 0) included. One undo step.
     // Returns false, changing nothing, for a Vector Layer.
     bool clearRect(const QRect& rect);
     // Select on a raster selection (#205). floatRect lifts rect's pixels from the current Raster Layer, clears rect, and draws the lifted pixels through m

@@ -1457,7 +1457,7 @@ static bool boxPicksThePathsItTouches() {
     return two && deleted;
 }
 
-// clearRect clears a rectangle of the current Raster Layer: transparent on an added layer, white on the background, outside pixels
+// clearRect clears a rectangle of the current Raster Layer: transparent on every layer including the background, outside pixels
 // untouched; one undo restores the exact pixels, redo clears again; a Vector Layer is refused and pushes no step.
 static bool clearingARectangleUndoesOnce() {
     Document doc(QSize(64, 64));
@@ -1472,7 +1472,7 @@ static bool clearingARectangleUndoesOnce() {
     bool redone = doc.redo() && doc.image(1) == after;
     doc.setCurrent(0);
     QImage bg = doc.image(0);
-    bool white = doc.clearRect(QRect(0, 0, 4, 4)) && doc.image(0).pixelColor(1, 1) == QColor(Qt::white) && doc.image(0).pixelColor(4, 1) == QColor(Qt::red) && doc.undo() && doc.image(0) == bg;
+    bool white = doc.clearRect(QRect(0, 0, 4, 4)) && doc.image(0).pixelColor(1, 1).alpha() == 0 && doc.image(0).pixelColor(4, 1) == QColor(Qt::red) && doc.undo() && doc.image(0) == bg;
     doc.addVectorLayer();
     bool refused = !doc.clearRect(QRect(0, 0, 4, 4)) && doc.undo() && doc.layerCount() == 2;
     return cleared && undone && redone && white && refused;

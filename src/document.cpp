@@ -941,7 +941,7 @@ bool Document::clearRect(const QRect& rect) {
     strokeStart_ = layers_[current_].image;
     QPainter p(&layers_[current_].image);
     p.setCompositionMode(QPainter::CompositionMode_Source);
-    p.fillRect(rect, current_ == 0 ? QColor(Qt::white) : QColor(Qt::transparent));
+    p.fillRect(rect, Qt::transparent);
     p.end();
     seal();  // its own step; a rect that changed nothing pushes none
     return true;

@@ -938,7 +938,7 @@ private:
         boxStart_ = s_.view.toDoc(pos);
         update();
     }
-    // Delete in Box Select: clears the rectangle's pixels on its layer (transparent, white on the background) as one undo step.
+    // Delete in Box Select: clears the rectangle's pixels on its layer to transparent as one undo step.
     void deleteBox() {
         if (box_.isEmpty() || boxLayer_ != s_.doc.current() || !s_.doc.clearRect(box_)) return;
         update();
