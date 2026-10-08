@@ -485,6 +485,33 @@ bool Document::setInheritAlpha(const std::vector<int> &layers, bool on)
     layers, [&](Layer &l) { return std::exchange(l.inheritAlpha, on) != on; });
 }
 
+void Document::previewLayer(
+  int layer, const QString &name, double opacity, bool alphaLock, bool inheritAlpha)
+{
+  Layer &l = layers_[layer];
+  l.name = name;
+  l.opacity = opacity;
+  l.alphaLock = alphaLock && !l.vector;
+  l.inheritAlpha = inheritAlpha;
+}
+
+bool Document::setLayer(
+  int layer, const QString &name, double opacity, bool alphaLock, bool inheritAlpha)
+{
+  return editLayers(
+    {layer},
+    [&](Layer &l)
+    {
+      Layer was = l;
+      l.name = name;
+      l.opacity = opacity;
+      l.alphaLock = alphaLock && !l.vector;
+      l.inheritAlpha = inheritAlpha;
+      return l.name != was.name || l.opacity != was.opacity ||
+             l.alphaLock != was.alphaLock || l.inheritAlpha != was.inheritAlpha;
+    });
+}
+
 bool Document::rasterizeLayers(const std::vector<int> &layers)
 {
   return editLayers(

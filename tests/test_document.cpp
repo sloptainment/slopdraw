@@ -1785,6 +1785,22 @@ static bool alphaLockFlagIsOneUndoStep() {
     return doc.alphaLock(1);
 }
 
+// Properties (#470): previewLayer changes name, opacity and both flags with no undo step; setLayer is one step after restoring the old values, and one undo takes every change back.
+static bool propertiesPreviewThenOneStep() {
+    Document doc(QSize(16, 16));
+    doc.addLayer();
+    int v = doc.addVectorLayer();
+    int id = doc.stepId();
+    doc.previewLayer(1, "Sky", 0.5, true, true);
+    if (doc.stepId() != id || doc.name(1) != "Sky" || doc.opacity(1) != 0.5 || !doc.alphaLock(1) || !doc.inheritAlpha(1)) return false;
+    doc.previewLayer(1, "Layer 1", 1.0, false, false);
+    if (!doc.setLayer(1, "Sky", 0.5, true, true) || doc.stepId() != id + 1) return false;
+    if (!doc.undo() || doc.name(1) == "Sky" || doc.opacity(1) != 1.0 || doc.alphaLock(1) || doc.inheritAlpha(1)) return false;
+    if (!doc.redo() || doc.name(1) != "Sky" || doc.opacity(1) != 0.5 || !doc.alphaLock(1)) return false;
+    doc.setLayer(v, "Ink", 1.0, true, false);
+    return !doc.alphaLock(v) && doc.name(v) == "Ink";
+}
+
 // Alpha Lock (#427): stroke, fill and erase on a locked layer recolor but keep every alpha; Delete still clears.
 static bool alphaLockHoldsAlphaUnderPaint() {
     auto pencil = loadBrush(TEST_PENCIL);
@@ -2437,6 +2453,7 @@ int main() {
     run("referencesDrawFromTheOriginal", referencesDrawFromTheOriginal);
     run("referencesAreOneUndoStepEachAndNeverRendered", referencesAreOneUndoStepEachAndNeverRendered);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);
+    run("propertiesPreviewThenOneStep", propertiesPreviewThenOneStep);
     run("inheritAlphaCutsByWhatIsBelow", inheritAlphaCutsByWhatIsBelow);
     run("inheritAlphaIsScopedToGroups", inheritAlphaIsScopedToGroups);
     run("alphaLockHoldsAlphaUnderPaint", alphaLockHoldsAlphaUnderPaint);

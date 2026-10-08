@@ -1,11 +1,16 @@
 // The Layers dock and the Layer menu.
 #include "shell.h"
 #include <cmath>
+#include <QCheckBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QFrame>
+#include <QFormLayout>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMouseEvent>
@@ -334,6 +339,59 @@ void wireLayerList(Shell &sh)
     });
 }
 
+// Layer > Properties and a row's right-click (#470): edits preview live with no undo
+// step; OK keeps them as one step, Cancel puts the layer back. The Background and
+// groups have none yet.
+void openProperties(Shell &sh, int i)
+{
+  Canvas *canvas = sh.canvas;
+  Document &d = canvas->doc();
+  if (i < 1 || d.isGroup(i))
+    return;
+  const QString name0 = d.name(i);
+  const double opacity0 = d.opacity(i);
+  const bool lock0 = d.alphaLock(i), inherit0 = d.inheritAlpha(i);
+  QDialog dlg(&sh.window);
+  dlg.setWindowTitle("Layer Properties");
+  auto *form = new QFormLayout(&dlg);
+  auto *nameEdit = new QLineEdit(name0);
+  auto *opacity = new QSlider(Qt::Horizontal);
+  opacity->setRange(0, 100);
+  opacity->setValue(std::lround(opacity0 * 100));
+  auto *lock = new QCheckBox("Alpha Lock");
+  lock->setChecked(lock0);
+  lock->setVisible(!d.vector(i));
+  auto *inherit = new QCheckBox("Inherit Alpha");
+  inherit->setChecked(inherit0);
+  auto *buttons =
+    new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  form->addRow("Name", nameEdit);
+  form->addRow("Opacity", opacity);
+  form->addRow(lock);
+  form->addRow(inherit);
+  form->addRow(buttons);
+  auto preview = [&]
+  {
+    d.previewLayer(
+      i, nameEdit->text(), opacity->value() / 100.0, lock->isChecked(),
+      inherit->isChecked());
+    canvas->update();
+  };
+  QObject::connect(nameEdit, &QLineEdit::textChanged, preview);
+  QObject::connect(opacity, &QSlider::valueChanged, preview);
+  QObject::connect(lock, &QCheckBox::toggled, preview);
+  QObject::connect(inherit, &QCheckBox::toggled, preview);
+  QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  const bool ok = dlg.exec() == QDialog::Accepted;
+  const QString name1 = nameEdit->text();
+  d.previewLayer(i, name0, opacity0, lock0, inherit0); // back, then the one step
+  if (ok)
+    d.setLayer(
+      i, name1, opacity->value() / 100.0, lock->isChecked(), inherit->isChecked());
+  sh.refresh();
+}
+
 void wireRowMenus(Shell &sh)
 {
   Canvas *canvas = sh.canvas;
@@ -366,11 +424,15 @@ void wireRowMenus(Shell &sh)
         return;
       int i = it->data(Qt::UserRole).toInt();
       QMenu menu;
-      menu.addAction("Rasterize")->setEnabled(canvas->doc().vector(i));
-      if (
-        menu.exec(layerList->viewport()->mapToGlobal(pos)) &&
-        canvas->doc().rasterizeLayer(i))
+      auto *rasterize = menu.addAction("Rasterize");
+      rasterize->setEnabled(canvas->doc().vector(i));
+      auto *props = menu.addAction("Properties...");
+      props->setEnabled(i > 0 && !canvas->doc().isGroup(i));
+      auto *chosen = menu.exec(layerList->viewport()->mapToGlobal(pos));
+      if (chosen == rasterize && canvas->doc().rasterizeLayer(i))
         sh.refresh();
+      else if (chosen == props)
+        openProperties(sh, i);
     });
 }
 
@@ -453,5 +515,10 @@ void buildLayerMenu(Shell &sh)
       canvas->doc().wrap(layerList->items(canvas->doc().current()));
       sh.refresh();
     });
+  auto *props = layerMenu->addAction("&Properties...");
+  sh.docActions.push_back(props);
+  QObject::connect(
+    props, &QAction::triggered,
+    [&sh, canvas] { openProperties(sh, canvas->doc().current()); });
   sh.docActions.push_back(layerMenu->menuAction());
 }

@@ -331,6 +331,14 @@ public:
   bool setAlphaLock(const std::vector<int> &layers, bool on);
   bool setInheritAlpha(const std::vector<int> &layers, bool on);
   bool rasterizeLayers(const std::vector<int> &layers);
+  // The Properties dialog's fields on a Raster or Vector Layer (#470; a Vector Layer
+  // keeps no Alpha Lock). previewLayer sets them with no undo step, for the live
+  // preview; setLayer is one Tree step from the values the layer holds now, false,
+  // no step, if none differ.
+  void previewLayer(
+    int layer, const QString &name, double opacity, bool alphaLock, bool inheritAlpha);
+  bool setLayer(
+    int layer, const QString &name, double opacity, bool alphaLock, bool inheritAlpha);
   bool deleteLayers(const std::vector<int> &layers);
   bool moveLayer(int from, int to);
   // References, last on top; never layers, never in render(). add and set are one
