@@ -145,6 +145,8 @@ QToolButton *eyeButton(Canvas *canvas, const Document &d, int i)
   eye->setAutoRaise(true);
   eye->setCheckable(true);
   eye->setChecked(d.visible(i));
+  eye->setText("👁");
+  eye->setFixedSize(eye->sizeHint()); // "–" is narrower; keep the row from shifting
   eye->setText(d.visible(i) ? "👁" : "–");
   QObject::connect(
     eye, &QToolButton::toggled,
