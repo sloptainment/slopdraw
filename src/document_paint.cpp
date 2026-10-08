@@ -19,6 +19,16 @@ void Document::stroke(
   paintStroke(
     brush.get(), layers_[current_].image, samples, continuing, eraser,
     layers_[current_].alphaLock);
+  if (!clip_.isNull())
+  {
+    // the pixels outside clip_ go back to how the stroke found them
+    QImage &img = layers_[current_].image;
+    QPainter p(&img);
+    p.setCompositionMode(QPainter::CompositionMode_Source);
+    QRegion out = QRegion(img.rect()) - clip_;
+    for (const QRect &r : out)
+      p.drawImage(r, strokeStart_, r);
+  }
 }
 
 void Document::fill(
@@ -34,6 +44,8 @@ void Document::fill(
   QPainter p(&layers_[current_].image);
   p.setRenderHint(QPainter::Antialiasing);
   p.setPen(Qt::NoPen);
+  if (!clip_.isNull())
+    p.setClipRect(clip_);
   if (layers_[current_].alphaLock)
     p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
   else if (eraser)

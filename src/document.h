@@ -82,6 +82,8 @@ public:
     const std::vector<PenSample> &samples,
     bool continuing = false,
     bool eraser = false);
+  // While rect is not null, stroke and fill change pixels inside it only (#422).
+  void setClip(const QRect &rect) { clip_ = rect; }
   // Fills the closed polygon through points on the current Raster Layer:
   // antialiased, non-zero winding, solid color. eraser = true cuts the shape out of
   // the alpha instead (to white under alpha lock). One call is one undo step.
@@ -468,6 +470,7 @@ private:
   // The current layer as it was when the stroke in progress began; null when none
   // is in progress. Shares pixels with that layer until the first dab detaches it,
   // so starting a stroke copies once.
+  QRect clip_; // null: paint anywhere
   QImage strokeStart_;
   std::vector<Layer> groupStart_; // while a group floats: the items as they were,
                                   // for seal to push as one Tree step

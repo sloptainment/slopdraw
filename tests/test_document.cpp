@@ -2353,6 +2353,37 @@ static bool bucketFillSamplesMerged() {
     return stops && everything && ignored && ref.bucketFill({2, 2}, red, 0, 0, false, true) && ref.colorAt({2, 2}) == red && ref.colorAt({9, 16}) == Qt::black;
 }
 
+// With a clip (Box Select's rectangle, #422) Brush strokes, erase mode and Lasso Fill change pixels inside it only; no clip paints as before; each is one undo step.
+static bool clipLimitsStrokesAndFills() {
+    auto pencil = loadBrush(TEST_PENCIL);
+    if (!pencil) return false;
+    auto row = [] { std::vector<PenSample> s; for (int i = 0; i < 17; i++) s.push_back({2.f + i, 10.f, 1.f, 0, 0, 0.01}); return s; };
+    auto outside = [](Document& d) { for (int y = 0; y < 20; y++) for (int x = 10; x < 20; x++) if (d.image(1).pixelColor(x, y).alpha()) return true; return false; };
+    Document doc(QSize(20, 20));
+    doc.addLayer();
+    doc.setClip(QRect(0, 0, 10, 20));
+    doc.stroke(pencil, row());
+    bool stroked = doc.image(1).pixelColor(5, 10).alpha() > 0 && !outside(doc);
+    doc.fill(Qt::black, {{2, 2}, {18, 2}, {18, 18}, {2, 18}});
+    bool filled = doc.image(1).pixelColor(5, 5).alpha() == 255 && !outside(doc);
+    doc.stroke(pencil, row(), false, true);
+    bool erased = doc.image(1).pixelColor(5, 10).alpha() < 255 && !outside(doc);
+    doc.fill(Qt::black, {{0, 0}, {20, 0}, {20, 20}, {0, 20}}, true);
+    bool filledOut = doc.image(1).pixelColor(5, 5).alpha() == 0;
+    Document free(QSize(20, 20));
+    free.addLayer();
+    free.setClip(QRect(0, 0, 10, 20));
+    free.setClip(QRect());
+    free.stroke(pencil, row());
+    bool unclipped = free.image(1).pixelColor(15, 10).alpha() > 0;
+    Document one(QSize(20, 20));
+    one.addLayer();
+    one.setClip(QRect(0, 0, 10, 20));
+    one.stroke(pencil, row());
+    bool undone = one.undo() && one.image(1).pixelColor(5, 10).alpha() == 0;
+    return stroked && filled && erased && filledOut && unclipped && undone;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -2361,6 +2392,7 @@ int main() {
         failed += !ok;
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
+    run("clipLimitsStrokesAndFills", clipLimitsStrokesAndFills);
     run("bucketFillStopsAtARing", bucketFillStopsAtARing);
     run("bucketFillObeysItsRules", bucketFillObeysItsRules);
     run("bucketFillToolFitsRasterOnly", bucketFillToolFitsRasterOnly);

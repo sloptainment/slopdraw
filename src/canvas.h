@@ -441,6 +441,8 @@ private:
     return hasDoc() && !s_.doc.vector(s_.doc.current()) && !box_.isEmpty() &&
            boxLayer_ == s_.doc.current();
   }
+  // Brush and Lasso Fill paint inside a Box Select rectangle only (#422).
+  void clipToBox() { s_.doc.setClip(rasterBox() ? box_ : QRect()); }
   // Box Select press: starts a drag; endBox makes it the rectangle, or a click
   // outside the old one clears it.
   void boxPress(QPointF pos);

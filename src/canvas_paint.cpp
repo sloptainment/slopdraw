@@ -60,6 +60,7 @@ void Canvas::endLasso()
       lasso_.push_back({m.x, m.y}); // the shape closes at the pen-up point
   QColor c = color_;
   c.setAlphaF(lassoOpacity_);
+  clipToBox();
   if (lasso_.size() > 2)
     s_.doc.fill(c, {lasso_.begin(), lasso_.end()}, lassoErase_);
   lasso_.clear();
@@ -72,6 +73,7 @@ void Canvas::paintAt(
   if (!brush_)
     return;
   QPointF d = s_.view.toDoc(pos);
+  clipToBox();
   if (smooth_.n > 0)
   {
     // Smoothing: each pen event paints the mean; smoothTick repeats raw_ every 10
@@ -119,6 +121,7 @@ void Canvas::endSmooth()
   smoothTimer_->stop();
   if (!finishLine_)
     return;
+  clipToBox();
   auto tail = smooth_.finish();
   if (!tail.empty())
     s_.doc.stroke(brush_, tail, true, smoothErase_);
@@ -127,6 +130,7 @@ void Canvas::endSmooth()
 
 void Canvas::smoothTick()
 {
+  clipToBox();
   raw_.dt = 0.01;
   smooth_.push(raw_);
   s_.doc.stroke(brush_, {smooth_.sample()}, true, smoothErase_);
