@@ -670,6 +670,26 @@ static bool oraRoundTripsAlphaFlags() {
     return !back->undo();
 }
 
+// Inherit Alpha on a nested group saved to .ora reads back on that group alone, and render() matches.
+static bool oraRoundTripsGroupInheritAlpha() {
+    Document doc(QSize(64, 64));
+    for (int i = 0; i < 3; i++) doc.addLayer();
+    doc.setCurrent(1); doc.fill(Qt::red, {{0, 0}, {48, 0}, {48, 64}, {0, 64}});
+    doc.setCurrent(2); doc.fill(Qt::blue, {{0, 0}, {16, 0}, {16, 64}, {0, 64}});
+    QImage r = doc.image(1), b = doc.image(2);
+    doc.restoreLayer(1, r, "L3", true, 1, false, false, 1, false);
+    doc.restoreLayer(2, b, "L2", true, 1, false, false, 1, false);
+    doc.restoreLayer(3, QImage(), "B", true, 1, false, true, 0, true);
+    QTemporaryDir dir;
+    QString path = dir.filePath("t.ora");
+    if (!writeOra(doc, path)) return false;
+    auto back = readOra(path);
+    if (!back || back->layerCount() != doc.layerCount()) return false;
+    for (int i = 0; i < doc.layerCount(); i++)
+        if (back->inheritAlpha(i) != doc.inheritAlpha(i)) return false;
+    return back->inheritAlpha(3) && back->render() == doc.render() && !back->undo();
+}
+
 // A Raster and a Vector Layer (two paths: open with every Spiro Node type and edited knots, closed with a translucent color) saved to .ora
 // and read back hold the same nodes, types, closed flags, colors, widths and knots, and render the same; the layer's SVG is in the zip.
 static bool oraRoundTripsVectorLayer() {
@@ -2473,6 +2493,7 @@ int main() {
     run("cropEdgesMoveWithinThePicture", cropEdgesMoveWithinThePicture);
     run("pickColorsReferencesFirst", pickColorsReferencesFirst);
     run("oraRoundTripsAlphaFlags", oraRoundTripsAlphaFlags);
+    run("oraRoundTripsGroupInheritAlpha", oraRoundTripsGroupInheritAlpha);
     run("oraRoundTripsVectorLayer", oraRoundTripsVectorLayer);
     run("oraRoundTripsPaintMode", oraRoundTripsPaintMode);
     run("oraRoundTripsBezier", oraRoundTripsBezier);

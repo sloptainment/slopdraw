@@ -154,10 +154,10 @@ void stackItems(QXmlStreamWriter &w, const Document &doc, int &i, int d)
         w.writeAttribute(kNs, "svg", QString("data/layer%1.svg").arg(k));
       if (doc.alphaLock(k))
         w.writeAttribute(kNs, "alpha-lock", "true");
-      if (doc.inheritAlpha(k))
-        w.writeAttribute(kNs, "inherit-alpha", "true");
     }
-    else
+    if (doc.inheritAlpha(k))
+      w.writeAttribute(kNs, "inherit-alpha", "true");
+    if (doc.isGroup(k))
       stackItems(w, doc, i, d + 1);
     w.writeEndElement();
   }
@@ -340,7 +340,7 @@ readStack(const QByteArray &xml, std::vector<OraItem> &layers, QSize &size)
          vis,
          op,
          false,
-         false,
+         a.value(kNs, "inherit-alpha") == u"true",
          true,
          nest - 2});
     else if (r.name() == u"layer")
