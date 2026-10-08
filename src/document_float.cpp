@@ -19,14 +19,20 @@ bool Document::clearRect(const QRect &rect)
   return true;
 }
 
-bool Document::resize(QSize size, QPoint offset)
+bool Document::resize(QSize size, QPoint offset, bool scale)
 {
   if (size.width() < 1 || size.height() < 1)
     return false;
+  if (scale)
+    offset = QPoint();
   if (size == layers_[0].image.size() && offset.isNull())
     return false;
   seal();
   auto v = layers_;
+  QSize old = layers_[0].image.size();
+  QTransform m = scale ? QTransform::fromScale(
+                           double(size.width()) / old.width(), double(size.height()) / old.height())
+                       : QTransform::fromTranslate(offset.x(), offset.y());
   for (Layer &l : v)
   {
     if (l.group)
@@ -35,11 +41,16 @@ bool Document::resize(QSize size, QPoint offset)
     img.fill(Qt::transparent);
     QPainter p(&img);
     p.setCompositionMode(QPainter::CompositionMode_Source);
-    p.drawImage(offset, l.image);
+    if (scale)
+      p.setRenderHint(QPainter::SmoothPixmapTransform);
+    if (scale)
+      p.drawImage(QRect(QPoint(), size), l.image);
+    else
+      p.drawImage(offset, l.image);
     p.end();
     l.image = img;
     for (VPath &path : l.paths)
-      path = transformNodes(path, QTransform::fromTranslate(offset.x(), offset.y()));
+      path = transformNodes(path, m, scale);
     if (l.vector)
       rasterize(l);
   }

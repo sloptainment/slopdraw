@@ -111,7 +111,10 @@ public:
   // cropped, Vector Paths move by `offset` with every node kept and Vector Layers
   // are redrawn. One undo step. False, no step, for a size below 1 or the size it
   // already has at offset 0,0 (#650).
-  bool resize(QSize size, QPoint offset);
+  // With scale the picture is instead drawn smoothly to fill `size` (offset ignored)
+  // and Vector Path nodes scale per axis, Width Knots by the root of the area change
+  // (#658).
+  bool resize(QSize size, QPoint offset, bool scale = false);
   // Select on a raster selection (#205). floatRect lifts rect's pixels from the
   // current Raster Layer, clears rect, and draws the lifted pixels through m
   // (smooth): the live drag, no undo step. Every call starts again from the pixels

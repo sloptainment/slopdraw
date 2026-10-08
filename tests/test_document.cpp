@@ -1503,6 +1503,28 @@ static bool resizingMovesPixelsAndPathsInOneStep() {
     return grown && undone && redone && cropped && refused;
 }
 
+// resize(size, offset, true) scales instead: each raster layer is redrawn smoothly to the new size, Vector Path nodes scale per axis and
+// Width Knots by the root of the area change, in one undo step (#658).
+static bool scalingResizeStretchesLayersAndPaths() {
+    Document::VPath v{{}, false, Qt::black, 4, {{0, 2}, {1, 2}}, Document::PathKind::Bezier};
+    v.bezier = {{{1, 1}, {1, 1}, {1, 1}, BezierType::Cusp}, {{3, 2}, {3, 2}, {3, 2}, BezierType::Cusp}};
+    Document doc(QSize(4, 4));
+    doc.fill(Qt::red, {{0, 0}, {4, 0}, {4, 4}, {0, 4}});
+    doc.addVectorLayer();
+    doc.setPaths(1, {v});
+    int id = doc.stepId();
+    bool scaled = doc.resize(QSize(8, 8), QPoint(5, 5), true) && doc.stepId() != id && doc.image(0).size() == QSize(8, 8) && doc.image(1).size() == QSize(8, 8)
+        && doc.image(0).pixelColor(7, 7) == QColor(Qt::red) && doc.image(0).pixelColor(0, 0) == QColor(Qt::red)
+        && doc.paths(1)[0].bezier[0].p == QPointF(2, 2) && std::abs(doc.paths(1)[0].knots[0].width - 4) < 1e-9;
+    bool undone = doc.undo() && doc.image(0).size() == QSize(4, 4) && doc.paths(1)[0].bezier[0].p == QPointF(1, 1) && doc.paths(1)[0].knots[0].width == 2;
+    Document wide(QSize(400, 300));
+    wide.addVectorLayer();
+    v.knots = {{0, 10}, {1, 10}};
+    wide.setPaths(1, {v});
+    bool area = wide.resize(QSize(800, 300), QPoint(), true) && std::abs(wide.paths(1)[0].knots[0].width - 10 * std::sqrt(2.0)) < 1e-9;
+    return scaled && undone && area;
+}
+
 // A Bezier path's skeleton is its node-to-node cubics (#306): a two-node S-curve with knots 4, 10, 4 at t 0, 0.5, 1 paints
 // across 10 px at the middle of the cubic but not 4 px off near its start, ends flat (nothing past an end along the tangent),
 // and pathAt hits it.
@@ -2427,6 +2449,7 @@ int main() {
     run("boxPicksThePathsItTouches", boxPicksThePathsItTouches);
     run("clearingARectangleUndoesOnce", clearingARectangleUndoesOnce);
     run("resizingMovesPixelsAndPathsInOneStep", resizingMovesPixelsAndPathsInOneStep);
+    run("scalingResizeStretchesLayersAndPaths", scalingResizeStretchesLayersAndPaths);
     run("transformBoxBoundsAndMovesPickedPaths", transformBoxBoundsAndMovesPickedPaths);
     run("transformBoxScalesAboutOppositeHandle", transformBoxScalesAboutOppositeHandle);
     run("knotDragIsScaled", knotDragIsScaled);
