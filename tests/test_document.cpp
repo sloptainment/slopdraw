@@ -1905,6 +1905,23 @@ static bool inheritAlphaIsScopedToGroups() {
     return !doc.setAlphaLock(4, true) && !doc.alphaLock(4);  // 4
 }
 
+// #545: Bring to Front / Send to Back reorder the picked references (their relative order kept), changing which draws on top; one undo restores.
+static bool referencesReorderFrontAndBack() {
+    QImage pic(10, 10, QImage::Format_ARGB32_Premultiplied);
+    std::vector<Reference> refs;
+    for (double o : {0.1, 0.2, 0.3})
+        refs.push_back({pic, QTransform(), QRectF(0, 0, 10, 10), o});
+    auto front = reorderReferences(refs, {0, 1}, true), back = reorderReferences(refs, {1, 2}, false);
+    if (front[0].opacity != 0.3 || front[1].opacity != 0.1 || front[2].opacity != 0.2 || back[0].opacity != 0.2 || back[1].opacity != 0.3 || back[2].opacity != 0.1)
+        return false;
+    Document doc(QSize(8, 8));
+    for (auto &r : refs) doc.addReference(r);
+    doc.setReferences(front);
+    if (referenceAt(doc.references(), {5, 5}) != 2 || doc.references()[2].opacity != 0.2) return false;
+    doc.undo();
+    return doc.references()[2].opacity == 0.3;
+}
+
 // #536: references live beside the layers; add and replace are one undo step each, preview none, and render() never sees them.
 static bool referencesAreOneUndoStepEachAndNeverRendered() {
     Document doc(QSize(32, 32));
@@ -2404,6 +2421,7 @@ int main() {
     run("oraRoundTripsGroups", oraRoundTripsGroups);
     run("importedReferenceFitsTheView", importedReferenceFitsTheView);
     run("referencesPickAndMove", referencesPickAndMove);
+    run("referencesReorderFrontAndBack", referencesReorderFrontAndBack);
     run("cropEdgesMoveWithinThePicture", cropEdgesMoveWithinThePicture);
     run("pickColorsReferencesFirst", pickColorsReferencesFirst);
     run("oraRoundTripsAlphaFlags", oraRoundTripsAlphaFlags);

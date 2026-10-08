@@ -31,6 +31,9 @@ referencesBounds(const std::vector<Reference> &refs, const std::set<int> &picks)
 // refs with each picked one's placement followed by m.
 std::vector<Reference> transformReferences(
   std::vector<Reference> refs, const std::set<int> &picks, const QTransform &m);
+// refs with the picked ones moved to the top (front) or bottom, their relative order kept (#545).
+std::vector<Reference> reorderReferences(
+  const std::vector<Reference> &refs, const std::set<int> &picks, bool front);
 // Crop mode (#546), in image pixels: the crop edge or corner (hx, hy each -1, 0 or
 // 1) within tol of p, or none.
 std::optional<QPoint> cropEdgeAt(const QRectF &crop, QPointF p, double tol);

@@ -117,6 +117,17 @@ std::vector<Reference> transformReferences(
   return refs;
 }
 
+std::vector<Reference> reorderReferences(
+  const std::vector<Reference> &refs, const std::set<int> &picks, bool front)
+{
+  std::vector<Reference> picked, rest;
+  for (int i = 0; i < int(refs.size()); ++i)
+    (picks.count(i) ? picked : rest).push_back(refs[i]);
+  auto &first = front ? rest : picked, &second = front ? picked : rest;
+  first.insert(first.end(), second.begin(), second.end());
+  return first;
+}
+
 std::optional<QPoint> cropEdgeAt(const QRectF &crop, QPointF p, double tol)
 {
   bool inX = p.x() > crop.left() - tol &&

@@ -122,7 +122,21 @@ void Canvas::refMenu(QPoint globalPos)
   QMenu menu;
   auto *h = menu.addAction("Flip Horizontal");
   auto *v = menu.addAction("Flip Vertical");
+  menu.addSeparator();
+  auto *fr = menu.addAction("Bring to Front");
+  auto *bk = menu.addAction("Send to Back");
   auto *chosen = menu.exec(globalPos);
+  if (chosen == fr || chosen == bk)
+  {
+    s_.doc.setReferences(
+      reorderReferences(s_.doc.references(), refPicks_, chosen == fr));
+    int n = refPicks_.size(), total = s_.doc.references().size();
+    refPicks_.clear();
+    for (int i = 0; i < n; ++i)
+      refPicks_.insert(chosen == fr ? total - n + i : i);
+    update();
+    return;
+  }
   if (chosen != h && chosen != v)
     return;
   BoxFrame f = frame();
