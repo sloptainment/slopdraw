@@ -46,12 +46,14 @@ enum class PasteTo
   Reference
 };
 
-// Paste always asks (#509, look: #511); a Vector Layer or group has no Same layer
-// row (#564, #625).
+// Paste on a Raster Layer asks (#509, look: #511); a Vector Layer or group has no
+// Same layer to choose, so it goes to a new Raster Layer without asking (#564, #625, #626).
 PasteTo askPasteTo(Canvas *canvas, const QImage &img)
 {
   Document &d = canvas->doc();
   bool raster = !d.vector(d.current()) && !d.isGroup(d.current());
+  if (!raster)
+    return PasteTo::New; // no Same layer to choose: a new Raster Layer, no menu (#626)
   QMenu menu;
   auto *head = new QWidgetAction(&menu);
   auto *box = new QWidget;
