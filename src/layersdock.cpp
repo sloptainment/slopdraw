@@ -158,7 +158,7 @@ QToolButton *eyeButton(Canvas *canvas, const Document &d, int i)
 }
 
 // One Layers dock row: colour bars, eye, kind icon, thumbnail, name (#169); a group
-// row ends in its arrow (#457).
+// row's arrow takes the kind icon's place (#457).
 QWidget *layerRow(Canvas *canvas, const Document &d, int i)
 {
   const bool group = d.isGroup(i);
@@ -174,15 +174,6 @@ QWidget *layerRow(Canvas *canvas, const Document &d, int i)
   tpp.drawImage(tp.rect(), group ? d.groupImage(i) : d.image(i));
   thumb->setPixmap(tp);
   h->addWidget(eyeButton(canvas, d, i));
-  h->addWidget(new QLabel(
-    group         ? (d.collapsed(i) ? "📁" : "📂")
-    : d.vector(i) ? "✒"
-                  : "🖌"));
-  h->addWidget(thumb);
-  auto *name = new QLabel(d.name(i));
-  if (group)
-    name->setStyleSheet("font-weight: bold;");
-  h->addWidget(name, 1);
   if (group)
   {
     auto *arrow = new QToolButton;
@@ -197,6 +188,13 @@ QWidget *layerRow(Canvas *canvas, const Document &d, int i)
       });
     h->addWidget(arrow);
   }
+  else
+    h->addWidget(new QLabel(d.vector(i) ? "✒" : "🖌"));
+  h->addWidget(thumb);
+  auto *name = new QLabel(d.name(i));
+  if (group)
+    name->setStyleSheet("font-weight: bold;");
+  h->addWidget(name, 1);
   // flag icons at the right end (#468): Alpha Lock (Raster Layer rows; Vector rows
   // keep a blank slot) and Inherit Alpha, grey outline off, white on a blue tile on
   for (bool lock : {true, false})
