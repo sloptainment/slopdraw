@@ -165,7 +165,8 @@ void buildEditMenu(Shell &sh)
     editMenu->addAction("Re&size..."), &QAction::triggered,
     [&sh, canvas]
     {
-      auto r = askNewSize(&sh.window, true, canvas->doc().image(0).size());
+      auto r = askNewSize(
+        &sh.window, true, canvas->doc().image(0).size(), canvas->doc().render());
       if (r)
         canvas->resize(r->size, r->offset);
     });

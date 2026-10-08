@@ -1,5 +1,6 @@
 #pragma once
 #include <optional>
+#include <QImage>
 #include <QPoint>
 #include <QSize>
 
@@ -15,5 +16,7 @@ struct NewSize
 // preview. The size OK'd, remembered for next time (#385); none if cancelled.
 // forEdit is Edit > Resize's mode (#390): titled "Resize", opens on `current` with
 // offset 0,0 (not on the remembered size), adds the Offset row (#651), and never
-// reads or writes the remembered size.
-std::optional<NewSize> askNewSize(QWidget *parent, bool forEdit, QSize current = {});
+// reads or writes the remembered size. `picture` is the document (#416): the preview
+// shows it and dragging it sets the offset.
+std::optional<NewSize> askNewSize(
+  QWidget *parent, bool forEdit, QSize current = {}, const QImage &picture = {});

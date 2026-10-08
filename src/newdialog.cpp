@@ -1,13 +1,17 @@
 #include "newdialog.h"
 #include <algorithm>
+#include <functional>
+#include <memory>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QSettings>
@@ -78,6 +82,35 @@ QListWidget *presetList()
   return list;
 }
 
+// The preview box; forEdit drags the picture (#416): press, then the pointer's
+// distance from the press.
+struct Preview : QLabel
+{
+  QPoint start;
+  std::function<void()> pressed;
+  std::function<void(QPoint)> dragged;
+  void mousePressEvent(QMouseEvent *e) override
+  {
+    start = e->pos();
+    if (pressed)
+      pressed();
+  }
+  void mouseMoveEvent(QMouseEvent *e) override
+  {
+    if (dragged)
+      dragged(e->pos() - start);
+  }
+};
+
+// Preview pixels per document pixel: the canvas and the picture together fit the
+// box, whatever the offset, so a drag never rescales.
+double previewScale(QSize sz, QSize old)
+{
+  return std::min(
+    140.0 / std::max(sz.width(), old.width()),
+    120.0 / std::max(sz.height(), old.height()));
+}
+
 // The dialog's widgets, made by makeFields and laid out by layOut.
 struct Fields
 {
@@ -85,11 +118,14 @@ struct Fields
   SizeBox *ws = new SizeBox, *hs = new SizeBox;
   QToolButton *swap = new QToolButton, *portrait = new QToolButton,
               *landscape = new QToolButton;
-  QLabel *preview = new QLabel, *info = new QLabel;
+  Preview *preview = new Preview;
+  QLabel *info = new QLabel;
   QDialogButtonBox *btns =
     new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
   QSpinBox *ox = nullptr, *oy = nullptr; // forEdit only: the Offset row
   QPushButton *center = nullptr;
+  QImage pic; // forEdit only: the document's pixels, and its size
+  QSize old;
 };
 
 Fields makeFields(bool forEdit)
@@ -169,7 +205,27 @@ void sync(const Fields &f)
   f.landscape->setChecked(good && sz.width() >= sz.height());
   QPixmap pm(f.preview->size());
   pm.fill(QColor(42, 42, 42));
-  if (good)
+  if (good && f.ox)
+  { // the picture dimmed where it will be cropped, the new canvas outlined
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    double k = previewScale(sz, f.old);
+    QPointF u(
+      80 - std::max(sz.width(), f.old.width()) * k / 2,
+      70 - std::max(sz.height(), f.old.height()) * k / 2);
+    QPointF c = u + QPointF(std::max(0, -f.ox->value()), std::max(0, -f.oy->value())) * k;
+    QRectF canvas(c, QSizeF(sz) * k),
+      picture(c + QPointF(f.ox->value(), f.oy->value()) * k, QSizeF(f.old) * k);
+    p.setOpacity(0.3);
+    p.drawImage(picture, f.pic);
+    p.setOpacity(1);
+    p.setClipRect(canvas);
+    p.drawImage(picture, f.pic);
+    p.setClipping(false);
+    p.setPen(Qt::white);
+    p.drawRect(canvas.adjusted(0.5, 0.5, -0.5, -0.5));
+  }
+  else if (good)
   {
     QPainter p(&pm);
     QSize r = sz.scaled(140, 120, Qt::KeepAspectRatio).expandedTo({2, 2});
@@ -246,6 +302,17 @@ void wireOffset(const Fields &f, QSize old)
   };
   for (auto *s : {f.ws, f.hs})
     QObject::connect(s, &QSpinBox::valueChanged, clamp);
+  for (auto *s : {f.ox, f.oy})
+    QObject::connect(s, &QSpinBox::valueChanged, [=] { sync(f); });
+  auto base = std::make_shared<QPoint>(); // the offset at the press (#416)
+  f.preview->setCursor(Qt::SizeAllCursor);
+  f.preview->pressed = [=] { *base = QPoint(f.ox->value(), f.oy->value()); };
+  f.preview->dragged = [=](QPoint d)
+  { // the spin boxes clamp, as typing does
+    double k = previewScale(QSize(f.ws->value(), f.hs->value()), old);
+    f.ox->setValue(base->x() + qRound(d.x() / k));
+    f.oy->setValue(base->y() + qRound(d.y() / k));
+  };
   QObject::connect(
     f.center, &QPushButton::clicked,
     [=]
@@ -258,12 +325,15 @@ void wireOffset(const Fields &f, QSize old)
 
 } // namespace
 
-std::optional<NewSize> askNewSize(QWidget *parent, bool forEdit, QSize current)
+std::optional<NewSize> askNewSize(
+  QWidget *parent, bool forEdit, QSize current, const QImage &picture)
 { // take B of #380: preset list, size fields, orientation, preview
   QDialog dlg(parent);
   dlg.setWindowTitle(forEdit ? "Resize" : "New");
   Fields f = makeFields(forEdit);
   layOut(dlg, f, forEdit);
+  f.pic = picture;
+  f.old = current;
   wireFields(f);
   if (forEdit)
     wireOffset(f, current);
