@@ -1,4 +1,5 @@
 #include "newdialog.h"
+#include <algorithm>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QGridLayout>
@@ -87,11 +88,19 @@ struct Fields
   QLabel *preview = new QLabel, *info = new QLabel;
   QDialogButtonBox *btns =
     new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  QSpinBox *ox = nullptr, *oy = nullptr; // forEdit only: the Offset row
+  QPushButton *center = nullptr;
 };
 
-Fields makeFields()
+Fields makeFields(bool forEdit)
 {
   Fields f;
+  if (forEdit)
+  {
+    f.ox = new QSpinBox;
+    f.oy = new QSpinBox;
+    f.center = new QPushButton("Center");
+  }
   for (auto *s : {f.ws, f.hs})
   {
     s->setRange(1, 16384);
@@ -107,7 +116,7 @@ Fields makeFields()
   return f;
 }
 
-void layOut(QDialog &dlg, const Fields &f)
+void layOut(QDialog &dlg, const Fields &f, bool forEdit)
 {
   auto *form = new QGridLayout;
   form->addWidget(new QLabel("Width"), 0, 0);
@@ -120,9 +129,21 @@ void layOut(QDialog &dlg, const Fields &f)
   orient->addWidget(f.landscape);
   form->addWidget(new QLabel("Orientation"), 2, 0);
   form->addLayout(orient, 2, 1, 1, 2);
-  form->addWidget(f.preview, 3, 0, 1, 3);
-  form->addWidget(f.info, 4, 0, 1, 3);
-  form->setRowStretch(5, 1);
+  int row = 3;
+  if (forEdit)
+  {
+    auto *offset = new QHBoxLayout;
+    offset->addWidget(new QLabel("X"));
+    offset->addWidget(f.ox);
+    offset->addWidget(new QLabel("Y"));
+    offset->addWidget(f.oy);
+    offset->addWidget(f.center);
+    form->addWidget(new QLabel("Offset"), row, 0);
+    form->addLayout(offset, row++, 1, 1, 2);
+  }
+  form->addWidget(f.preview, row, 0, 1, 3);
+  form->addWidget(f.info, row + 1, 0, 1, 3);
+  form->setRowStretch(row + 2, 1);
   auto *body = new QHBoxLayout;
   body->addWidget(f.list);
   body->addLayout(form);
@@ -213,26 +234,56 @@ void wireFields(const Fields &f)
   wireOrientation(f);
 }
 
+// Each offset axis runs between 0 and the size change (#393); Center sets half of it
+// (#397).
+void wireOffset(const Fields &f, QSize old)
+{
+  auto clamp = [=]
+  {
+    int dx = f.ws->value() - old.width(), dy = f.hs->value() - old.height();
+    f.ox->setRange(std::min(0, dx), std::max(0, dx));
+    f.oy->setRange(std::min(0, dy), std::max(0, dy));
+  };
+  for (auto *s : {f.ws, f.hs})
+    QObject::connect(s, &QSpinBox::valueChanged, clamp);
+  QObject::connect(
+    f.center, &QPushButton::clicked,
+    [=]
+    {
+      f.ox->setValue((f.ws->value() - old.width()) / 2);
+      f.oy->setValue((f.hs->value() - old.height()) / 2);
+    });
+  clamp();
+}
+
 } // namespace
 
-std::optional<QSize> askNewSize(QWidget *parent, [[maybe_unused]] bool forEdit)
+std::optional<NewSize> askNewSize(QWidget *parent, bool forEdit, QSize current)
 { // take B of #380: preset list, size fields, orientation, preview
   QDialog dlg(parent);
-  dlg.setWindowTitle("New");
-  Fields f = makeFields();
-  layOut(dlg, f);
+  dlg.setWindowTitle(forEdit ? "Resize" : "New");
+  Fields f = makeFields(forEdit);
+  layOut(dlg, f, forEdit);
   wireFields(f);
+  if (forEdit)
+    wireOffset(f, current);
   QObject::connect(f.btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
   QObject::connect(f.btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-  QSize last = QSettings()
-                 .value("newSize", QSize(1920, 1080))
-                 .toSize(); // the last size OK'd (#385)
+  QSize last =
+    forEdit ? current
+            : QSettings()
+                .value("newSize", QSize(1920, 1080))
+                .toSize(); // the last size OK'd (#385)
   f.ws->setValue(last.width());
   f.hs->setValue(last.height());
   sync(f);
+  if (forEdit)
+    f.ws->setFocus(); // else the list takes focus and selects its first preset
   if (dlg.exec() != QDialog::Accepted)
     return std::nullopt;
   QSize sz(f.ws->value(), f.hs->value());
+  if (forEdit)
+    return NewSize{sz, QPoint(f.ox->value(), f.oy->value())};
   QSettings().setValue("newSize", sz);
-  return sz;
+  return NewSize{sz, {}};
 }
