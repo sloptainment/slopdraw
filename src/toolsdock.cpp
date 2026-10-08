@@ -4,8 +4,8 @@
 #include <memory>
 #include <QActionGroup>
 #include <QDockWidget>
+#include <QGridLayout>
 #include <QToolButton>
-#include <QVBoxLayout>
 
 namespace
 {
@@ -52,13 +52,40 @@ void kindChanged(Shell &sh, ToolMemory &memory)
     tools[now]->trigger();
 }
 
+// The tool buttons in as many columns as the panel's width holds.
+struct ToolPanel : QWidget
+{
+  QGridLayout *grid = new QGridLayout(this);
+  std::vector<QToolButton *> buttons;
+  int cols = 0;
+  void flow(int n)
+  {
+    if (n == cols)
+      return;
+    cols = n;
+    for (size_t i = 0; i < buttons.size(); i++)
+    {
+      grid->removeWidget(buttons[i]);
+      grid->addWidget(buttons[i], i / n, i % n);
+    }
+    grid->setRowStretch(buttons.size(), 1); // pushes the rows to the top
+  }
+  void resizeEvent(QResizeEvent *e) override
+  {
+    QWidget::resizeEvent(e);
+    int w = 1;
+    for (auto *b : buttons)
+      w = std::max(w, b->sizeHint().width());
+    flow(std::max(1, width() / w));
+  }
+};
+
 } // namespace
 
 void buildToolsDock(Shell &sh)
 {
   Canvas *canvas = sh.canvas;
-  auto *toolPanel = new QWidget;
-  auto *toolCol = new QVBoxLayout(toolPanel);
+  auto *toolPanel = new ToolPanel;
   auto *toolGroup = sh.toolGroup = new QActionGroup(&sh.window);
   const struct
   {
@@ -94,9 +121,9 @@ void buildToolsDock(Shell &sh)
     b->setDefaultAction(a);
     b->setToolButtonStyle(Qt::ToolButtonTextOnly);
     b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    toolCol->addWidget(b);
+    toolPanel->buttons.push_back(b);
   }
-  toolCol->addStretch();
+  toolPanel->flow(1);
   sh.kindChanged = [&sh, memory] { kindChanged(sh, *memory); };
   sh.kindChanged();
   sh.toolDock = new QDockWidget("Tools", &sh.window);
