@@ -59,7 +59,7 @@ void Canvas::paintEvent(QPaintEvent *)
   {
     pen_.cancel();
     penLayer_ = s_.doc.current();
-  }                   // a layer switch drops the unfinished path
+  } // a layer switch drops the unfinished path
   QString h = hint(); // every tool or state change calls update(), so paint is
                       // where a change of hint is noticed
   if (h != hint_)
@@ -150,13 +150,10 @@ void Canvas::drawPenPath(QPainter &p, const QImage &doc)
     if (pen_.bezier)
     { // a Bezier path in progress: the dragged handles shape it (#309)
       Document::VPath v{
-        {},
-        pen_.closing,
-        Qt::black,
-        1,
-        {},
-        Document::PathKind::Bezier}; // closed while a press on the first node is
-                                     // down (#368)
+        {},        pen_.closing,
+        Qt::black, 1,
+        {},        Document::PathKind::Bezier}; // closed while a press on the
+                                                // first node is down (#368)
       v.bezier = pen_.bezierNodes();
       if (nodes.size() > v.bezier.size())
         v.bezier.push_back(
