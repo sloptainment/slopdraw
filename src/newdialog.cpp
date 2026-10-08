@@ -38,6 +38,10 @@ struct SizeBox : QSpinBox
   {
     return lineEdit();
   } // its textChanged fires on typed edits; QSpinBox's only on valid text
+  int typed(const QString &t) const
+  {
+    return valueFromText(t);
+  } // textEdited comes before value() follows it
 };
 
 struct Preset
@@ -126,6 +130,7 @@ struct Fields
   QSpinBox *ox = nullptr, *oy = nullptr; // forEdit only: the Offset row
   QPushButton *center = nullptr;
   QCheckBox *scale = nullptr; // forEdit only
+  QToolButton *chain = nullptr; // forEdit only: keeps the width : height ratio (#418)
   QImage pic; // forEdit only: the document's pixels, and its size
   QSize old;
 };
@@ -139,6 +144,11 @@ Fields makeFields(bool forEdit)
     f.oy = new QSpinBox;
     f.center = new QPushButton("Center");
     f.scale = new QCheckBox("Scale image");
+    f.chain = new QToolButton;
+    f.chain->setObjectName("chain");
+    f.chain->setText("⛓");
+    f.chain->setToolTip("Keep the aspect ratio");
+    f.chain->setCheckable(true);
   }
   for (auto *s : {f.ws, f.hs})
   {
@@ -160,6 +170,8 @@ void layOut(QDialog &dlg, const Fields &f, bool forEdit)
   auto *form = new QGridLayout;
   form->addWidget(new QLabel("Width"), 0, 0);
   form->addWidget(f.ws, 0, 1);
+  if (f.chain)
+    form->addWidget(f.chain, 0, 2);
   form->addWidget(new QLabel("Height"), 1, 0);
   form->addWidget(f.hs, 1, 1);
   form->addWidget(f.swap, 1, 2);
@@ -296,6 +308,22 @@ void wireFields(const Fields &f)
   wireOrientation(f);
 }
 
+// Linked, typing one size sets the other at the ratio held when linked, or when a
+// preset, ⇄ or orientation last set both outright; the state is remembered (#405).
+void wireChain(const Fields &f)
+{
+  auto ratio = std::make_shared<double>(1);
+  auto hold = [=] { *ratio = double(f.ws->value()) / f.hs->value(); };
+  QObject::connect(f.chain, &QToolButton::toggled, [=](bool on) { hold(); f.chain->setText(on ? "🔗" : "⛓"); QSettings().setValue("chainLinked", on); });
+  QObject::connect(f.list, &QListWidget::currentRowChanged, hold);
+  for (auto *b : {f.swap, f.portrait, f.landscape})
+    QObject::connect(b, &QToolButton::clicked, hold);
+  QObject::connect(f.ws->edit(), &QLineEdit::textEdited, [=](const QString &t) { if (f.chain->isChecked() && f.ws->hasAcceptableInput()) f.hs->setValue(qMax(1, qRound(f.ws->typed(t) / *ratio))); });
+  QObject::connect(f.hs->edit(), &QLineEdit::textEdited, [=](const QString &t) { if (f.chain->isChecked() && f.hs->hasAcceptableInput()) f.ws->setValue(qMax(1, qRound(f.hs->typed(t) * *ratio))); });
+  hold();
+  f.chain->setChecked(QSettings().value("chainLinked", false).toBool());
+}
+
 // Each offset axis runs between 0 and the size change (#393); Center sets half of it
 // (#397).
 void wireOffset(const Fields &f, QSize old)
@@ -370,6 +398,8 @@ std::optional<NewSize> askNewSize(
                 .toSize(); // the last size OK'd (#385)
   f.ws->setValue(last.width());
   f.hs->setValue(last.height());
+  if (forEdit)
+    wireChain(f);
   sync(f);
   if (forEdit)
     f.ws->setFocus(); // else the list takes focus and selects its first preset
