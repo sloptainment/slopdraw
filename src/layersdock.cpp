@@ -169,7 +169,7 @@ QWidget *layerRow(Canvas *canvas, const Document &d, int i)
   h->setContentsMargins(2, 2, 2, 2);
   addGroupBars(h, d, i);
   auto *thumb = new QLabel;
-  QPixmap tp(40, 30);
+  QPixmap tp(32, 24); // as tall as the flag buttons
   tp.fill(QColor(200, 200, 200)); // so a transparent layer's thumbnail still shows
   QPainter tpp(&tp);
   tpp.setRenderHint(QPainter::SmoothPixmapTransform);
