@@ -57,6 +57,17 @@ void Canvas::undo(bool redo)
   layersChanged();
 }
 
+void Canvas::resize(QSize size, QPoint offset)
+{
+  commitFloat();
+  endCrop();
+  if (!s_.doc.resize(size, offset))
+    return;
+  clearSelection();
+  update();
+  layersChanged();
+}
+
 void Canvas::copy(bool cut)
 {
   if (

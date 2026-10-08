@@ -196,6 +196,8 @@ public:
   // The Edit, View and Tools menu actions call these; their keys are window-wide
   // shortcuts.
   void undo(bool redo);
+  // Edit > Resize... (#415): Document::resize, then the view and docks refresh.
+  void resize(QSize size, QPoint offset);
   // File > Import Reference Image (#539): img centred in the view, fitted if
   // larger, as one undo step; the shell has switched to the Reference tool, and the
   // new one is picked.

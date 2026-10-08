@@ -1,5 +1,6 @@
 // The Edit, View and Tools menus; their keys are window-wide (#168).
 #include "shell.h"
+#include "newdialog.h"
 #include <memory>
 #include <QActionGroup>
 #include <QCheckBox>
@@ -159,6 +160,15 @@ void buildEditMenu(Shell &sh)
     &QAction::triggered, [canvas] { canvas->copy(false); });
   sh.notOnGroup = {editMenu->actions().end()[-2], editMenu->actions().end()[-1]};
   addPaste(sh, editMenu);
+  editMenu->addSeparator();
+  QObject::connect(
+    editMenu->addAction("Re&size..."), &QAction::triggered,
+    [&sh, canvas]
+    {
+      auto r = askNewSize(&sh.window, true, canvas->doc().image(0).size());
+      if (r)
+        canvas->resize(r->size, r->offset);
+    });
   sh.docActions.push_back(editMenu->menuAction());
 }
 
