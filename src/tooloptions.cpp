@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPainter>
+#include <QSettings>
 #include <QRadioButton>
 #include <QSlider>
 #include <QSpinBox>
@@ -37,7 +38,7 @@ struct Options
   QCheckBox *eraseBox = nullptr;
   QWidget *brushBox = nullptr, *lassoBox = nullptr, *bucketBox = nullptr,
           *refBox = nullptr, *widthBox = nullptr, *paintBox = nullptr,
-          *swatchBox = nullptr, *curveBox = nullptr;
+          *swatchBox = nullptr, *curveBox = nullptr, *cropBox = nullptr;
   QSlider *brushOpacity = nullptr, *lassoOpacity = nullptr, *refOpacity = nullptr,
           *pathWidth = nullptr;
   QLabel *refOpacityValue = nullptr, *pathWidthValue = nullptr;
@@ -413,8 +414,27 @@ QWidget *curveOptions(Options &o)
   return box;
 }
 
+// The Crop tool's Confined?, checked by default and remembered (#413).
+QWidget *cropOptions(Options &o)
+{
+  Canvas *canvas = o.canvas;
+  auto *confined = new QCheckBox("Confined?");
+  bool on = QSettings().value("cropConfined", true).toBool();
+  confined->setChecked(on);
+  canvas->setCropConfined(on);
+  QObject::connect(
+    confined, &QCheckBox::toggled,
+    [canvas](bool v)
+    {
+      canvas->setCropConfined(v);
+      QSettings().setValue("cropConfined", v);
+    });
+  return confined;
+}
+
 void showOptions(const Options &o, int tool)
 {
+  o.cropBox->setVisible(tool == CropTool);
   o.scaleWidths->setVisible(tool == SelectTool);
   o.eraseBox->setVisible(tool <= LassoFillTool || tool == BucketFillTool);
   o.brushBox->setVisible(tool == BrushTool);
@@ -507,6 +527,7 @@ void buildToolOptionsDock(Shell &sh)
   o->lassoBox = lassoOptions(*o);
   o->bucketBox = bucketOptions(*o);
   o->refBox = refOptions(*o);
+  o->cropBox = cropOptions(*o);
   o->widthBox = widthOptions(*o);
   o->paintBox = paintOptions(*o);
   o->swatchBox = swatchOptions(*o);
@@ -534,7 +555,7 @@ void buildToolOptionsDock(Shell &sh)
   auto *optionsCol = new QVBoxLayout(optionsPanel);
   for (QWidget *w : std::initializer_list<QWidget *>{
          o->eraseBox, o->brushBox, o->lassoBox, o->bucketBox, o->refBox,
-         o->curveBox, o->widthBox, o->paintBox, o->swatchBox, o->scaleWidths,
+         o->cropBox, o->curveBox, o->widthBox, o->paintBox, o->swatchBox, o->scaleWidths,
          o->penTypes, o->editTypes, o->bezierTypes})
     optionsCol->addWidget(w);
   optionsCol->addStretch(); // spare height goes below the options, not between them

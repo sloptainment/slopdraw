@@ -202,6 +202,9 @@ public:
   // enables it.
   bool hasBox() const { return hasDoc() && !box_.isEmpty(); }
   void cropToBox();
+  // The Crop tool (#420): Confined? keeps its rectangle inside the document.
+  bool cropConfined() const { return cropConfined_; }
+  void setCropConfined(bool on) { cropConfined_ = on; }
   // File > Import Reference Image (#539): img centred in the view, fitted if
   // larger, as one undo step; the shell has switched to the Reference tool, and the
   // new one is picked.
@@ -305,6 +308,7 @@ private:
     endHandleDrag();
     endMoveDrag();
     endBox();
+    cropDrag_ = 0;
     dragging_ = painting_ = resizing_ = penDrag_ = false;
     layersChanged();
   }
@@ -320,7 +324,7 @@ private:
     others_.clear();
     picked_.clear();
     refPicks_.clear();
-    box_ = QRect();
+    box_ = cropRect_ = QRect();
   }
   void layersChanged()
   {
@@ -436,6 +440,12 @@ private:
   // Release: a box dragged more than 3 screen px picks the paths it touches (added
   // to the pick, which a press without Shift cleared).
   void endBox();
+  // Crop tool: press starts a new rectangle, a move or a handle drag; drags follow
+  // the pointer, Enter or a double-click inside crops.
+  void cropRectPress(QPointF pos);
+  void cropRectTo(QPointF pos);
+  void applyCrop();
+  void drawCropRect(QPainter &p);
   // Select: the Transform box (#206): a 1 px frame, eight 8 px squares on its
   // corners and edge midpoints (grabbable, #231), and the rotate circle (5 px, 24
   // px up a stem).
@@ -597,6 +607,12 @@ private:
   QTransform dragM_;      // what the drag has done to the picked paths so far
   std::vector<Document::VPath>
     pathsBefore_;       // the current layer's paths when it began
+  QRect cropRect_; // the Crop tool's rectangle in document pixels, null for none
+  int cropDrag_ = 0; // 1 new rectangle, 2 move, 3 handle, 0 none
+  QPoint cropHandle_;
+  QPointF cropFrom_;
+  QRect cropOrig_;
+  bool cropConfined_ = true;
   bool boxing_ = false; // a Select box drag is under way
   QPointF boxStart_;    // where it began, in document coordinates
   QRect box_; // Box Select's rectangle in document pixels, null for none; it

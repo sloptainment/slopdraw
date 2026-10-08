@@ -41,6 +41,8 @@ void Canvas::setTool(int t)
   frame_.reset();
   endCrop();
   boxing_ = false;
+  cropRect_ = QRect();
+  cropDrag_ = 0;
   unsetCursor();
   update();
   if (onToolChange)
@@ -133,6 +135,8 @@ void Canvas::finishPath(bool closed)
     return endPaste();
   if (cropping_ >= 0)
     return endCrop(); // Enter leaves crop mode (#546)
+  if (tool_ == CropTool)
+    return applyCrop();
   if (tool_ == SpiroPenTool)
     pen_.finish(
       s_.doc, closed, penStroke_, pathWidth_, paintMode_,
@@ -191,6 +195,8 @@ void Canvas::mousePressEvent(QMouseEvent *e)
     objectPress(e->position(), e->modifiers());
   else if (e->button() == Qt::LeftButton && !space_ && tool_ == BoxSelectTool)
     boxPress(e->position());
+  else if (e->button() == Qt::LeftButton && !space_ && tool_ == CropTool)
+    cropRectPress(e->position());
   else if (
     e->button() == Qt::LeftButton && !space_ && !resizing_ && tool_ == SpiroPenTool)
     spiroClick(e->position(), e->modifiers() & Qt::ShiftModifier);
@@ -225,6 +231,8 @@ void Canvas::mouseMoveEvent(QMouseEvent *e)
     return dragHandleTo(e->position());
   if (cropEdge_ || cropGrab_)
     return cropDragTo(e->position());
+  if (cropDrag_)
+    return cropRectTo(e->position());
   if (moveDrag_)
     return dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
   if (penDrag_)
@@ -271,8 +279,12 @@ void Canvas::panZoom(QPointF pos, Qt::KeyboardModifiers mods)
 
 void Canvas::mouseDoubleClickEvent(QMouseEvent *e)
 {
-  if (!(tool_ == ReferenceTool && e->button() == Qt::LeftButton && !space_ &&
-        enterCrop(e->position())))
+  if (
+    tool_ == CropTool && e->button() == Qt::LeftButton && !space_ &&
+    cropRect_.contains(s_.view.toDoc(e->position()).toPoint()))
+    applyCrop();
+  else if (!(tool_ == ReferenceTool && e->button() == Qt::LeftButton && !space_ &&
+             enterCrop(e->position())))
     QWidget::mouseDoubleClickEvent(e);
 }
 
@@ -371,6 +383,13 @@ void Canvas::tabletTool(QTabletEvent *e)
     if (e->type() == QEvent::TabletPress)
       boxPress(e->position());
   }
+  else if (tool_ == CropTool)
+  {
+    if (e->type() == QEvent::TabletPress)
+      cropRectPress(e->position());
+    else if (cropDrag_)
+      cropRectTo(e->position());
+  }
   else if (tool_ == SpiroPenTool)
   {
     if (e->type() == QEvent::TabletPress)
@@ -432,7 +451,8 @@ void Canvas::keyPressEvent(QKeyEvent *e)
   {
     pen_.cancel();
     cancelFloat();
-    box_ = QRect();
+    box_ = cropRect_ = QRect();
+    cropDrag_ = 0;
     update();
   }
 }
@@ -490,6 +510,9 @@ QString Canvas::hint() const
                    "the circle rotates · right-click flips · Delete removes them · "
                    "click or drag a box to pick again · Shift adds")
       .arg(refPicks_.size());
+  if (tool_ == CropTool)
+    return "Drag a rectangle · drag inside moves it · handles resize · Enter or "
+           "double-click crops · Esc drops it";
   if (tool_ == BoxSelectTool && box_.isEmpty())
     return "Drag a rectangle to select pixels";
   if (tool_ == BoxSelectTool)

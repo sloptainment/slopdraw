@@ -1341,6 +1341,7 @@ static bool toolFollowsLayerKind() {
         && toolForLayer(false, BoxSelectTool) == BoxSelectTool && toolForLayer(true, BoxSelectTool) == SpiroPenTool  // Box Select fits Raster Layers only (#204)
         && toolForLayer(true, BoxSelectTool, BrushTool, NodeKnotEditTool) == NodeKnotEditTool
         && toolForLayer(false, ReferenceTool) == ReferenceTool && toolForLayer(true, ReferenceTool) == ReferenceTool  // fits every kind (#539)
+        && toolForLayer(false, CropTool) == CropTool && toolForLayer(true, CropTool) == CropTool && toolFitsKind(false, CropTool, true)  // Crop fits every kind, groups too (#420)
         && toolForLayer(false, BrushTool, BrushTool, SpiroPenTool, true) == SelectTool && toolForLayer(true, SpiroPenTool, BrushTool, SpiroPenTool, true) == SelectTool  // a group takes Select alone (#458)
         && toolFitsKind(false, SelectTool, true) && toolFitsKind(false, ReferenceTool, true) && toolForLayer(false, ReferenceTool, BrushTool, SpiroPenTool, true) == ReferenceTool && !toolFitsKind(false, BrushTool, true) && !toolFitsKind(true, NodeKnotEditTool, true);
 }

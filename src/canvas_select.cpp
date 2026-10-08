@@ -248,6 +248,56 @@ void Canvas::endBox()
   update();
 }
 
+void Canvas::cropRectPress(QPointF pos)
+{
+  QPointF d = s_.view.toDoc(pos);
+  auto h = boxHandleAt(QRectF(cropRect_), d, 6 / s_.view.screenRadius(1));
+  cropDrag_ = !cropRect_.isEmpty() && h ? 3
+              : cropRect_.contains(d.toPoint()) ? 2
+                                                : 1;
+  cropHandle_ = h.value_or(QPoint());
+  cropFrom_ = d;
+  cropOrig_ = cropRect_;
+  update();
+}
+
+void Canvas::cropRectTo(QPointF pos)
+{
+  QPointF d = s_.view.toDoc(pos);
+  QRect all = s_.doc.image(0).rect(), r = cropOrig_;
+  if (cropDrag_ == 1)
+    r = QRectF(cropFrom_, d).normalized().toAlignedRect();
+  else if (cropDrag_ == 2)
+  {
+    r.translate((d - cropFrom_).toPoint());
+    if (cropConfined_)
+      r.moveTo(
+        std::clamp(r.x(), 0, std::max(0, all.width() - r.width())),
+        std::clamp(r.y(), 0, std::max(0, all.height() - r.height())));
+  }
+  else
+  {
+    QRectF f(cropOrig_);
+    QPointF a(f.left(), f.top()), b(f.right(), f.bottom());
+    if (cropHandle_.x())
+      (cropHandle_.x() < 0 ? a : b).setX(std::round(d.x()));
+    if (cropHandle_.y())
+      (cropHandle_.y() < 0 ? a : b).setY(std::round(d.y()));
+    r = QRectF(a, b).normalized().toAlignedRect();
+  }
+  cropRect_ = cropConfined_ && cropDrag_ != 2 ? r & all : r;
+  update();
+}
+
+void Canvas::applyCrop()
+{
+  QRect r = cropRect_;
+  cropRect_ = QRect();
+  if (!r.isEmpty())
+    resize(r.size(), -r.topLeft(), false); // grows the canvas where r reaches past it
+  update();
+}
+
 BoxFrame Canvas::frame() const
 {
   if (tool_ == ReferenceTool)

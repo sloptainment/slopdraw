@@ -38,7 +38,7 @@ void kindChanged(Shell &sh, ToolMemory &memory)
   for (auto *a : sh.notOnGroup)
     a->setEnabled(has && !grp);
   auto tools = toolGroup->actions();
-  for (int i = 0; i < 8; i++)
+  for (int i = 0; i < 9; i++)
     tools[i]->setEnabled(has && toolFitsKind(vec, i, grp));
   sh.brushDock->widget()->setEnabled(has && !vec);
   int now = toolForLayer(
@@ -99,10 +99,11 @@ void buildToolsDock(Shell &sh)
     {"\u25AD Select", "S"},         // Select (S)
     {"\u2B1A Box", ""},             // Box Select
     {"\U0001F5BC Reference", "R"},  // Reference (R, #535)
-    {"\U0001FAA3 Bucket Fill", "G"} // Bucket Fill (G, #607)
+    {"\U0001FAA3 Bucket Fill", "G"}, // Bucket Fill (G, #607)
+    {"\u2702 Crop", "C"}            // Crop (C, #420)
   };
   auto memory = std::make_shared<ToolMemory>();
-  for (int i = 0; i < 8; i++)
+  for (int i = 0; i < 9; i++)
   {
     auto *a = toolGroup->addAction(kTools[i].text);
     a->setCheckable(true);
@@ -114,7 +115,7 @@ void buildToolsDock(Shell &sh)
       [canvas, i, memory]
       {
         canvas->setTool(i);
-        if (i != SelectTool && i != ReferenceTool)
+        if (i != SelectTool && i != ReferenceTool && i != CropTool)
           memory->lastTool[toolFitsKind(true, i)] = i;
       });
     auto *b = new QToolButton;

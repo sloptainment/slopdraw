@@ -224,8 +224,28 @@ void Canvas::drawNodeHandles(QPainter &p)
     }
 }
 
+void Canvas::drawCropRect(QPainter &p)
+{
+  double px = 1 / s_.view.screenRadius(1);
+  QRectF b(cropRect_);
+  QPen pen(Qt::blue, 1);
+  pen.setCosmetic(true);
+  p.setPen(pen);
+  p.setBrush(Qt::NoBrush);
+  p.drawRect(b);
+  p.setBrush(Qt::blue);
+  for (double fx : {0.0, 0.5, 1.0})
+    for (double fy : {0.0, 0.5, 1.0})
+      if (fx != 0.5 || fy != 0.5)
+        p.drawRect(QRectF(
+          b.left() + fx * b.width() - 4 * px, b.top() + fy * b.height() - 4 * px,
+          8 * px, 8 * px));
+}
+
 void Canvas::drawSelectOverlays(QPainter &p)
 {
+  if (tool_ == CropTool && !cropRect_.isEmpty())
+    drawCropRect(p);
   if (tool_ == SelectTool)
   { // Select: the picked paths' outlines, and the box being dragged
     QPen pen(Qt::blue, 1);
