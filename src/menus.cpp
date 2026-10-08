@@ -168,7 +168,7 @@ void buildEditMenu(Shell &sh)
       auto r = askNewSize(
         &sh.window, true, canvas->doc().image(0).size(), canvas->doc().render());
       if (r)
-        canvas->resize(r->size, r->offset);
+        canvas->resize(r->size, r->offset, r->scale);
     });
   sh.docActions.push_back(editMenu->menuAction());
 }
