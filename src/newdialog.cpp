@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QGridLayout>
@@ -124,6 +125,7 @@ struct Fields
     new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
   QSpinBox *ox = nullptr, *oy = nullptr; // forEdit only: the Offset row
   QPushButton *center = nullptr;
+  QCheckBox *scale = nullptr; // forEdit only
   QImage pic; // forEdit only: the document's pixels, and its size
   QSize old;
 };
@@ -136,6 +138,7 @@ Fields makeFields(bool forEdit)
     f.ox = new QSpinBox;
     f.oy = new QSpinBox;
     f.center = new QPushButton("Center");
+    f.scale = new QCheckBox("Scale image");
   }
   for (auto *s : {f.ws, f.hs})
   {
@@ -168,6 +171,7 @@ void layOut(QDialog &dlg, const Fields &f, bool forEdit)
   int row = 3;
   if (forEdit)
   {
+    form->addWidget(f.scale, row++, 0, 1, 3);
     auto *offset = new QHBoxLayout;
     offset->addWidget(new QLabel("X"));
     offset->addWidget(f.ox);
@@ -216,6 +220,8 @@ void sync(const Fields &f)
     QPointF c = u + QPointF(std::max(0, -f.ox->value()), std::max(0, -f.oy->value())) * k;
     QRectF canvas(c, QSizeF(sz) * k),
       picture(c + QPointF(f.ox->value(), f.oy->value()) * k, QSizeF(f.old) * k);
+    if (f.scale->isChecked())
+      picture = canvas; // stretched to fill the frame (#399)
     p.setOpacity(0.3);
     p.drawImage(picture, f.pic);
     p.setOpacity(1);
@@ -309,6 +315,8 @@ void wireOffset(const Fields &f, QSize old)
   f.preview->pressed = [=] { *base = QPoint(f.ox->value(), f.oy->value()); };
   f.preview->dragged = [=](QPoint d)
   { // the spin boxes clamp, as typing does
+    if (f.scale->isChecked())
+      return;
     double k = previewScale(QSize(f.ws->value(), f.hs->value()), old);
     f.ox->setValue(base->x() + qRound(d.x() / k));
     f.oy->setValue(base->y() + qRound(d.y() / k));
@@ -320,6 +328,22 @@ void wireOffset(const Fields &f, QSize old)
       f.ox->setValue((f.ws->value() - old.width()) / 2);
       f.oy->setValue((f.hs->value() - old.height()) / 2);
     });
+  QObject::connect(
+    f.scale, &QCheckBox::toggled,
+    [=](bool on)
+    {
+      if (on)
+      {
+        f.ox->setValue(0);
+        f.oy->setValue(0);
+      }
+      for (QWidget *w : QList<QWidget *>{f.ox, f.oy, f.center})
+        w->setEnabled(!on);
+      f.preview->setCursor(on ? Qt::ArrowCursor : Qt::SizeAllCursor);
+      sync(f);
+      QSettings().setValue("scaleImage", on);
+    });
+  f.scale->setChecked(QSettings().value("scaleImage", false).toBool()); // remembered (#402)
   clamp();
 }
 
@@ -353,7 +377,7 @@ std::optional<NewSize> askNewSize(
     return std::nullopt;
   QSize sz(f.ws->value(), f.hs->value());
   if (forEdit)
-    return NewSize{sz, QPoint(f.ox->value(), f.oy->value())};
+    return NewSize{sz, QPoint(f.ox->value(), f.oy->value()), f.scale->isChecked()};
   QSettings().setValue("newSize", sz);
   return NewSize{sz, {}};
 }
