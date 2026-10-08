@@ -197,13 +197,12 @@ QWidget *layerRow(Canvas *canvas, const Document &d, int i)
   if (group)
     name->setStyleSheet("font-weight: bold;");
   h->addWidget(name, 1);
-  // flag icons at the right end (#468): Alpha Lock (Raster Layer rows; Vector rows
-  // keep a blank slot) and Inherit Alpha, grey outline off, white on a blue tile on
+  // flag icons at the right end (#468): Alpha Lock (Raster Layer rows; Vector and
+  // group rows keep a blank slot) and Inherit Alpha, grey outline off, white on a
+  // blue tile on
   for (bool lock : {true, false})
   {
-    if (group)
-      break;
-    if (lock && d.vector(i))
+    if (lock && (group || d.vector(i)))
     {
       h->addSpacing(24 + h->spacing());
       continue;
