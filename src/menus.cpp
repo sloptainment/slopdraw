@@ -170,6 +170,11 @@ void buildEditMenu(Shell &sh)
       if (r)
         canvas->resize(r->size, r->offset, r->scale);
     });
+  auto *crop = editMenu->addAction("Crop to Selecti&on");
+  QObject::connect(crop, &QAction::triggered, [canvas] { canvas->cropToBox(); });
+  QObject::connect(
+    editMenu, &QMenu::aboutToShow,
+    [canvas, crop] { crop->setEnabled(canvas->hasBox()); });
   sh.docActions.push_back(editMenu->menuAction());
 }
 

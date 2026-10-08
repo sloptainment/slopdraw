@@ -68,6 +68,15 @@ void Canvas::resize(QSize size, QPoint offset, bool scale)
   layersChanged();
 }
 
+void Canvas::cropToBox()
+{
+  if (!hasBox())
+    return;
+  QRect r = (floating_ ? floatM_.mapRect(box_) : box_) & s_.doc.image(0).rect();
+  if (!r.isEmpty())
+    resize(r.size(), -r.topLeft(), false); // commits a float, clears the box
+}
+
 void Canvas::copy(bool cut)
 {
   if (
