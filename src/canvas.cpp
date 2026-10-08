@@ -428,9 +428,9 @@ QString Canvas::penHint() const
   if (pen_.nodes.empty())
     return "Click places the first node";
   if (pen_.bezier)
-    return "Click adds a corner · Enter or right-click finishes open · click the "
-           "first node or Shift+Enter closes · Backspace drops the last node · Esc "
-           "cancels";
+    return "Click adds a corner · click-drag adds a smooth node · Enter or "
+           "right-click finishes open · click the first node or Shift+Enter closes "
+           "· Backspace drops the last node · Esc cancels";
   return "Click adds a node · Shift+click adds a corner · Enter or right-click "
          "finishes open · click the first node or Shift+Enter closes · Backspace "
          "drops the last node · Esc cancels";
@@ -480,7 +480,8 @@ QString Canvas::hint() const
            "canvas picks the paths it touches";
   if (tool_ == SelectTool)
     return QString("%1 picked · drag inside the box moves them · drag a handle "
-                   "scales (Shift keeps the ratio on a corner) · Delete removes "
+                   "scales (Shift keeps the ratio on a corner) · the circle rotates "
+                   "· right-click Flips or Converts to Bezier · Delete removes "
                    "them · click or drag a box to pick again · Shift adds")
       .arg(picked().size());
   if (tool_ == BucketFillTool)
