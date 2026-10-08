@@ -240,7 +240,7 @@ void addNewOpen(Shell &sh, QMenu *fileMenu)
     fileNew, &QAction::triggered,
     [&sh]
     {
-      if (auto sz = askNewSize(&sh.window))
+      if (auto sz = askNewSize(&sh.window, false))
         openTab(sh, Document(*sz), {});
     });
   sh.openPath = [&sh](QString path) { // Open and the command line: a tab per file

@@ -215,7 +215,7 @@ void wireFields(const Fields &f)
 
 } // namespace
 
-std::optional<QSize> askNewSize(QWidget *parent)
+std::optional<QSize> askNewSize(QWidget *parent, [[maybe_unused]] bool forEdit)
 { // take B of #380: preset list, size fields, orientation, preview
   QDialog dlg(parent);
   dlg.setWindowTitle("New");
