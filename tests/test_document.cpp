@@ -2384,6 +2384,21 @@ static bool clipLimitsStrokesAndFills() {
     return stroked && filled && erased && filledOut && unclipped && undone;
 }
 
+// With a clip (Box Select's rectangle, #609) a Bucket Fill whose region crosses its edge stops there; no clip fills the whole region.
+static bool bucketFillStopsAtTheClip() {
+    Document doc(QSize(20, 20));
+    doc.addLayer();
+    doc.setClip(QRect(0, 0, 10, 20));
+    bool ok = doc.bucketFill({2, 2}, Qt::red, 0, 0, false, false, false);
+    bool inside = doc.image(1).pixelColor(5, 5) == QColor(Qt::red);
+    bool outside = doc.image(1).pixelColor(15, 5).alpha() == 0;
+    Document open(QSize(20, 20));
+    open.addLayer();
+    open.bucketFill({2, 2}, Qt::red, 0, 0, false, false, false);
+    bool free = open.image(1).pixelColor(15, 5) == QColor(Qt::red);
+    return ok && inside && outside && free;
+}
+
 int main() {
     int failed = 0;
     auto run = [&](const char* name, bool (*fn)()) {
@@ -2394,6 +2409,7 @@ int main() {
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("clipLimitsStrokesAndFills", clipLimitsStrokesAndFills);
     run("bucketFillStopsAtARing", bucketFillStopsAtARing);
+    run("bucketFillStopsAtTheClip", bucketFillStopsAtTheClip);
     run("bucketFillObeysItsRules", bucketFillObeysItsRules);
     run("bucketFillToolFitsRasterOnly", bucketFillToolFitsRasterOnly);
     run("bucketFillGrowsAndSmooths", bucketFillGrowsAndSmooths);

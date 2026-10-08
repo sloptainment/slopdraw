@@ -162,6 +162,8 @@ bool Document::bucketFill(
         mask.setPixel(x, y, qPremultiply(c.rgba()));
       }
   QPainter p(&l.image);
+  if (!clip_.isNull())
+    p.setClipRect(clip_);
   if (l.alphaLock)
     p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
   else if (eraser)

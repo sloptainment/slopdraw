@@ -44,6 +44,7 @@ void Canvas::bucketAt(QPointF pos)
   QPointF d = s_.view.toDoc(pos);
   QColor c = color_;
   c.setAlphaF(bucketOpacity_);
+  clipToBox();
   s_.doc.bucketFill(
     {int(std::floor(d.x())), int(std::floor(d.y()))}, c, bucketThreshold_,
     bucketExpand_, bucketAA_, bucketMerged_, eraseBucket_);
