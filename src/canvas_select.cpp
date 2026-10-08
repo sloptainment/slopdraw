@@ -258,6 +258,8 @@ void Canvas::cropRectPress(QPointF pos)
   cropHandle_ = h.value_or(QPoint());
   cropFrom_ = d;
   cropOrig_ = cropRect_;
+  if (cropLock_ && !cropRatio_ && !cropRect_.isEmpty())
+    setCropLock(true);
   update();
 }
 
@@ -283,9 +285,42 @@ void Canvas::cropRectTo(QPointF pos)
       (cropHandle_.x() < 0 ? a : b).setX(std::round(d.x()));
     if (cropHandle_.y())
       (cropHandle_.y() < 0 ? a : b).setY(std::round(d.y()));
-    r = QRectF(a, b).normalized().toAlignedRect();
+    QRectF n = QRectF(a, b).normalized();
+    if (cropRatio_)
+    { // locked: the larger factor wins on a corner; an edge sets the other side
+      double w = n.width(), h = n.height();
+      if (cropHandle_.x() && cropHandle_.y() ? w / h > cropRatio_ : !cropHandle_.y())
+        h = w / cropRatio_;
+      else
+        w = h * cropRatio_;
+      QPointF anchor(
+        cropHandle_.x() ? (cropHandle_.x() < 0 ? n.right() - w : n.left()) : f.center().x() - w / 2,
+        cropHandle_.y() ? (cropHandle_.y() < 0 ? n.bottom() - h : n.top()) : f.center().y() - h / 2);
+      n = QRectF(anchor, QSizeF(w, h));
+    }
+    r = n.toAlignedRect();
   }
   cropRect_ = cropConfined_ && cropDrag_ != 2 ? r & all : r;
+  update();
+}
+
+void Canvas::setCropRect(QRect r, char edited)
+{
+  if (cropRect_.isEmpty() || r.width() < 1 || r.height() < 1)
+    return;
+  if (cropRatio_ && edited == 'w')
+    r.setHeight(std::max(1, int(std::lround(r.width() / cropRatio_))));
+  else if (cropRatio_ && edited == 'h')
+    r.setWidth(std::max(1, int(std::lround(r.height() * cropRatio_))));
+  if (cropConfined_)
+  {
+    QSize all = s_.doc.image(0).size();
+    r.setSize(r.size().boundedTo(all));
+    r.moveTo(
+      std::clamp(r.x(), 0, all.width() - r.width()),
+      std::clamp(r.y(), 0, all.height() - r.height()));
+  }
+  cropRect_ = r;
   update();
 }
 

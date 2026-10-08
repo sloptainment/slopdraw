@@ -205,6 +205,16 @@ public:
   // The Crop tool (#420): Confined? keeps its rectangle inside the document.
   bool cropConfined() const { return cropConfined_; }
   void setCropConfined(bool on) { cropConfined_ = on; }
+  // The rectangle for Tool Options' X/Y/W/H (#421); setCropRect clamps it as a drag
+  // is, and with the aspect lock on, edited 'w' or 'h' sets the other side.
+  QRect cropRect() const { return cropRect_; }
+  void setCropRect(QRect r, char edited = 0);
+  // The aspect lock keeps the ratio the rectangle had when it was locked.
+  void setCropLock(bool on)
+  {
+    cropLock_ = on;
+    cropRatio_ = on && !cropRect_.isEmpty() ? double(cropRect_.width()) / cropRect_.height() : 0;
+  }
   // File > Import Reference Image (#539): img centred in the view, fitted if
   // larger, as one undo step; the shell has switched to the Reference tool, and the
   // new one is picked.
@@ -613,6 +623,8 @@ private:
   QPointF cropFrom_;
   QRect cropOrig_;
   bool cropConfined_ = true;
+  bool cropLock_ = false;
+  double cropRatio_ = 0; // width / height when locked, 0 until a rectangle exists
   bool boxing_ = false; // a Select box drag is under way
   QPointF boxStart_;    // where it began, in document coordinates
   QRect box_; // Box Select's rectangle in document pixels, null for none; it

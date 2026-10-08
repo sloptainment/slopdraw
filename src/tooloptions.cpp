@@ -6,6 +6,7 @@
 #include <optional>
 #include <QCheckBox>
 #include <QDockWidget>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -39,6 +40,7 @@ struct Options
   QWidget *brushBox = nullptr, *lassoBox = nullptr, *bucketBox = nullptr,
           *refBox = nullptr, *widthBox = nullptr, *paintBox = nullptr,
           *swatchBox = nullptr, *curveBox = nullptr, *cropBox = nullptr;
+  QSpinBox *cropFields[4] = {}; // X, Y, W, H
   QSlider *brushOpacity = nullptr, *lassoOpacity = nullptr, *refOpacity = nullptr,
           *pathWidth = nullptr;
   QLabel *refOpacityValue = nullptr, *pathWidthValue = nullptr;
@@ -429,7 +431,34 @@ QWidget *cropOptions(Options &o)
       canvas->setCropConfined(v);
       QSettings().setValue("cropConfined", v);
     });
-  return confined;
+  auto *lock = new QCheckBox("Lock aspect");
+  QObject::connect(
+    lock, &QCheckBox::toggled, [canvas](bool v) { canvas->setCropLock(v); });
+  auto *box = new QWidget;
+  auto *col = column(box);
+  col->addWidget(confined);
+  col->addWidget(lock);
+  auto *grid = new QGridLayout;
+  col->addLayout(grid);
+  for (int k = 0; k < 4; k++)
+  { // X, Y, W, H: typing edits the rectangle, dragging it refills them
+    auto *sb = o.cropFields[k] = new QSpinBox;
+    sb->setRange(k < 2 ? -100000 : 1, 100000);
+    grid->addWidget(new QLabel(QString("XYWH")[k]), k / 2, k % 2 * 2);
+    grid->addWidget(sb, k / 2, k % 2 * 2 + 1);
+    QObject::connect(
+      sb, &QSpinBox::valueChanged,
+      [canvas, k](int v)
+      {
+        QRect r = canvas->cropRect();
+        k == 0   ? r.moveLeft(v)
+        : k == 1 ? r.moveTop(v)
+        : k == 2 ? r.setWidth(v)
+                 : r.setHeight(v);
+        canvas->setCropRect(r, k == 2 ? 'w' : k == 3 ? 'h' : 0);
+      });
+  }
+  return box;
 }
 
 void showOptions(const Options &o, int tool)
@@ -502,6 +531,17 @@ void onRepaint(const Options &o)
   Canvas *canvas = o.canvas;
   if (canvas->selecting())
     showPicks(o);
+  QRect c = canvas->cropRect();
+  for (int k = 0; k < 4; k++)
+  { // the Crop tool's fields follow its rectangle
+    int v = k == 0 ? c.x() : k == 1 ? c.y() : k == 2 ? c.width() : c.height();
+    o.cropFields[k]->setEnabled(!c.isEmpty());
+    if (!c.isEmpty() && o.cropFields[k]->value() != v)
+    {
+      QSignalBlocker b(o.cropFields[k]);
+      o.cropFields[k]->setValue(v);
+    }
+  }
   auto op = canvas->refOpacity();
   o.refBox->setVisible(op.has_value());
   if (op && !o.refOpacity->isSliderDown())
