@@ -440,12 +440,13 @@ bool Document::deleteLayer(int layer)
 }
 
 bool Document::editLayers(
-  const std::vector<int> &layers, const std::function<bool(Layer &)> &change)
+  const std::vector<int> &layers, const std::function<bool(Layer &)> &change,
+  bool withGroups)
 {
   auto v = layers_;
   bool any = false;
   for (int i : layers)
-    if (i > 0 && i < int(v.size()) && !v[i].group)
+    if (i > 0 && i < int(v.size()) && (withGroups || !v[i].group))
       any |= change(v[i]);
   if (!any)
     return false;
@@ -491,7 +492,7 @@ void Document::previewLayer(
   Layer &l = layers_[layer];
   l.name = name;
   l.opacity = opacity;
-  l.alphaLock = alphaLock && !l.vector;
+  l.alphaLock = alphaLock && !l.vector && !l.group;
   l.inheritAlpha = inheritAlpha;
 }
 
@@ -505,11 +506,12 @@ bool Document::setLayer(
       Layer was = l;
       l.name = name;
       l.opacity = opacity;
-      l.alphaLock = alphaLock && !l.vector;
+      l.alphaLock = alphaLock && !l.vector && !l.group;
       l.inheritAlpha = inheritAlpha;
       return l.name != was.name || l.opacity != was.opacity ||
              l.alphaLock != was.alphaLock || l.inheritAlpha != was.inheritAlpha;
-    });
+    },
+    true);
 }
 
 bool Document::rasterizeLayers(const std::vector<int> &layers)

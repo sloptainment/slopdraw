@@ -340,13 +340,13 @@ void wireLayerList(Shell &sh)
 }
 
 // Layer > Properties and a row's right-click (#470): edits preview live with no undo
-// step; OK keeps them as one step, Cancel puts the layer back. The Background and
-// groups have none yet.
+// step; OK keeps them as one step, Cancel puts the layer back. The Background has
+// none.
 void openProperties(Shell &sh, int i)
 {
   Canvas *canvas = sh.canvas;
   Document &d = canvas->doc();
-  if (i < 1 || d.isGroup(i))
+  if (i < 1)
     return;
   const QString name0 = d.name(i);
   const double opacity0 = d.opacity(i);
@@ -360,7 +360,7 @@ void openProperties(Shell &sh, int i)
   opacity->setValue(std::lround(opacity0 * 100));
   auto *lock = new QCheckBox("Alpha Lock");
   lock->setChecked(lock0);
-  lock->setVisible(!d.vector(i));
+  lock->setVisible(!d.vector(i) && !d.isGroup(i));
   auto *inherit = new QCheckBox("Inherit Alpha");
   inherit->setChecked(inherit0);
   auto *buttons =

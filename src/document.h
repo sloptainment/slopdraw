@@ -331,8 +331,8 @@ public:
   bool setAlphaLock(const std::vector<int> &layers, bool on);
   bool setInheritAlpha(const std::vector<int> &layers, bool on);
   bool rasterizeLayers(const std::vector<int> &layers);
-  // The Properties dialog's fields on a Raster or Vector Layer (#470; a Vector Layer
-  // keeps no Alpha Lock). previewLayer sets them with no undo step, for the live
+  // The Properties dialog's fields on a layer or group (#470, #471; a Vector Layer
+  // or group keeps no Alpha Lock). previewLayer sets them with no undo step, for the live
   // preview; setLayer is one Tree step from the values the layer holds now, false,
   // no step, if none differ.
   void previewLayer(
@@ -442,10 +442,11 @@ private:
   // index is bad or is the Background.
   std::vector<std::pair<int, int>> blocksOf(const std::vector<int> &items) const;
   // One Tree step in which `change` edits each of the layers that are not the
-  // Background or a group; it returns whether it changed that layer. False, no
+  // Background or a group (groups too if withGroups); it returns whether it changed that layer. False, no
   // step, if none did.
   bool editLayers(
-    const std::vector<int> &layers, const std::function<bool(Layer &)> &change);
+    const std::vector<int> &layers, const std::function<bool(Layer &)> &change,
+    bool withGroups = false);
   // Applies s (undo: reverse = true) to layers_.
   void apply(const Step &s, bool reverse);
   // apply's Add and Delete: a layer comes or goes.

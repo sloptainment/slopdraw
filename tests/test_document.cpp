@@ -1801,6 +1801,19 @@ static bool propertiesPreviewThenOneStep() {
     return !doc.alphaLock(v) && doc.name(v) == "Ink";
 }
 
+// Properties on a group (#471): the same preview and one step; a group keeps no Alpha Lock.
+static bool propertiesOnAGroup() {
+    Document doc(QSize(16, 16));
+    int g = doc.addGroup();
+    int id = doc.stepId();
+    doc.previewLayer(g, "Clouds", 0.5, true, true);
+    if (doc.stepId() != id || doc.name(g) != "Clouds" || doc.opacity(g) != 0.5 || doc.alphaLock(g) || !doc.inheritAlpha(g)) return false;
+    doc.previewLayer(g, "Group 1", 1.0, false, false);
+    if (!doc.setLayer(g, "Clouds", 0.5, true, true) || doc.stepId() != id + 1) return false;
+    if (doc.alphaLock(g)) return false;
+    return doc.undo() && doc.name(g) == "Group 1" && doc.opacity(g) == 1.0 && !doc.inheritAlpha(g);
+}
+
 // Alpha Lock (#427): stroke, fill and erase on a locked layer recolor but keep every alpha; Delete still clears.
 static bool alphaLockHoldsAlphaUnderPaint() {
     auto pencil = loadBrush(TEST_PENCIL);
@@ -2454,6 +2467,7 @@ int main() {
     run("referencesAreOneUndoStepEachAndNeverRendered", referencesAreOneUndoStepEachAndNeverRendered);
     run("alphaLockFlagIsOneUndoStep", alphaLockFlagIsOneUndoStep);
     run("propertiesPreviewThenOneStep", propertiesPreviewThenOneStep);
+    run("propertiesOnAGroup", propertiesOnAGroup);
     run("inheritAlphaCutsByWhatIsBelow", inheritAlphaCutsByWhatIsBelow);
     run("inheritAlphaIsScopedToGroups", inheritAlphaIsScopedToGroups);
     run("alphaLockHoldsAlphaUnderPaint", alphaLockHoldsAlphaUnderPaint);
