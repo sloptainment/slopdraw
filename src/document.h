@@ -106,6 +106,12 @@ public:
   // (layer 0) included. One undo step. Returns false, changing nothing, for a
   // Vector Layer.
   bool clearRect(const QRect &rect);
+  // The canvas becomes `size`, the old picture at `offset` in it: new area is
+  // transparent on every layer, the Background included, pixels past the edge are
+  // cropped, Vector Paths move by `offset` with every node kept and Vector Layers
+  // are redrawn. One undo step. False, no step, for a size below 1 or the size it
+  // already has at offset 0,0 (#650).
+  bool resize(QSize size, QPoint offset);
   // Select on a raster selection (#205). floatRect lifts rect's pixels from the
   // current Raster Layer, clears rect, and draws the lifted pixels through m
   // (smooth): the live drag, no undo step. Every call starts again from the pixels

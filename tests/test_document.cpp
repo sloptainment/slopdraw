@@ -1480,6 +1480,29 @@ static bool clearingARectangleUndoesOnce() {
     return cleared && undone && redone && white && refused;
 }
 
+// resize(size, offset) is one undo step: the old picture lands at the offset, new area is transparent on every layer incl. the
+// Background, a cut edge crops, Vector Layer nodes move by the offset and are kept, and a no-op is refused with no step (#650).
+static bool resizingMovesPixelsAndPathsInOneStep() {
+    Document::VPath v{{}, false, Qt::black, 4, {{0, 4}, {1, 4}}, Document::PathKind::Bezier};
+    v.bezier = {{{1, 1}, {1, 1}, {1, 1}, BezierType::Cusp}, {{3, 2}, {3, 2}, {3, 2}, BezierType::Cusp}};
+    Document doc(QSize(4, 3));
+    doc.fill(Qt::red, {{0, 0}, {4, 0}, {4, 3}, {0, 3}});
+    doc.addVectorLayer();
+    doc.setPaths(1, {v});
+    int id = doc.stepId();
+    bool grown = doc.resize(QSize(6, 3), QPoint(2, 0)) && doc.stepId() != id && doc.image(0).size() == QSize(6, 3) && doc.image(1).size() == QSize(6, 3)
+        && doc.image(0).pixelColor(2, 0) == QColor(Qt::red) && doc.image(0).pixelColor(0, 0).alpha() == 0 && doc.image(0).pixelColor(1, 2).alpha() == 0
+        && doc.paths(1)[0].bezier[0].p == QPointF(3, 1);
+    bool undone = doc.undo() && doc.image(0).size() == QSize(4, 3) && doc.image(0).pixelColor(0, 0) == QColor(Qt::red) && doc.paths(1)[0].bezier[0].p == QPointF(1, 1);
+    bool redone = doc.redo() && doc.image(0).size() == QSize(6, 3) && doc.paths(1)[0].bezier[0].p == QPointF(3, 1);
+    doc.undo();
+    bool cropped = doc.resize(QSize(3, 3), QPoint(-1, 0)) && doc.image(0).size() == QSize(3, 3) && doc.paths(1).size() == 1 && doc.paths(1)[0].bezier[0].p == QPointF(0, 1)
+        && doc.paths(1)[0].bezier.size() == 2;
+    int steps = doc.stepId();
+    bool refused = !doc.resize(QSize(3, 3), QPoint()) && !doc.resize(QSize(0, 3), QPoint()) && doc.stepId() == steps;
+    return grown && undone && redone && cropped && refused;
+}
+
 // A Bezier path's skeleton is its node-to-node cubics (#306): a two-node S-curve with knots 4, 10, 4 at t 0, 0.5, 1 paints
 // across 10 px at the middle of the cubic but not 4 px off near its start, ends flat (nothing past an end along the tangent),
 // and pathAt hits it.
@@ -2403,6 +2426,7 @@ int main() {
     run("hitsFollowMode", hitsFollowMode);
     run("boxPicksThePathsItTouches", boxPicksThePathsItTouches);
     run("clearingARectangleUndoesOnce", clearingARectangleUndoesOnce);
+    run("resizingMovesPixelsAndPathsInOneStep", resizingMovesPixelsAndPathsInOneStep);
     run("transformBoxBoundsAndMovesPickedPaths", transformBoxBoundsAndMovesPickedPaths);
     run("transformBoxScalesAboutOppositeHandle", transformBoxScalesAboutOppositeHandle);
     run("knotDragIsScaled", knotDragIsScaled);

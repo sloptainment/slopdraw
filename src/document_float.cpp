@@ -19,6 +19,40 @@ bool Document::clearRect(const QRect &rect)
   return true;
 }
 
+bool Document::resize(QSize size, QPoint offset)
+{
+  if (size.width() < 1 || size.height() < 1)
+    return false;
+  if (size == layers_[0].image.size() && offset.isNull())
+    return false;
+  seal();
+  auto v = layers_;
+  for (Layer &l : v)
+  {
+    if (l.group)
+      continue;
+    QImage img(size, QImage::Format_RGBA8888);
+    img.fill(Qt::transparent);
+    QPainter p(&img);
+    p.setCompositionMode(QPainter::CompositionMode_Source);
+    p.drawImage(offset, l.image);
+    p.end();
+    l.image = img;
+    for (VPath &path : l.paths)
+      path = transformNodes(path, QTransform::fromTranslate(offset.x(), offset.y()));
+    if (l.vector)
+      rasterize(l);
+  }
+  Step s;
+  s.kind = Tree;
+  s.items = layers_;
+  s.newItems = v;
+  s.to = s.layer = current_;
+  push(s);
+  apply(s, false);
+  return true;
+}
+
 bool Document::floatRect(const QRect &rect, const QTransform &m)
 {
   if (layers_[current_].vector)
