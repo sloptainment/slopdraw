@@ -39,9 +39,7 @@ int main(int argc, char **argv)
   buildViewMenu(sh);
   buildLayerMenu(sh);
   buildToolsMenu(sh);
-  auto *helpMenu = sh.window.menuBar()->addMenu("&Help");
-  QObject::connect(
-    helpMenu->addAction("About Qt"), &QAction::triggered, &QApplication::aboutQt);
+  buildHelpMenu(sh);
 
   sh.kindChanged(); // the menus exist now: the no-document state applies to them
                     // too

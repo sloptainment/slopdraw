@@ -14,6 +14,8 @@
 #include <QMenuBar>
 #include <QSettings>
 #include <QWidgetAction>
+#include <qapplication.h>
+#include <qdialog.h>
 
 QAction *key(Shell &sh, QAction *a, QList<QKeySequence> keys)
 {
@@ -47,13 +49,15 @@ enum class PasteTo
 };
 
 // Paste on a Raster Layer asks (#509, look: #511); a Vector Layer or group has no
-// Same layer to choose, so it goes to a new Raster Layer without asking (#564, #625, #626).
+// Same layer to choose, so it goes to a new Raster Layer without asking (#564,
+// #625, #626).
 PasteTo askPasteTo(Canvas *canvas, const QImage &img)
 {
   Document &d = canvas->doc();
   bool raster = !d.vector(d.current()) && !d.isGroup(d.current());
   if (!raster)
-    return PasteTo::New; // no Same layer to choose: a new Raster Layer, no menu (#626)
+    return PasteTo::New; // no Same layer to choose: a new Raster Layer, no menu
+                         // (#626)
   QMenu menu;
   auto *head = new QWidgetAction(&menu);
   auto *box = new QWidget;
@@ -279,4 +283,35 @@ void buildToolsMenu(Shell &sh)
       {QKeySequence("Shift+Return"), QKeySequence("Shift+Enter")}),
     &QAction::triggered, [canvas] { canvas->finishPath(true); });
   sh.docActions.push_back(toolsMenu->menuAction());
+}
+
+void buildHelpMenu(Shell &sh)
+{
+  auto *helpMenu = sh.window.menuBar()->addMenu("&Help");
+  QObject::connect(
+    helpMenu->addAction("About"), &QAction::triggered,
+    [&sh]()
+    {
+      QDialog dialog(&sh.window);
+      dialog.setWindowTitle("About");
+
+      auto *layout = new QVBoxLayout(&dialog);
+
+      // 1. Text description
+      auto *textLabel =
+        new QLabel("slopdraw v0.1", &dialog);
+      textLabel->setAlignment(Qt::AlignCenter);
+
+      auto *imageLabel = new QLabel(&dialog);
+      QPixmap pixmap(":/badge.png");
+      imageLabel->setPixmap(
+        pixmap.scaled(88, 31, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+      imageLabel->setAlignment(Qt::AlignCenter);
+
+      layout->addWidget(textLabel);
+      layout->addWidget(imageLabel);
+      dialog.exec();
+    });
+  QObject::connect(
+    helpMenu->addAction("About Qt"), &QAction::triggered, &QApplication::aboutQt);
 }

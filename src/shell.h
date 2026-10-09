@@ -89,3 +89,4 @@ void buildEditMenu(Shell &sh);
 void buildViewMenu(Shell &sh);
 void buildLayerMenu(Shell &sh);
 void buildToolsMenu(Shell &sh);
+void buildHelpMenu(Shell &sh);

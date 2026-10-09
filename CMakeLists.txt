@@ -3,6 +3,7 @@ project(slopdraw LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Gui)
 
@@ -14,7 +15,25 @@ pkg_check_modules(MYPAINT REQUIRED IMPORTED_TARGET libmypaint)
 target_link_libraries(slopdraw_core PUBLIC Qt6::Gui PkgConfig::MYPAINT)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
-add_executable(slopdraw src/main.cpp src/canvas.cpp src/canvas_draw.cpp src/canvas_paint.cpp src/canvas_nodes.cpp src/canvas_select.cpp src/canvas_refs.cpp src/colorpicker.cpp src/navigator.cpp src/layerlist.cpp src/docks.cpp src/layersdock.cpp src/tooloptions.cpp src/toolsdock.cpp src/filemenu.cpp src/newdialog.cpp src/menus.cpp)
+add_executable(slopdraw 
+  src/main.cpp 
+  src/canvas.cpp 
+  src/canvas_draw.cpp 
+  src/canvas_paint.cpp 
+  src/canvas_nodes.cpp 
+  src/canvas_select.cpp 
+  src/canvas_refs.cpp 
+  src/colorpicker.cpp 
+  src/navigator.cpp 
+  src/layerlist.cpp 
+  src/docks.cpp 
+  src/layersdock.cpp 
+  src/tooloptions.cpp 
+  src/toolsdock.cpp 
+  src/filemenu.cpp 
+  src/newdialog.cpp 
+  src/menus.cpp
+  resources/res.qrc)
 target_link_libraries(slopdraw PRIVATE slopdraw_core Qt6::Widgets)
 # Power of 10 rule 10 (#622): src/ builds warning-free at the pedantic setting; tests/ and vendor/ C are not held to it (#644).
 target_compile_options(slopdraw_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>)
