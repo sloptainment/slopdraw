@@ -19,13 +19,13 @@
 namespace
 {
 
-// "name[*] - mydraw"; Qt shows the [*] as * while the window is modified (#278)
+// "name[*] - slopdraw"; Qt shows the [*] as * while the window is modified (#278)
 void updateTitle(Shell &sh)
 {
   Canvas *canvas = sh.canvas;
   if (!canvas->hasDoc())
   {
-    sh.window.setWindowTitle("mydraw");
+    sh.window.setWindowTitle("slopdraw");
     sh.window.setWindowModified(false);
     return;
   }
@@ -33,7 +33,7 @@ void updateTitle(Shell &sh)
                    ? QString("Untitled %1").arg(canvas->session().untitled)
                    : QFileInfo(canvas->session().path).fileName();
   bool dirty = canvas->doc().stepId() != canvas->session().saved;
-  sh.window.setWindowTitle(name + "[*] - mydraw");
+  sh.window.setWindowTitle(name + "[*] - slopdraw");
   sh.window.setWindowModified(dirty);
   sh.tabBar->setTabText(sh.active, dirty ? name + "*" : name);
 }

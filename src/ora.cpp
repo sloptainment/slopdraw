@@ -52,7 +52,7 @@ QString pathData(const QPainterPath &p)
 
 // data/layerN.svg: one <path> per Vector Path that any viewer draws: d = its
 // outline in the stroke color when the mode strokes, else its curve in the fill
-// color. The rest is mydraw's own attributes.
+// color. The rest is slopdraw's own attributes.
 QByteArray svg(const Document &doc, int layer)
 {
   QByteArray out;
@@ -99,7 +99,7 @@ QByteArray svg(const Document &doc, int layer)
   return out;
 }
 
-// mydraw/references.xml (#538): one <reference> per Reference, bottom first; src is
+// slopdraw/references.xml (#538): one <reference> per Reference, bottom first; src is
 // its PNG beside it, transform the 9 QTransform entries row by row, crop x y w h in
 // image pixels.
 QByteArray referencesXml(const Document &doc)
@@ -272,7 +272,7 @@ bool writeOra(const Document &doc, const QString &path)
   return ok;
 }
 
-// The references in mydraw/references.xml, bottom first (#538); entry reads one zip
+// The references in slopdraw/references.xml, bottom first (#538); entry reads one zip
 // entry. Files from before #538 have none.
 static std::vector<Reference>
 readReferences(const std::function<QByteArray(const QString &)> &entry)

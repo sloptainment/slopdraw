@@ -2,19 +2,18 @@
 ppedit - A pattern plate editor for Spiro splines.
 Copyright (C) 2007 Raph Levien
 
-Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-<LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+Licensed under the Apache License, Version 2.0 <http://www.apache.org/licenses/LICENSE-2.0>
+or the MIT license <http://opensource.org/licenses/MIT>, at your
 option. This file may not be copied, modified, or distributed
 except according to those terms.
 
 
-Ported to C++ for mydraw. Changes from ppedit/spiro.c: Beziers are emitted into a
+Ported to C++ for slopdraw. Changes from ppedit/spiro.c: Beziers are emitted into a
 QPainterPath, buffers are zero-initialised, open paths index the band matrix without
 wrap-around (so paths of fewer than 6 nodes solve), and the solver reports failure
 instead of returning NaN Beziers.
 
-MIT License, Copyright (c) 2019 Raph Levien: see LICENSE-MIT.
+MIT License, Copyright (c) 2019 Raph Levien: see LICENSE-SPIRO.
 */
 /* C++ implementation of third-order polynomial spirals. */
 

@@ -50,7 +50,7 @@ int main(int argc, char **argv)
 {
   qputenv("QT_QPA_PLATFORM", "offscreen");
   QApplication app(argc, argv);
-  QCoreApplication::setOrganizationName("mydraw-test");
+  QCoreApplication::setOrganizationName("slopdraw-test");
   QCoreApplication::setApplicationName("test_resize_dialog");
   QSettings().clear();
 

@@ -9,8 +9,8 @@ int main(int argc, char **argv)
 {
   QApplication app(argc, argv);
   app.setOrganizationName(
-    "mydraw"); // QSettings keys the saved window state on these
-  app.setApplicationName("mydraw");
+    "slopdraw"); // QSettings keys the saved window state on these
+  app.setApplicationName("slopdraw");
 
   Shell sh;
   Canvas *canvas = sh.canvas = new Canvas;
@@ -48,6 +48,6 @@ int main(int argc, char **argv)
   sh.window.resize(1024, 768);
   sh.window.show();
   for (const QString &path : app.arguments().mid(1))
-    sh.openPath(path); // mydraw a.ora b.ora: a tab each
+    sh.openPath(path); // slopdraw a.ora b.ora: a tab each
   return app.exec();
 }
