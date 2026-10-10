@@ -1498,7 +1498,7 @@ static bool transformRectMovesPixelsAndUndoesOnce() {
     QImage after = doc.image(1);
     bool undone = doc.undo() && doc.image(1) == before;
     bool redone = doc.redo() && doc.image(1) == after && doc.undo() && doc.image(1) == before;
-    bool live = doc.floatRect(box, QTransform().scale(0.5, 0.5)) && doc.image(1) != before && doc.floatRect(box, move) && doc.image(1) == after;
+    bool live = doc.floatRect(box, QTransform().scale(0.5, 0.5)) && doc.image(1) != before && doc.stepId() >= 0 && doc.floatRect(box, move) && doc.image(1) == after;
     doc.cancelFloat();
     bool cancelled = doc.image(1) == before && !doc.redo();
     doc.addVectorLayer();

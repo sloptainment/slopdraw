@@ -72,6 +72,7 @@ bool Document::floatRect(const QRect &rect, const QTransform &m)
     seal();
     history_.resize(applied_); // a new edit discards the redo branch
     strokeStart_ = layers_[current_].image;
+    pasting_ = true; // not a step yet: stepId must not seal it
   }
   QImage lifted = strokeStart_.copy(rect);
   layers_[current_].image = strokeStart_;
