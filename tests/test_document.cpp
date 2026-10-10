@@ -861,6 +861,28 @@ static bool oraLayersAreUntaggedSixteenBitLinear() {
     return img.depth() == 64 && zipEntry(path, "stack.xml").contains("storage=\"integer\"") && back && back->image(1) == doc.image(1) && back->render() == doc.render();
 }
 
+// #579: a Float-point document saves raw half-float layers beside the 16-bit PNGs and reopens as Float-point with 1.5 and -0.2 intact; the PNG is clamped.
+static bool oraKeepsFloatPointValues() {
+    Document doc(QSize(8, 8), qsizetype(1) << 30, true);
+    doc.addLayer();
+    QImage hot(8, 8, QImage::Format_RGBA16FPx4);
+    hot.setColorSpace(QColorSpace::SRgbLinear);
+    hot.fill(Qt::transparent);
+    auto* p = reinterpret_cast<qfloat16*>(hot.scanLine(1));
+    p[4] = qfloat16(1.5f); p[5] = qfloat16(-0.2f); p[6] = qfloat16(0.f); p[7] = qfloat16(1.f);
+    doc.restoreLayer(1, hot, "hot", true, 1.0);
+    QTemporaryDir dir;
+    QString path = dir.filePath("f.ora");
+    if (!writeOra(doc, path)) return false;
+    auto back = readOra(path);
+    if (!back || back->image(1).format() != QImage::Format_RGBA16FPx4) return false;
+    auto* q = reinterpret_cast<const qfloat16*>(back->image(1).constScanLine(1));
+    QImage png = QImage::fromData(zipEntry(path, "data/layer1.png"), "PNG");
+    return std::abs(float(q[4]) - 1.5f) < 0.001f && std::abs(float(q[5]) + 0.2f) < 0.001f &&
+           zipEntry(path, "stack.xml").contains("storage=\"float\"") && png.depth() == 64 &&
+           png.pixelColor(1, 1).redF() == 1.f && png.pixelColor(1, 1).greenF() == 0.f;
+}
+
 // #538: two references round-trip through .ora (pixels, transform, crop, order, opacity) with nothing to undo;
 // stack.xml is byte-identical with and without them, and a file without them opens with none.
 static bool oraRoundTripsReferences() {
@@ -2765,6 +2787,7 @@ int main() {
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
     run("taglessOraOpensConvertedFromSrgb", taglessOraOpensConvertedFromSrgb);
     run("oraLayersAreUntaggedSixteenBitLinear", oraLayersAreUntaggedSixteenBitLinear);
+    run("oraKeepsFloatPointValues", oraKeepsFloatPointValues);
     run("oraRoundTripsReferences", oraRoundTripsReferences);
     run("oraRoundTripsGroups", oraRoundTripsGroups);
     run("importedReferenceFitsTheView", importedReferenceFitsTheView);

@@ -1,4 +1,5 @@
 #include "ora.h"
+#include <cstring>
 #include <functional>
 #include <QBuffer>
 #include <QColorSpace>
@@ -24,6 +25,16 @@ QImage untagged(QImage img)
 {
   img.setColorSpace(QColorSpace());
   return img;
+}
+
+// A Float-point layer's FP16 pixels row by row, native byte order (#579).
+QByteArray rawPixels(const QImage &img)
+{
+  QByteArray out;
+  for (int y = 0; y < img.height(); y++)
+    out.append(
+      reinterpret_cast<const char *>(img.constScanLine(y)), img.width() * 8);
+  return out;
 }
 
 bool add(mz_zip_archive &z, const char *name, const QByteArray &data, mz_uint level)
@@ -234,7 +245,8 @@ bool writeOra(const Document &doc, const QString &path)
   w.writeAttribute("version", "0.0.3");
   w.writeAttribute("w", QString::number(doc.image(0).width()));
   w.writeAttribute("h", QString::number(doc.image(0).height()));
-  w.writeAttribute(kNs, "storage", "integer");
+  const bool fp = doc.image(0).format() == QImage::Format_RGBA16FPx4;
+  w.writeAttribute(kNs, "storage", fp ? "float" : "integer");
   w.writeStartElement("stack");
   int top = doc.layerCount() - 1;
   stackItems(w, doc, top, 0);
@@ -249,7 +261,11 @@ bool writeOra(const Document &doc, const QString &path)
     ok = doc.isGroup(i) ||
          (add(
             z, QString("data/layer%1.png").arg(i).toUtf8().constData(),
-            png(untagged(doc.image(i))), MZ_DEFAULT_COMPRESSION) &&
+            png(untagged(doc.image(i).convertToFormat(QImage::Format_RGBA64))),
+            MZ_DEFAULT_COMPRESSION) &&
+          (!fp || add(
+                    z, QString("mydraw/layer%1.f16").arg(i).toUtf8().constData(),
+                    rawPixels(doc.image(i)), MZ_DEFAULT_COMPRESSION)) &&
           (!doc.vector(i) ||
            add(
              z, QString("data/layer%1.svg").arg(i).toUtf8().constData(),
@@ -326,7 +342,8 @@ struct OraItem
 // Parses stack.xml into layers (top first) and the image size; false on bad XML.
 static bool
 readStack(
-  const QByteArray &xml, std::vector<OraItem> &layers, QSize &size, bool &linear)
+  const QByteArray &xml, std::vector<OraItem> &layers, QSize &size, bool &linear,
+  bool &fp)
 {
   QXmlStreamReader r(xml);
   int nest = 0; // <stack>s open: the root is 1, so an item's depth is nest - 1
@@ -344,6 +361,7 @@ readStack(
     {
       size = QSize(a.value("w").toInt(), a.value("h").toInt());
       linear = a.hasAttribute(kNs, "storage");
+      fp = a.value(kNs, "storage") == u"float";
     }
     else if (r.name() == u"stack" && nest++ > 0)
       layers.push_back(
@@ -387,11 +405,12 @@ std::optional<Document> readOra(const QString &path)
   std::vector<OraItem> layers; // top first, as in stack.xml
   QSize size;
   bool linear = false; // no storage attribute: a tagless .ora, layers are sRGB
-  bool parsed = readStack(entry("stack.xml"), layers, size, linear);
+  bool fp = false; // storage="float": raw FP16 beside each PNG (#579)
+  bool parsed = readStack(entry("stack.xml"), layers, size, linear, fp);
   std::optional<Document> doc;
   if (parsed && !layers.empty() && !size.isEmpty())
   {
-    doc.emplace(size);
+    doc.emplace(size, qsizetype(1) << 30, fp);
     for (int i = 0; i < int(layers.size()); i++)
     {
       const OraItem &l = layers[layers.size() - 1 - i];
@@ -405,6 +424,15 @@ std::optional<Document> readOra(const QString &path)
       }
       if (linear)
         img.setColorSpace(QColorSpace::SRgbLinear);
+      // The raw data wins over the clamped PNG when it is the right size.
+      QByteArray raw = fp && !l.group ? entry(QString("mydraw/layer%1.f16").arg(i)) : QByteArray();
+      if (raw.size() == size.width() * size.height() * 8)
+      {
+        img = QImage(size, QImage::Format_RGBA16FPx4);
+        for (int y = 0; y < size.height(); y++)
+          std::memcpy(img.scanLine(y), raw.constData() + y * size.width() * 8, size.width() * 8);
+        img.setColorSpace(QColorSpace::SRgbLinear);
+      }
       if (i > 0)
         doc->addLayer();
       doc->restoreLayer(
