@@ -30,9 +30,10 @@ std::vector<BrushEntry> listBrushes(const QString &dir)
 namespace
 {
 
-// A MyPaintSurface over a QImage; lock_alpha and colorize are ignored.
+// A MyPaintSurface2 over a QImage; lock_alpha, colorize, posterize and paint
+// (spectral mixing) are ignored.
 // eraser takes dabs out of the alpha (white under alpha lock, which keeps alpha).
-struct ImageSurface : MyPaintSurface
+struct ImageSurface : MyPaintSurface2
 {
   QImage *img;
   bool eraser, alphaLock;
@@ -77,7 +78,7 @@ void forEachDabPixel(
 }
 
 int drawDab(
-  MyPaintSurface *s,
+  MyPaintSurface2 *s,
   float x,
   float y,
   float radius,
@@ -89,6 +90,9 @@ int drawDab(
   float alphaEraser,
   float aspect,
   float angle,
+  float,
+  float,
+  float,
   float,
   float)
 {
@@ -128,14 +132,15 @@ int drawDab(
 }
 
 void getColor(
-  MyPaintSurface *s,
+  MyPaintSurface2 *s,
   float x,
   float y,
   float radius,
   float *r,
   float *g,
   float *b,
-  float *a)
+  float *a,
+  float)
 {
   float sum[3] = {}, sumA = 0, w = 0; // sum is alpha-weighted, so transparent
                                       // pixels don't pull the colour toward black
@@ -171,13 +176,16 @@ void paintStroke(
   bool alphaLock)
 {
   ImageSurface s;
-  s.draw_dab = drawDab;
-  s.get_color = getColor;
-  s.begin_atomic = [](MyPaintSurface *) {};
-  s.end_atomic = [](MyPaintSurface *, MyPaintRectangle *) {};
-  s.destroy = nullptr;
-  s.save_png = nullptr;
-  s.refcount = 1;
+  s.draw_dab_pigment = drawDab;
+  s.get_color_pigment = getColor;
+  s.parent.draw_dab = nullptr;
+  s.parent.get_color = nullptr;
+  s.parent.begin_atomic = [](MyPaintSurface *) {};
+  s.parent.end_atomic = [](MyPaintSurface *, MyPaintRectangle *) {};
+  s.end_atomic_multi = [](MyPaintSurface2 *, MyPaintRectangles *) {};
+  s.parent.destroy = nullptr;
+  s.parent.save_png = nullptr;
+  s.parent.refcount = 1;
   s.img = &layer;
   s.eraser = eraser;
   s.alphaLock = alphaLock;
@@ -191,13 +199,13 @@ void paintStroke(
     if (!samples.empty())
     {
       const auto &p = samples.front();
-      mypaint_brush_stroke_to(
-        brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, 6.0);
+      mypaint_brush_stroke_to_2(
+        brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, 6.0, 1, 0, 0);
     }
   }
   for (const auto &p : samples)
-    mypaint_brush_stroke_to(
-      brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, p.dt);
+    mypaint_brush_stroke_to_2(
+      brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, p.dt, 1, 0, 0);
 }
 
 void setBrushColor(MyPaintBrush *brush, const QColor &color)
@@ -225,4 +233,28 @@ void setBrushOpacity(MyPaintBrush *brush, float opacity)
 float dragRadius(float radius, float dx)
 {
   return std::clamp(radius * std::exp(dx * 0.01f), kMinRadius, kMaxRadius);
+}
+
+namespace
+{
+
+QColor mapRgb(const QColor &c, float (*f)(float))
+{
+  return QColor::fromRgbF(f(c.redF()), f(c.greenF()), f(c.blueF()), c.alphaF());
+}
+
+} // namespace
+
+QColor srgbToLinear(const QColor &c)
+{
+  return mapRgb(
+    c, [](float v)
+    { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); });
+}
+
+QColor linearToSrgb(const QColor &c)
+{
+  return mapRgb(
+    c, [](float v)
+    { return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1 / 2.4f) - 0.055f; });
 }

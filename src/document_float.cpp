@@ -37,8 +37,7 @@ bool Document::resize(QSize size, QPoint offset, bool scale)
   {
     if (l.group)
       continue;
-    QImage img(size, QImage::Format_RGBA8888);
-    img.fill(Qt::transparent);
+    QImage img = layerImage(size);
     QPainter p(&img);
     p.setCompositionMode(QPainter::CompositionMode_Source);
     if (scale)
@@ -121,8 +120,7 @@ bool Document::floatGroup(int group, const QTransform &m, bool scaleWidths)
     }
     else
     {
-      QImage out(l.image.size(), l.image.format());
-      out.fill(Qt::transparent);
+      QImage out = layerImage(l.image.size());
       QPainter p(&out);
       p.setRenderHint(QPainter::SmoothPixmapTransform);
       p.setTransform(m);
@@ -204,9 +202,8 @@ bool Document::floatImage(const QImage &img, const QTransform &m, bool newLayer)
     {
       floatFrom_ = current_;
       Layer l{
-        true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888),
+        true, 1, layerImage(layers_[0].image.size()),
         "Layer " + QString::number(layers_.size())};
-      l.image.fill(Qt::transparent);
       l.depth = layers_[current_].depth;
       layers_.insert(
         layers_.begin() + ++current_,

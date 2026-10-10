@@ -325,6 +325,13 @@ static bool brushColorPaintsInThatColor() {
     return c == QColor(255, 137, 137, 255);
 }
 
+// Every 8-bit sRGB gray survives sRGB -> linear -> sRGB, and sRGB 128 is linear 0.2158.
+static bool srgbLinearHelpersRoundTrip() {
+    for (int v = 0; v < 256; v++)
+        if (linearToSrgb(srgbToLinear(QColor(v, v, v))).rgb() != qRgb(v, v, v)) return false;
+    return std::abs(srgbToLinear(QColor(128, 128, 128)).redF() - 0.2158) < 0.0005;
+}
+
 // The pencil wave painted with a larger radius covers more pixels, and with lower opacity is lighter at (53,34), than the default.
 static bool brushRadiusAndOpacityChangeTheStroke() {
     auto render = [](float radius, float opacity) {
@@ -2500,6 +2507,7 @@ int main() {
     run("eraserBrushRemovesAlpha", eraserBrushRemovesAlpha);
     run("smudgeOverTransparentStaysClear", smudgeOverTransparentStaysClear);
     run("brushColorPaintsInThatColor", brushColorPaintsInThatColor);
+    run("srgbLinearHelpersRoundTrip", srgbLinearHelpersRoundTrip);
     run("brushRadiusAndOpacityChangeTheStroke", brushRadiusAndOpacityChangeTheStroke);
     run("secondStrokeDoesNotJoinFirst", secondStrokeDoesNotJoinFirst);
     run("widthAtMatchesSlopfont", widthAtMatchesSlopfont);

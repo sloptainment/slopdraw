@@ -31,7 +31,7 @@ struct PenSample
 };
 
 // Replays samples through brush onto an RGBA8888 image (the Raster Layer), one
-// mypaint_brush_stroke_to per sample. continuing = true carries on the brush's
+// mypaint_brush_stroke_to_2 per sample. continuing = true carries on the brush's
 // current stroke instead of starting a new one. alphaLock = true recolors pixels
 // but keeps every alpha, so pixels with alpha 0 stay untouched.
 void paintStroke(
@@ -51,3 +51,8 @@ void setBrushOpacity(MyPaintBrush *brush, float opacity);
 // 100 px = x e), clamped to kMinRadius..kMaxRadius.
 constexpr float kMinRadius = 1, kMaxRadius = 200;
 float dragRadius(float radius, float dx);
+
+// The exact sRGB transfer curve on each channel of c, via QColor's floats; alpha is
+// kept. srgbToLinear takes a QColor holding sRGB values, linearToSrgb the inverse.
+QColor srgbToLinear(const QColor &c);
+QColor linearToSrgb(const QColor &c);

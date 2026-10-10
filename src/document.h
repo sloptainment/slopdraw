@@ -74,7 +74,7 @@ public:
   // opacity.
   QImage render() const;
   // Replays samples through the brush onto the current Raster Layer, one
-  // mypaint_brush_stroke_to per sample. continuing = true carries on the current
+  // mypaint_brush_stroke_to_2 per sample. continuing = true carries on the current
   // stroke (live pen input); otherwise a new stroke starts. One stroke (a
   // non-continuing call plus the continuing ones after it) is one undo step.
   void stroke(
@@ -455,6 +455,11 @@ private:
   // Turns the stroke in progress (if any) into a Step of history_, and drops the
   // oldest past the budget.
   void seal();
+
+  // The one place a layer's image is made: a transparent image of size, or from
+  // converted to the layer storage format.
+  QImage layerImage(QSize size) const;
+  QImage layerImage(const QImage &from) const;
 
   // The items [lo, hi), all at depth d or deeper, composited into one transparent
   // image: each level on its own, groups at their opacity.

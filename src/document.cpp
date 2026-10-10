@@ -4,8 +4,20 @@
 
 Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget)
 {
-  layers_.push_back({true, 1, QImage(size, QImage::Format_RGBA8888), "Background"});
+  layers_.push_back({true, 1, layerImage(size), "Background"});
   layers_[0].image.fill(Qt::white);
+}
+
+QImage Document::layerImage(QSize size) const
+{
+  QImage out(size, QImage::Format_RGBA8888);
+  out.fill(Qt::transparent);
+  return out;
+}
+
+QImage Document::layerImage(const QImage &from) const
+{
+  return from.convertToFormat(QImage::Format_RGBA8888);
 }
 
 QImage Document::render() const
@@ -23,8 +35,7 @@ QImage Document::groupImage(int group) const
 
 QImage Document::compose(int lo, int hi, int d) const
 {
-  QImage out(layers_[0].image.size(), QImage::Format_RGBA8888);
-  out.fill(Qt::transparent);
+  QImage out = layerImage(layers_[0].image.size());
   // walk down the level's items, a group taking the deeper run below it
   std::vector<std::pair<int, int>> items; // (item, first child)
   for (int i = hi - 1; i >= lo;)
@@ -314,7 +325,7 @@ void Document::restoreLayer(
 {
   layers_[layer] = {
     visible, opacity,
-    group ? QImage() : image.convertToFormat(QImage::Format_RGBA8888), name};
+    group ? QImage() : layerImage(image), name};
   layers_[layer].depth = depth;
   layers_[layer].group = group;
   layers_[layer].alphaLock = alphaLock;

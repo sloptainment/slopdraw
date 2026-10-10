@@ -71,9 +71,8 @@ void Document::applyAddDelete(const Step &s, bool reverse)
       current_ = s.layer - 1; // back to the item below it
     return;
   }
-  insert({true, 1, QImage(layers_[0].image.size(), QImage::Format_RGBA8888), s.na});
+  insert({true, 1, layerImage(layers_[0].image.size()), s.na});
   layers_[s.layer].depth = s.to;
-  layers_[s.layer].image.fill(Qt::transparent);
   if (!s.after.isNull())
     layers_[s.layer].image = s.after; // a paste into a new layer (#504)
   layers_[s.layer].vector = s.vector;
