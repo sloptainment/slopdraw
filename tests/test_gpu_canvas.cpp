@@ -4,6 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <QApplication>
+#include <QElapsedTimer>
+#include <QScreen>
+#include <QVBoxLayout>
 
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); ++failures; } } while (0)
@@ -38,9 +41,41 @@ static int worstDiff(bool floatPoint)
   return worst;
 }
 
+// Outside the document the widget shows its palette, not the GL framebuffer's leftover memory.
+static bool backgroundFilled()
+{
+  Canvas canvas;
+  canvas.setDocument(Document(QSize(100, 100), qsizetype(1) << 30, false));
+  static_cast<QWidget &>(canvas).resize(400, 300);
+  canvas.show();
+  QImage got = canvas.grabFramebuffer();
+  return got.pixelColor(399, 299).rgb() == canvas.palette().window().color().rgb();
+}
+
+// After a resize the document keeps its size on screen, not stretched with the old framebuffer.
+static bool resizeFollowed(QApplication &app)
+{
+  auto pump = [&] { QElapsedTimer t; t.start(); while (t.elapsed() < 500) app.processEvents(); };
+  QWidget top; // the canvas in a layout, like in the app; grabFramebuffer can't see the stretch, the screen can
+  auto *layout = new QVBoxLayout(&top);
+  layout->setContentsMargins(0, 0, 0, 0);
+  Canvas *canvas = new Canvas;
+  layout->addWidget(canvas);
+  canvas->setDocument(Document(QSize(100, 100), qsizetype(1) << 30, false));
+  top.resize(200, 150);
+  top.show();
+  pump();
+  top.resize(400, 300);
+  pump();
+  QImage got = top.screen()->grabWindow(top.winId()).toImage();
+  return got.pixelColor(150, 50).rgb() == canvas->palette().window().color().rgb();
+}
+
 int main(int argc, char **argv)
 {
   QApplication app(argc, argv);
+  CHECK(resizeFollowed(app));
+  CHECK(backgroundFilled());
   CHECK(worstDiff(false) <= 1); // Integer
   CHECK(worstDiff(true) <= 1);  // Float-point
   std::printf(failures ? "FAILED\n" : "ok\n");

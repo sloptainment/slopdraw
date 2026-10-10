@@ -154,6 +154,7 @@ void Canvas::paintGL()
     p.drawText(rect(), Qt::AlignCenter, "File > New or Open");
     return;
   }
+  p.fillRect(rect(), palette().window()); // the GL framebuffer starts undefined; a QWidget showed its parent here
   p.setRenderHint(QPainter::SmoothPixmapTransform);
   p.setTransform(s_.view.matrix());
   QImage frame = s_.doc.render();

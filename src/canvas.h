@@ -308,7 +308,11 @@ protected:
   // panels showing/hiding move the canvas origin: pan back so the drawing stays put
   // on screen
   void moveEvent(QMoveEvent *) override { pinOrigin(); }
-  void resizeEvent(QResizeEvent *) override { pinOrigin(); }
+  void resizeEvent(QResizeEvent *e) override
+  {
+    QOpenGLWidget::resizeEvent(e); // resizes the framebuffer: without it the old size is stretched
+    pinOrigin();
+  }
   void wheelEvent(QWheelEvent *e) override;
   void keyPressEvent(QKeyEvent *e) override;
   void keyReleaseEvent(QKeyEvent *e) override;
