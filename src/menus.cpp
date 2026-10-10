@@ -190,10 +190,9 @@ void buildViewMenu(Shell &sh)
   auto *viewMenu = sh.window.menuBar()->addMenu("&View");
   auto *mirror = key(sh, viewMenu->addAction("&Mirror"), {QKeySequence("M")});
   mirror->setCheckable(true);
-  mirror->setChecked(false);
-  QObject::connect(
-    mirror,
-    &QAction::toggled, [canvas](bool on) { canvas->mirror(on); });
+  QObject::connect(mirror, &QAction::triggered, [canvas] { canvas->mirror(); });
+  QObject::connect(viewMenu, &QMenu::aboutToShow, [canvas, mirror]
+                   { mirror->setChecked(canvas->session().view.mirrored()); });
   auto *showRefs =
     key(sh, viewMenu->addAction("Show &References"), {QKeySequence("Shift+R")});
   showRefs->setCheckable(true);

@@ -251,7 +251,7 @@ public:
   }
   std::function<void()> onPasteEnd; // a paste ended by Enter or a click outside:
                                     // the shell gives the previous tool back
-  void mirror(bool enabled)
+  void mirror()
   {
     s_.view.mirrorAt(rect().center());
     update();

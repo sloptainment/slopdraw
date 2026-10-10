@@ -18,6 +18,7 @@ public:
     return docRadius * std::hypot(m_.m11(), m_.m12());
   } // zoom only; rotate and mirror keep length
   const QTransform &matrix() const { return m_; }
+  bool mirrored() const { return m_.determinant() < 0; }
   double zoom() const { return std::hypot(m_.m11(), m_.m12()); }
   // Degrees in (-180, 180]; a mirror flips the sign, and rotateAt still adds.
   double rotation() const
