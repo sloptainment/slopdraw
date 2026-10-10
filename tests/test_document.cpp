@@ -363,6 +363,25 @@ static bool layerOpacityIsExact() {
     return std::abs(doc.render().pixelColor(10, 10).redF() - 0.3) < 0.0001;
 }
 
+// A pasted image is read as sRGB and lands linear (128 -> 0.2158); a PNG embedding a linear profile is converted from that profile (128 -> 128/255),
+// which also shows Qt's PNG reader fills QImage::colorSpace() from the embedded profile.
+static bool importedImagesAreConvertedToLinear() {
+    auto landed = [](const QImage& img) {
+        Document doc(QSize(8, 8));
+        doc.pasteImage(img, {}, true);
+        return doc.image(doc.current()).pixelColor(1, 1).redF();
+    };
+    QImage grey(4, 4, QImage::Format_RGBA8888);
+    grey.fill(QColor(128, 128, 128));
+    QTemporaryDir dir;
+    QString path = dir.filePath("linear.png");
+    QImage tagged = grey;
+    tagged.setColorSpace(QColorSpace::SRgbLinear);
+    if (!tagged.save(path)) return false;
+    QImage loaded(path);
+    return loaded.colorSpace().isValid() && std::abs(landed(grey) - 0.2158) < 0.001 && std::abs(landed(loaded) - 128 / 255.0) < 0.001;
+}
+
 // The brush dabs once per 10 ms sample (after the first) without moving, and ignores pressure.
 static void stillDabs(MyPaintBrush* brush) {
     mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_DABS_PER_SECOND, 100);
@@ -2636,6 +2655,7 @@ int main() {
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("halfWhiteOverBlackIsLinearHalf", halfWhiteOverBlackIsLinearHalf);
     run("layerOpacityIsExact", layerOpacityIsExact);
+    run("importedImagesAreConvertedToLinear", importedImagesAreConvertedToLinear);
     run("dabAndSmudgeMixInLinearLight", dabAndSmudgeMixInLinearLight);
     run("colourDynamicsBrushPaints", colourDynamicsBrushPaints);
     run("pickedColourRoundTrips", pickedColourRoundTrips);

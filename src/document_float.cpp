@@ -215,7 +215,7 @@ bool Document::floatImage(const QImage &img, const QTransform &m, bool newLayer)
   QPainter p(&layers_[current_].image);
   p.setRenderHint(QPainter::SmoothPixmapTransform);
   p.setTransform(m);
-  p.drawImage(0, 0, img);
+  p.drawImage(0, 0, layerImage(img));
   return true;
 }
 

@@ -87,7 +87,8 @@ void Canvas::copy(bool cut)
     return;
   QRect all = s_.doc.image(0).rect();
   QRect r = !rasterBox() ? all : floating_ ? floatM_.mapRect(box_) & all : box_;
-  QGuiApplication::clipboard()->setImage(s_.doc.image(s_.doc.current()).copy(r));
+  QGuiApplication::clipboard()->setImage(
+    encodeSrgb(s_.doc.image(s_.doc.current()).copy(r)));
   if (!cut)
     return;
   commitFloat();
