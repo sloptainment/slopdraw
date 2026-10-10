@@ -95,7 +95,7 @@ public:
   void fill(
     const QColor &color, const std::vector<QPointF> &points, bool eraser = false);
   // Bucket Fill (#604): fills the region of the current Raster Layer 4-connected to
-  // `at` whose pixels differ from the clicked one by at most threshold in every
+  // `at` whose pixels differ from the clicked one by at most threshold (0..255, linear light, #684) in every
   // RGBA channel, through fill's compositing (alpha lock, eraser, color's alpha).
   // expand grows (or, negative, shrinks) the region by whole pixels, antialiased
   // softens its edge, sampleMerged matches against the visible composite instead of

@@ -2583,10 +2583,10 @@ static bool bucketFillToolFitsRasterOnly() {
 static bool bucketFillObeysItsRules() {
     QColor red(255, 0, 0);
     Document t(QSize(32, 32));
-    t.fill(QColor(240, 250, 255), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 15 off white in red
+    t.fill(QColor(249, 252, 255), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 13.4 off white in linear 0..255
     Document t16(QSize(32, 32));
-    t16.fill(QColor(239, 255, 255), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 16 off
-    bool threshold = t.bucketFill({30, 16}, red, 15, 0, false) && t.colorAt({2, 16}) == red && t16.bucketFill({30, 16}, red, 15, 0, false) && t16.colorAt({2, 16}) == QColor(239, 255, 255) && t16.colorAt({20, 16}) == red;
+    t16.fill(QColor(248, 255, 255), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 15.6 off in linear
+    bool threshold = t.bucketFill({30, 16}, red, 15, 0, false) && t.colorAt({2, 16}) == red && t16.bucketFill({30, 16}, red, 15, 0, false) && t16.colorAt({2, 16}) == QColor(248, 255, 255) && t16.colorAt({20, 16}) == red;
 
     Document layer(QSize(32, 32));
     layer.addLayer();
@@ -2631,12 +2631,21 @@ static bool bucketFillGrowsAndSmooths() {
     bool shrink = shrunk.bucketFill({16, 16}, red, 0, -2) && shrunk.colorAt({10, 16}) == Qt::white && shrunk.colorAt({11, 16}) == Qt::white && shrunk.colorAt({12, 16}) == red;
 
     Document soft(QSize(32, 32));
-    soft.fill(QColor(245, 245, 245), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 10 off white, halfway to Threshold 20
+    soft.fill(QColor(251, 251, 251), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});  // 9 off white in linear, under halfway to Threshold 20
     Document hard = soft;
     QColor mid = soft.bucketFill({30, 16}, red, 20, 0, true) ? soft.colorAt({2, 16}) : QColor();
-    bool partial = mid != red && mid != QColor(245, 245, 245) && soft.colorAt({30, 16}) == red;  // exact matches get full coverage
+    bool partial = mid != red && mid != QColor(251, 251, 251) && soft.colorAt({30, 16}) == red;  // exact matches get full coverage
     bool all = hard.bucketFill({30, 16}, red, 20, 0, false) && hard.colorAt({2, 16}) == red;
     return expand && shrink && partial && all;
+}
+
+// Bucket Fill's Threshold compares linear light (#684): sRGB 10 and 20 are 10 apart encoded but about 1 apart in linear 0..255.
+static bool bucketFillThresholdIsLinear() {
+    QColor red(255, 0, 0);
+    Document dark(QSize(32, 32));
+    dark.fill(QColor(20, 20, 20), {{0, 0}, {32, 0}, {32, 32}, {0, 32}});
+    dark.fill(QColor(10, 10, 10), {{0, 0}, {16, 0}, {16, 32}, {0, 32}});
+    return dark.bucketFill({30, 16}, red, 3, 0, false) && dark.colorAt({2, 16}) == red;
 }
 
 // Bucket Fill Sample merged (#606): the region is found on the visible composite, painted on the current layer.
@@ -2730,6 +2739,7 @@ int main() {
     run("bucketFillObeysItsRules", bucketFillObeysItsRules);
     run("bucketFillToolFitsRasterOnly", bucketFillToolFitsRasterOnly);
     run("bucketFillGrowsAndSmooths", bucketFillGrowsAndSmooths);
+    run("bucketFillThresholdIsLinear", bucketFillThresholdIsLinear);
     run("bucketFillSamplesMerged", bucketFillSamplesMerged);
     run("referencesDrawFromTheOriginal", referencesDrawFromTheOriginal);
     run("referencesAreOneUndoStepEachAndNeverRendered", referencesAreOneUndoStepEachAndNeverRendered);

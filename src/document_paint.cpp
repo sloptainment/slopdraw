@@ -85,17 +85,19 @@ expandCover(std::vector<float> cover, int w, int h, int expand)
 
 // The region flooded 4-neighbour from at over pixels within threshold of its
 // colour (largest channel difference), as per-pixel coverage: 0 outside, 1 inside,
-// or with antialiased a ramp down towards threshold (#605).
+// or with antialiased a ramp down towards threshold (#605). src is linear RGBA64;
+// threshold is in 0..255 units of linear light (#684).
 static std::vector<float>
 floodCover(const QImage &src, QPoint at, int threshold, bool antialiased)
 {
-  const QRgb target = src.pixel(at);
+  threshold *= 257; // 0..255 to 0..65535
+  const QRgba64 target = src.pixelColor(at).rgba64();
   auto diff = [&](int x, int y)
   {
-    QRgb c = src.pixel(x, y);
+    QRgba64 c = src.pixelColor(x, y).rgba64();
     return std::max(
-      {std::abs(qRed(c) - qRed(target)), std::abs(qGreen(c) - qGreen(target)),
-       std::abs(qBlue(c) - qBlue(target)), std::abs(qAlpha(c) - qAlpha(target))});
+      {std::abs(c.red() - target.red()), std::abs(c.green() - target.green()),
+       std::abs(c.blue() - target.blue()), std::abs(c.alpha() - target.alpha())});
   };
   const int w = src.width(), h = src.height();
   auto at_ = [w](int x, int y) { return size_t(y) * w + x; };
@@ -144,9 +146,9 @@ bool Document::bucketFill(
   history_.resize(applied_); // a new edit discards the redo branch
   strokeStart_ = l.image;
   const QImage src =
-    encodeSrgb(sampleMerged ? render() : l.image)
+    (sampleMerged ? render() : l.image)
       .convertToFormat(
-        QImage::Format_ARGB32); // render() skips hidden layers and references
+        QImage::Format_RGBA64); // render() skips hidden layers and references
   const int w = src.width(), h = src.height();
   auto at_ = [&](int x, int y) { return size_t(y) * w + x; };
   std::vector<float> cover =
