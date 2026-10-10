@@ -54,8 +54,9 @@ struct PenSample
 // Replays samples through brush onto a linear RGBA64 image (the Raster Layer), one
 // mypaint_brush_stroke_to_2_linearsRGB per sample. continuing = true carries on the brush's
 // current stroke instead of starting a new one. alphaLock = true recolors pixels
-// but keeps every alpha, so pixels with alpha 0 stay untouched.
-void paintStroke(
+// but keeps every alpha, so pixels with alpha 0 stay untouched. Returns the area
+// the dabs covered.
+QRect paintStroke(
   MyPaintBrush *brush,
   QImage &layer,
   const std::vector<PenSample> &samples,

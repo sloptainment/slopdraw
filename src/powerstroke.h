@@ -38,7 +38,8 @@ QPainterPath expandPowerStroke(
 // The knots with knot i copied in place right after itself (Inkscape's Ctrl+click).
 inline std::vector<WidthKnot> duplicateKnot(std::vector<WidthKnot> knots, int i)
 {
-  knots.insert(knots.begin() + i, knots[i]);
+  const WidthKnot copy = knots[i]; // not knots[i] itself: GCC 15 then warns array-bounds in insert
+  knots.insert(knots.begin() + i, copy);
   return knots;
 }
 // The knots without knot i; unchanged when it is the last one (Inkscape's

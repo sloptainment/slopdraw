@@ -2,6 +2,7 @@
 #include "canvas.h"
 #include <QElapsedTimer>
 #include <QOpenGLFunctions>
+#include <QOpenGLPixelTransferOptions>
 #include <QPainter>
 #include <QPainterPath>
 
@@ -79,8 +80,18 @@ void Canvas::drawFrame(QPainter &p, const QImage &linear)
     tex_->setMipLevels(1);
     tex_->allocateStorage();
     tex_->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
+    texKey_ = 0; // no frame: changedSince gives the whole canvas
   }
-  tex_->setData(QOpenGLTexture::RGBA, fp ? QOpenGLTexture::Float16 : QOpenGLTexture::UInt16, linear.constBits());
+  const QRect r = s_.doc.changedSince(texKey_); // only what changed goes up
+  texKey_ = linear.cacheKey();
+  if (!r.isEmpty())
+  {
+    QOpenGLPixelTransferOptions rows;
+    rows.setRowLength(int(linear.bytesPerLine() / 8));
+    tex_->setData(
+      r.x(), r.y(), 0, r.width(), r.height(), 1, QOpenGLTexture::RGBA,
+      fp ? QOpenGLTexture::Float16 : QOpenGLTexture::UInt16, linear.constScanLine(r.y()) + r.x() * 8, &rows);
+  }
   float verts[4][4]; // the document's corners in clip space, then their texture coordinates
   const QPointF corner[4] = {{0, 0}, {double(linear.width()), 0}, {0, double(linear.height())}, {double(linear.width()), double(linear.height())}};
   for (int i = 0; i < 4; i++)

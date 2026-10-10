@@ -76,8 +76,11 @@ public:
     bool floatPoint = false);
   // The visible layers composited bottom to top, source-over, each scaled by its
   // opacity, in linear light: a linear RGBA64 image. encodeSrgb() gives the pixels
-  // to show or save.
+  // to show or save. Cached: recomposited only where it changed since the last call.
   QImage render() const;
+  // The area by which render() differs from the frame it returned with cacheKey()
+  // `key`: null when it's the same frame, the whole canvas for a key it doesn't know.
+  QRect changedSince(qint64 key) const;
   // Replays samples through the brush onto the current Raster Layer, one
   // mypaint_brush_stroke_to_2 per sample. continuing = true carries on the current
   // stroke (live pen input); otherwise a new stroke starts. One stroke (a
@@ -469,8 +472,26 @@ private:
   QImage layerImage(const QImage &from) const;
 
   // The items [lo, hi), all at depth d or deeper, composited into one transparent
-  // image: each level on its own, groups at their opacity.
-  QImage compose(int lo, int hi, int d) const;
+  // image of rect's pixels: each level on its own, groups at their opacity.
+  QImage compose(int lo, int hi, int d, const QRect &rect) const;
+  // render()'s cache: what each layer was when frame_ was made (image by cacheKey,
+  // which every write changes), each image key stroke() turned into another since,
+  // with the area its dabs covered, and per frame_ key the area it changed (last 64).
+  struct FrameKey
+  {
+    qint64 image;
+    bool visible;
+    double opacity;
+    bool inheritAlpha;
+    int depth;
+    bool group;
+    bool operator==(const FrameKey &) const = default;
+  };
+  mutable QImage frame_;
+  mutable std::vector<FrameKey> frameKeys_;
+  mutable std::vector<std::pair<qint64, qint64>> strokeKeys_;
+  mutable QRect strokeRect_;
+  mutable std::vector<std::pair<qint64, QRect>> frameLog_;
   // A list is a tree when, reading down from the top item (depth 0), depth only
   // grows by one, right after a group (#424).
   static bool wellFormed(const std::vector<Layer> &v);

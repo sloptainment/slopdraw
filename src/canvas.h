@@ -323,6 +323,7 @@ private:
   void drawFrame(QPainter &p, const QImage &linear);
   std::unique_ptr<QOpenGLShaderProgram> prog_;
   std::unique_ptr<QOpenGLTexture> tex_;
+  qint64 texKey_ = 0; // the cacheKey() of the frame tex_ holds
   // Pointer up, mouse or tablet: ends every drag, stroke and smoothing.
   void release()
   {

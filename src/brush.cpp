@@ -38,12 +38,13 @@ struct ImageSurface : MyPaintSurface2
 {
   QImage *img;
   bool eraser, alphaLock;
+  QRect dirty; // the pixels the dabs so far may have changed
 };
 
 // Calls fn(pixel, opacity) for each pixel the dab covers, with libmypaint's
-// hardness falloff (brushmodes.c).
+// hardness falloff (brushmodes.c); returns the dab's bounding box.
 template <class Fn>
-void forEachDabPixel(
+QRect forEachDabPixel(
   QImage &img,
   float x,
   float y,
@@ -77,6 +78,7 @@ void forEachDabPixel(
       fn(Px{row + 4 * px, fp}, rr <= hardness ? 1 + rr * slope1 : off2 + rr * slope2);
     }
   }
+  return QRect(QPoint(x0, y0), QPoint(x1, y1));
 }
 
 int drawDab(
@@ -101,7 +103,7 @@ int drawDab(
   const bool eraser = static_cast<ImageSurface *>(s)->eraser,
              lock = static_cast<ImageSurface *>(s)->alphaLock;
   const float rgb[3] = {eraser ? 1 : r, eraser ? 1 : g, eraser ? 1 : b};
-  forEachDabPixel(
+  static_cast<ImageSurface *>(s)->dirty |= forEachDabPixel(
     *static_cast<ImageSurface *>(s)->img, x, y, radius, hardness, aspect, angle,
     [&](Px p, float opa)
     {
@@ -168,7 +170,7 @@ void getColor(
 
 } // namespace
 
-void paintStroke(
+QRect paintStroke(
   MyPaintBrush *brush,
   QImage &layer,
   const std::vector<PenSample> &samples,
@@ -207,6 +209,7 @@ void paintStroke(
   for (const auto &p : samples)
     mypaint_brush_stroke_to_2_linearsRGB(
       brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, p.dt, 1, 0, 0);
+  return s.dirty;
 }
 
 void setBrushColor(MyPaintBrush *brush, const QColor &srgb)

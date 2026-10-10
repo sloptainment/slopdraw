@@ -34,14 +34,22 @@ namespace
 
 // src scaled by opacity over dst (or, atop, only where dst has alpha), both
 // RGBA64 or both FP16 with straight alpha, in float so opacity is not cut to 1/255.
-void blend(QImage &dst, const QImage &src, float opacity, bool atop)
+// src is read from `at` on, so dst can be a part of it.
+void blend(QImage &dst, const QImage &src, QPoint at, float opacity, bool atop)
 {
   const bool fp = dst.format() == QImage::Format_RGBA16FPx4;
-  for (int y = 0; y < dst.height(); y++)
+  const int w = dst.width(), h = dst.height();
+  // the threads share these: scanLine() per row would detach dst from each thread
+  uchar *dbits = dst.bits();
+  const uchar *sbits = src.constBits() + qsizetype(at.y()) * src.bytesPerLine() + at.x() * 8;
+  const qsizetype dbpl = dst.bytesPerLine(), sbpl = src.bytesPerLine();
+  // ponytail: 4 threads, measured ~2.5x faster for 1.5x the CPU; 12 bought little more for 4x
+#pragma omp parallel for num_threads(4)
+  for (int y = 0; y < h; y++)
   {
-    auto *d = reinterpret_cast<quint16 *>(dst.scanLine(y));
-    auto *s = reinterpret_cast<quint16 *>(const_cast<uchar *>(src.constScanLine(y)));
-    for (int x = 0; x < dst.width(); x++, d += 4, s += 4)
+    auto *d = reinterpret_cast<quint16 *>(dbits + y * dbpl);
+    auto *s = reinterpret_cast<quint16 *>(const_cast<uchar *>(sbits + y * sbpl));
+    for (int x = 0; x < w; x++, d += 4, s += 4)
     {
       const Px dp{d, fp}, sp{s, fp};
       if (sp.get(3) <= 0)
@@ -68,7 +76,57 @@ void blend(QImage &dst, const QImage &src, float opacity, bool atop)
 
 QImage Document::render() const
 {
-  return compose(0, int(layers_.size()), 0);
+  std::vector<FrameKey> keys;
+  for (const Layer &l : layers_)
+    keys.push_back({l.image.cacheKey(), l.visible, l.opacity, l.inheritAlpha, l.depth, l.group});
+  // only strokes say where they painted: any other change composites everything
+  bool full = frame_.isNull() || keys.size() != frameKeys_.size();
+  QRect area;
+  for (size_t i = 0; !full && i < keys.size(); i++)
+  {
+    FrameKey k = frameKeys_[i];
+    for (auto [from, to] : strokeKeys_)
+      if (k.image == from)
+        k.image = to;
+    full = !(k == keys[i]);
+    if (k.image != frameKeys_[i].image)
+      area = strokeRect_;
+  }
+  const QRect all(QPoint(), layers_[0].image.size());
+  if (full)
+  {
+    frame_ = compose(0, int(layers_.size()), 0, all);
+    frameLog_.clear();
+    area = all;
+  }
+  else if (!(area &= all).isEmpty())
+  {
+    const QImage part = compose(0, int(layers_.size()), 0, area);
+    for (int y = 0; y < area.height(); y++)
+      std::memcpy(frame_.scanLine(area.y() + y) + area.x() * 8, part.constScanLine(y), area.width() * 8);
+  }
+  if (!area.isEmpty())
+  {
+    frameLog_.push_back({frame_.cacheKey(), area});
+    if (frameLog_.size() > 64)
+      frameLog_.erase(frameLog_.begin());
+  }
+  frameKeys_ = keys;
+  strokeKeys_.clear();
+  strokeRect_ = QRect();
+  return frame_;
+}
+
+QRect Document::changedSince(qint64 key) const
+{
+  QRect r;
+  for (size_t i = frameLog_.size(); i-- > 0;)
+  {
+    if (frameLog_[i].first == key)
+      return r;
+    r |= frameLog_[i].second;
+  }
+  return QRect(QPoint(), layers_[0].image.size());
 }
 
 QImage Document::groupImage(int group) const
@@ -76,12 +134,12 @@ QImage Document::groupImage(int group) const
   int lo = group;
   while (lo > 0 && layers_[lo - 1].depth > layers_[group].depth)
     lo--;
-  return compose(lo, group, layers_[group].depth + 1);
+  return compose(lo, group, layers_[group].depth + 1, QRect(QPoint(), layers_[0].image.size()));
 }
 
-QImage Document::compose(int lo, int hi, int d) const
+QImage Document::compose(int lo, int hi, int d, const QRect &rect) const
 {
-  QImage out = layerImage(layers_[0].image.size());
+  QImage out = layerImage(rect.size());
   // walk down the level's items, a group taking the deeper run below it
   std::vector<std::pair<int, int>> items; // (item, first child)
   for (int i = hi - 1; i >= lo;)
@@ -98,15 +156,14 @@ QImage Document::compose(int lo, int hi, int d) const
     const Layer &l = layers_[items[k].first];
     if (!l.visible)
       continue;
-    blend(
-      out, l.group ? compose(items[k].second, items[k].first, d + 1) : l.image,
-      l.opacity, k + 1 < items.size() && l.inheritAlpha);
+    if (l.group)
+      blend(out, compose(items[k].second, items[k].first, d + 1, rect), QPoint(), l.opacity, k + 1 < items.size() && l.inheritAlpha);
+    else
+      blend(out, l.image, rect.topLeft(), l.opacity, k + 1 < items.size() && l.inheritAlpha);
   }
   return out;
 }
 
-// ponytail: composites the whole canvas per call; fine per click, cache if it ever
-// runs per mouse move
 QColor Document::colorAt(QPoint p) const
 {
   return layers_[0].image.rect().contains(p)

@@ -665,6 +665,24 @@ static bool strokeLandsOnCurrentLayerOnly() {
     return std::abs(shown - 194) <= 2 && hidden && doc.colorAt({4, 4}) == Qt::black;
 }
 
+// render() after every sample recomposites only what each stroke touched: it matches a
+// full composite of the same layers, which a copy with one more (empty) layer on top is forced to make.
+static bool partialRenderMatchesFull() {
+    auto pencil = loadBrush(TEST_PENCIL);
+    if (!pencil) return false;
+    Document doc(QSize(64, 64));
+    doc.fill(Qt::red, {{0, 0}, {64, 0}, {64, 20}, {0, 20}});
+    doc.addLayer();
+    doc.setOpacity(1, 0.5);
+    QImage before = doc.render().copy();
+    for (float y : {16.f, 40.f})
+        for (int i = 0; i < 16; i++)
+            doc.stroke(pencil, {waveAt(y)[i]}, i > 0), doc.render();
+    Document full = doc;
+    full.addLayer();
+    return doc.render() != before && doc.render() == full.render();
+}
+
 // Background, then a 50% layer with a black square (8,8)-(40,40), a hidden layer with a black square, and a full layer with a black square
 // (24,24)-(56,56): 50% gray (188 encoded: half the light) where only the first shows, black in the overlap, white elsewhere (golden).
 static bool compositeOfThreeLayersMatchesGolden() {
@@ -2861,5 +2879,6 @@ int main() {
     run("severalItemsWrapStepAndMove", severalItemsWrapStepAndMove);
     run("rowSettingsOnSeveralLayers", rowSettingsOnSeveralLayers);
     run("groupFloatsCommitsAndCancels", groupFloatsCommitsAndCancels);
+    run("partialRenderMatchesFull", partialRenderMatchesFull);
     return failed != 0;
 }

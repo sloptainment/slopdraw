@@ -4,6 +4,9 @@ project(slopdraw LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTORCC ON)
+if(NOT CMAKE_BUILD_TYPE) # an unset build type is -O0: compositing runs 2-3x slower
+  set(CMAKE_BUILD_TYPE Release)
+endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Gui)
 
@@ -12,7 +15,8 @@ add_library(slopdraw_core src/document.cpp src/document_paths.cpp src/document_u
 target_include_directories(slopdraw_core PUBLIC src vendor)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MYPAINT REQUIRED IMPORTED_TARGET libmypaint)
-target_link_libraries(slopdraw_core PUBLIC Qt6::Gui PkgConfig::MYPAINT)
+find_package(OpenMP REQUIRED)
+target_link_libraries(slopdraw_core PUBLIC Qt6::Gui PkgConfig::MYPAINT PRIVATE OpenMP::OpenMP_CXX)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
 add_executable(slopdraw 

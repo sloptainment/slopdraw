@@ -16,7 +16,8 @@ void Document::stroke(
     history_.resize(applied_); // a new edit discards the redo branch
     strokeStart_ = layers_[current_].image;
   }
-  paintStroke(
+  const qint64 before = layers_[current_].image.cacheKey();
+  strokeRect_ |= paintStroke(
     brush.get(), layers_[current_].image, samples, continuing, eraser,
     layers_[current_].alphaLock);
   if (!clip_.isNull())
@@ -29,6 +30,7 @@ void Document::stroke(
     for (const QRect &r : out)
       p.drawImage(r, strokeStart_, r);
   }
+  strokeKeys_.push_back({before, layers_[current_].image.cacheKey()}); // render() redraws only strokeRect_
 }
 
 void Document::fill(
