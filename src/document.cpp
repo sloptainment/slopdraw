@@ -3,7 +3,8 @@
 #include <cstring>
 #include <QColorSpace>
 
-Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget)
+Document::Document(QSize size, qsizetype undoBudget, bool floatPoint)
+  : budget_(undoBudget), floatPoint_(floatPoint)
 {
   layers_.push_back({true, 1, layerImage(size), "Background"});
   layers_[0].image.fill(Qt::white);
@@ -11,7 +12,8 @@ Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget)
 
 QImage Document::layerImage(QSize size) const
 {
-  QImage out(size, QImage::Format_RGBA64);
+  QImage out(
+    size, floatPoint_ ? QImage::Format_RGBA16FPx4 : QImage::Format_RGBA64);
   out.setColorSpace(QColorSpace::SRgbLinear);
   out.fill(Qt::transparent);
   return out;
@@ -20,7 +22,8 @@ QImage Document::layerImage(QSize size) const
 // A picture with no profile is read as sRGB, one with a profile from that profile.
 QImage Document::layerImage(const QImage &from) const
 {
-  QImage out = from.convertToFormat(QImage::Format_RGBA64);
+  QImage out = from.convertToFormat(
+    floatPoint_ ? QImage::Format_RGBA16FPx4 : QImage::Format_RGBA64);
   if (!out.colorSpace().isValid())
     out.setColorSpace(QColorSpace::SRgb);
   return out.convertedToColorSpace(QColorSpace::SRgbLinear);
@@ -30,33 +33,33 @@ namespace
 {
 
 // src scaled by opacity over dst (or, atop, only where dst has alpha), both
-// RGBA64 with straight alpha, in float so opacity is not cut to 1/255.
+// RGBA64 or both FP16 with straight alpha, in float so opacity is not cut to 1/255.
 void blend(QImage &dst, const QImage &src, float opacity, bool atop)
 {
-  constexpr float k = 65535;
+  const bool fp = dst.format() == QImage::Format_RGBA16FPx4;
   for (int y = 0; y < dst.height(); y++)
   {
     auto *d = reinterpret_cast<quint16 *>(dst.scanLine(y));
-    auto *s = reinterpret_cast<const quint16 *>(src.constScanLine(y));
+    auto *s = reinterpret_cast<quint16 *>(const_cast<uchar *>(src.constScanLine(y)));
     for (int x = 0; x < dst.width(); x++, d += 4, s += 4)
     {
-      if (!s[3])
+      const Px dp{d, fp}, sp{s, fp};
+      if (sp.get(3) <= 0)
         continue;
-      if (!atop && opacity == 1 && s[3] == 65535)
+      if (!atop && opacity == 1 && sp.get(3) == 1)
       { // opaque over anything is the source
         std::memcpy(d, s, 8);
         continue;
       }
-      const float sa = s[3] / k * opacity, da = d[3] / k;
+      const float sa = sp.get(3) * opacity, da = dp.get(3);
       const float oa = atop ? da : sa + da * (1 - sa);
       if (sa <= 0 || oa <= 0)
         continue;
       for (int c = 0; c < 3; c++)
-        d[c] = quint16(
-          (atop ? s[c] * sa + d[c] * (1 - sa)
-                : (s[c] * sa + d[c] * da * (1 - sa)) / oa) +
-          0.5f);
-      d[3] = quint16(oa * k + 0.5f);
+        dp.set(
+          c, atop ? sp.get(c) * sa + dp.get(c) * (1 - sa)
+                  : (sp.get(c) * sa + dp.get(c) * da * (1 - sa)) / oa);
+      dp.set(3, oa);
     }
   }
 }

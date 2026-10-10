@@ -241,7 +241,7 @@ void addNewOpen(Shell &sh, QMenu *fileMenu)
     [&sh]
     {
       if (auto sz = askNewSize(&sh.window, false))
-        openTab(sh, Document(sz->size), {});
+        openTab(sh, Document(sz->size, qsizetype(1) << 30, sz->floatPoint), {});
     });
   sh.openPath = [&sh](QString path) { // Open and the command line: a tab per file
     auto doc = readOra(path);

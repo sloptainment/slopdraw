@@ -1,10 +1,31 @@
 #pragma once
 #include <libmypaint/mypaint-brush.h>
+#include <cmath>
 #include <memory>
+#include <QFloat16>
 #include <QColor>
 #include <QImage>
 #include <QString>
 #include <vector>
+
+// One layer pixel, RGBA64 or (fp) FP16, read and written as floats; RGBA64 is 0..1
+// over 0..65535, FP16 is stored as is, so it can leave 0..1 (#578).
+struct Px
+{
+  quint16 *p;
+  bool fp;
+  float get(int c) const
+  {
+    return fp ? float(reinterpret_cast<const qfloat16 *>(p)[c]) : p[c] / 65535.f;
+  }
+  void set(int c, float v) const
+  {
+    if (fp)
+      reinterpret_cast<qfloat16 *>(p)[c] = qfloat16(v);
+    else
+      p[c] = quint16(std::lround(v * 65535));
+  }
+};
 
 // A libmypaint brush loaded from a .myb file; null if the file is unreadable or not
 // valid brush JSON.

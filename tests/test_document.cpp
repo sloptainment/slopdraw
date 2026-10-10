@@ -363,6 +363,46 @@ static bool layerOpacityIsExact() {
     return std::abs(doc.render().pixelColor(10, 10).redF() - 0.3) < 0.0001;
 }
 
+// A Float-point document stores FP16 layers and keeps a pixel of 1.5 through render(), straight and at half opacity over white (1.5 * 0.5 + 1 * 0.5 = 1.25).
+static bool floatPointDocumentKeepsValuesAboveOne() {
+    Document doc(QSize(8, 8), qsizetype(1) << 30, true);
+    doc.addLayer();
+    QImage hot(8, 8, QImage::Format_RGBA16FPx4);
+    hot.setColorSpace(QColorSpace::SRgbLinear);
+    hot.fill(Qt::transparent);
+    reinterpret_cast<qfloat16*>(hot.scanLine(1))[4] = reinterpret_cast<qfloat16*>(hot.scanLine(1))[5] = reinterpret_cast<qfloat16*>(hot.scanLine(1))[6] = qfloat16(1.5f);
+    reinterpret_cast<qfloat16*>(hot.scanLine(1))[7] = qfloat16(1.f);
+    doc.restoreLayer(1, hot, "hot", true, 1.0);
+    auto red = [&] { return float(reinterpret_cast<const qfloat16*>(doc.render().constScanLine(1))[4]); };
+    if (doc.image(1).format() != QImage::Format_RGBA16FPx4 || std::abs(red() - 1.5f) > 0.001f) return false;
+    doc.setOpacity(1, 0.5);
+    return std::abs(red() - 1.25f) < 0.001f;
+}
+
+// A Float-point document paints (fill, 50% layer, pencil wave, undo) and shows within 2 levels of the same work on an Integer one.
+static bool floatPointPaintsLikeInteger() {
+    auto work = [](bool fp) {
+        Document doc(QSize(64, 64), qsizetype(1) << 30, fp);
+        doc.fill(Qt::black, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+        doc.addLayer();
+        doc.fill(Qt::white, {{0, 0}, {32, 0}, {32, 64}, {0, 64}});
+        doc.setOpacity(1, 0.5);
+        auto brush = loadBrush(TEST_PENCIL);
+        setBrushColor(brush.get(), QColor(200, 30, 90));
+        doc.stroke(brush, waveAt(32));
+        return doc;
+    };
+    Document a = work(false), b = work(true);
+    QImage ia = shown(a.render()), ib = shown(b.render());
+    if (b.image(1).format() != QImage::Format_RGBA16FPx4) return false;
+    for (int y = 0; y < 64; y++)
+        for (int x = 0; x < 64; x++)
+            for (int c = 0; c < 4; c++)
+                if (std::abs(ia.constScanLine(y)[4 * x + c] - ib.constScanLine(y)[4 * x + c]) > 2) return false;
+    b.undo();
+    return b.colorAt({10, 10}).red() == 188;
+}
+
 // A pasted image is read as sRGB and lands linear (128 -> 0.2158); a PNG embedding a linear profile is converted from that profile (128 -> 128/255),
 // which also shows Qt's PNG reader fills QImage::colorSpace() from the embedded profile.
 static bool importedImagesAreConvertedToLinear() {
@@ -2655,6 +2695,8 @@ int main() {
     run("newDocumentRendersWhite", newDocumentRendersWhite);
     run("halfWhiteOverBlackIsLinearHalf", halfWhiteOverBlackIsLinearHalf);
     run("layerOpacityIsExact", layerOpacityIsExact);
+    run("floatPointPaintsLikeInteger", floatPointPaintsLikeInteger);
+    run("floatPointDocumentKeepsValuesAboveOne", floatPointDocumentKeepsValuesAboveOne);
     run("importedImagesAreConvertedToLinear", importedImagesAreConvertedToLinear);
     run("dabAndSmudgeMixInLinearLight", dabAndSmudgeMixInLinearLight);
     run("colourDynamicsBrushPaints", colourDynamicsBrushPaints);

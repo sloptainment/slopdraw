@@ -4,9 +4,12 @@
 #include <cstdlib>
 #include <QApplication>
 #include <QDialog>
+#include <optional>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QRadioButton>
 #include <QSettings>
 #include <QSpinBox>
 #include <QTimer>
@@ -27,15 +30,15 @@ static void type(QSpinBox *s, const QString &text)
 }
 
 // Runs `body` once the modal dialog is up, then closes it.
-template <class F> static void withDialog(bool forEdit, F body)
+template <class F> static std::optional<NewSize> withDialog(bool forEdit, F body, bool ok = false)
 {
   QTimer::singleShot(0, [=] {
     QWidget *dlg = QApplication::activeModalWidget();
     body(dlg);
-    static_cast<QDialog *>(dlg)->reject();
+    ok ? static_cast<QDialog *>(dlg)->accept() : static_cast<QDialog *>(dlg)->reject();
   });
   QImage pic(400, 300, QImage::Format_RGBA8888);
-  askNewSize(nullptr, forEdit, QSize(400, 300), pic);
+  return askNewSize(nullptr, forEdit, QSize(400, 300), pic);
 }
 
 static void pickA4(QWidget *dlg)
@@ -73,5 +76,23 @@ int main(int argc, char **argv)
     type(ws, "1240");
     CHECK(hs->value() == 1754);
   });
+
+  // Integer / Float-point radio box (#578): Integer on first launch, the last OK'd pick after, none in Resize
+  withDialog(true, [](QWidget *dlg) { CHECK(!dlg->findChild<QRadioButton *>()); });
+  withDialog(false, [](QWidget *dlg) {
+    CHECK(dlg->findChild<QRadioButton *>("integer")->isChecked());
+    CHECK(!dlg->findChild<QRadioButton *>("floatPoint")->isChecked());
+    CHECK(dlg->findChild<QRadioButton *>("integer")->text() == "Integer");
+    CHECK(dlg->findChild<QRadioButton *>("floatPoint")->text() == "Float-point");
+    bool a = false, b = false;
+    for (auto *l : dlg->findChildren<QLabel *>()) {
+      a |= l->text() == "Faster, but may clip levels. Good for most usage";
+      b |= l->text() == "Dynamic range artwork, but may be a little slower.";
+    }
+    CHECK(a && b);
+  });
+  auto ok = withDialog(false, [](QWidget *dlg) { dlg->findChild<QRadioButton *>("floatPoint")->setChecked(true); }, true);
+  CHECK(ok && ok->floatPoint);
+  withDialog(false, [](QWidget *dlg) { CHECK(dlg->findChild<QRadioButton *>("floatPoint")->isChecked()); });
   return failures;
 }

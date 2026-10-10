@@ -15,6 +15,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSettings>
 #include <QSpinBox>
 #include <QToolButton>
@@ -130,6 +131,7 @@ struct Fields
   QSpinBox *ox = nullptr, *oy = nullptr; // forEdit only: the Offset row
   QPushButton *center = nullptr;
   QCheckBox *scale = nullptr; // forEdit only
+  QRadioButton *integer = nullptr, *floatPoint = nullptr; // New only (#450)
   QToolButton *chain = nullptr; // forEdit only: keeps the width : height ratio (#418)
   QImage pic; // forEdit only: the document's pixels, and its size
   QSize old;
@@ -149,6 +151,15 @@ Fields makeFields(bool forEdit)
     f.chain->setText("⛓");
     f.chain->setToolTip("Keep the aspect ratio");
     f.chain->setCheckable(true);
+  }
+  else
+  {
+    f.integer = new QRadioButton("Integer");
+    f.integer->setObjectName("integer");
+    f.floatPoint = new QRadioButton("Float-point");
+    f.floatPoint->setObjectName("floatPoint");
+    (QSettings().value("newFloatPoint", false).toBool() ? f.floatPoint : f.integer)
+      ->setChecked(true); // the last pick OK'd (#452)
   }
   for (auto *s : {f.ws, f.hs})
   {
@@ -181,6 +192,22 @@ void layOut(QDialog &dlg, const Fields &f, bool forEdit)
   form->addWidget(new QLabel("Orientation"), 2, 0);
   form->addLayout(orient, 2, 1, 1, 2);
   int row = 3;
+  if (!forEdit)
+  { // each radio button over its small grey caption, always shown (#451)
+    auto *storage = new QVBoxLayout;
+    for (auto [radio, text] :
+         {std::pair{f.integer, "Faster, but may clip levels. Good for most usage"},
+          std::pair{
+            f.floatPoint, "Dynamic range artwork, but may be a little slower."}})
+    {
+      auto *caption = new QLabel(text);
+      caption->setWordWrap(true);
+      caption->setStyleSheet("color: gray; font-size: small; margin-left: 20px");
+      storage->addWidget(radio);
+      storage->addWidget(caption);
+    }
+    form->addLayout(storage, row++, 0, 1, 3);
+  }
   if (forEdit)
   {
     form->addWidget(f.scale, row++, 0, 1, 3);
@@ -409,5 +436,6 @@ std::optional<NewSize> askNewSize(
   if (forEdit)
     return NewSize{sz, QPoint(f.ox->value(), f.oy->value()), f.scale->isChecked()};
   QSettings().setValue("newSize", sz);
-  return NewSize{sz, {}};
+  QSettings().setValue("newFloatPoint", f.floatPoint->isChecked());
+  return NewSize{sz, {}, false, f.floatPoint->isChecked()};
 }

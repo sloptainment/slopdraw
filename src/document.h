@@ -69,7 +69,11 @@ public:
   };
   // undoBudget caps the bytes of pixels the undo history keeps (#27); the oldest
   // steps drop first, never the newest.
-  explicit Document(QSize size, qsizetype undoBudget = qsizetype(1) << 30);
+  // floatPoint picks FP16 layers over RGBA64 for the document's life (#450).
+  explicit Document(
+    QSize size,
+    qsizetype undoBudget = qsizetype(1) << 30,
+    bool floatPoint = false);
   // The visible layers composited bottom to top, source-over, each scaled by its
   // opacity, in linear light: a linear RGBA64 image. encodeSrgb() gives the pixels
   // to show or save.
@@ -478,6 +482,7 @@ private:
   int current_ = 0;
   std::vector<Reference> refs_;
   qsizetype budget_;
+  bool floatPoint_; // layers are FP16 (RGBA16FPx4) instead of RGBA64 (#450)
   std::vector<Step>
     history_; // history_[0, applied_) are applied; the rest can be redone
   size_t applied_ = 0;
