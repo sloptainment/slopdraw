@@ -1,5 +1,7 @@
 // Canvas painting: the document, references, and each tool's overlays.
 #include "canvas.h"
+#include <QElapsedTimer>
+#include <QOpenGLFunctions>
 #include <QPainter>
 #include <QPainterPath>
 
@@ -42,7 +44,81 @@ void Canvas::drawInverted(QPainter &p, const QImage &doc, const QPainterPath &pa
   p.restore();
 }
 
-void Canvas::paintEvent(QPaintEvent *)
+void Canvas::initializeGL()
+{
+  prog_ = std::make_unique<QOpenGLShaderProgram>();
+  prog_->addShaderFromSourceCode(
+    QOpenGLShader::Vertex,
+    "attribute vec2 pos; attribute vec2 uv; varying vec2 v;\n"
+    "void main() { gl_Position = vec4(pos, 0.0, 1.0); v = uv; }");
+  prog_->addShaderFromSourceCode( // the exact sRGB curve on straight colour, then premultiplied
+    QOpenGLShader::Fragment,
+    "uniform sampler2D tex; varying vec2 v;\n"
+    "void main() {\n"
+    "  vec4 c = texture2D(tex, v);\n"
+    "  vec3 l = clamp(c.rgb, 0.0, 1.0);\n"
+    "  vec3 e = mix(l * 12.92, 1.055 * pow(l, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, l));\n"
+    "  gl_FragColor = vec4(e * c.a, c.a);\n"
+    "}");
+  prog_->bindAttributeLocation("pos", 0);
+  prog_->bindAttributeLocation("uv", 1);
+  prog_->link();
+}
+
+void Canvas::drawFrame(QPainter &p, const QImage &linear)
+{
+  QElapsedTimer timer;
+  timer.start();
+  bool fp = linear.format() == QImage::Format_RGBA16FPx4;
+  auto format = fp ? QOpenGLTexture::RGBA16F : QOpenGLTexture::RGBA16_UNorm;
+  if (!tex_ || tex_->width() != linear.width() || tex_->height() != linear.height() || tex_->format() != format)
+  {
+    tex_ = std::make_unique<QOpenGLTexture>(QOpenGLTexture::Target2D);
+    tex_->setFormat(format);
+    tex_->setSize(linear.width(), linear.height());
+    tex_->setMipLevels(1);
+    tex_->allocateStorage();
+    tex_->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
+  }
+  tex_->setData(QOpenGLTexture::RGBA, fp ? QOpenGLTexture::Float16 : QOpenGLTexture::UInt16, linear.constBits());
+  float verts[4][4]; // the document's corners in clip space, then their texture coordinates
+  const QPointF corner[4] = {{0, 0}, {double(linear.width()), 0}, {0, double(linear.height())}, {double(linear.width()), double(linear.height())}};
+  for (int i = 0; i < 4; i++)
+  {
+    QPointF d = s_.view.matrix().map(corner[i]);
+    verts[i][0] = 2 * d.x() / width() - 1;
+    verts[i][1] = 1 - 2 * d.y() / height();
+    verts[i][2] = i & 1;
+    verts[i][3] = i >> 1;
+  }
+  p.beginNativePainting();
+  QOpenGLFunctions *gl = context()->functions();
+  gl->glDisable(GL_CULL_FACE);
+  gl->glDisable(GL_DEPTH_TEST);
+  gl->glDisable(GL_SCISSOR_TEST);
+  gl->glEnable(GL_BLEND);
+  gl->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  prog_->bind();
+  tex_->bind(0);
+  prog_->setUniformValue("tex", 0);
+  prog_->enableAttributeArray(0);
+  prog_->enableAttributeArray(1);
+  prog_->setAttributeArray(0, GL_FLOAT, verts, 2, sizeof verts[0]);
+  prog_->setAttributeArray(1, GL_FLOAT, &verts[0][2], 2, sizeof verts[0]);
+  gl->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  prog_->disableAttributeArray(0);
+  prog_->disableAttributeArray(1);
+  prog_->release();
+  p.endNativePainting();
+  static const bool log = qEnvironmentVariableIsSet("SLOPDRAW_LOG_ENCODE");
+  if (log)
+  {
+    gl->glFinish();
+    qInfo("GPU encode %dx%d %s: %.2f ms", linear.width(), linear.height(), fp ? "Float-point" : "Integer", timer.nsecsElapsed() / 1e6);
+  }
+}
+
+void Canvas::paintGL()
 {
   updateGroupRect();
   if (boxLayer_ != s_.doc.current())
@@ -80,8 +156,11 @@ void Canvas::paintEvent(QPaintEvent *)
   }
   p.setRenderHint(QPainter::SmoothPixmapTransform);
   p.setTransform(s_.view.matrix());
-  QImage doc = encodeSrgb(s_.doc.render());
-  p.drawImage(0, 0, doc);
+  QImage frame = s_.doc.render();
+  drawFrame(p, frame);
+  QImage doc; // the inverted lines read encoded pixels: only a lasso or Pen path pays the CPU encode
+  if (lasso_.size() > 1 || (tool_ == SpiroPenTool && !pen_.nodes.empty()))
+    doc = encodeSrgb(frame);
   drawReferenceOverlays(p);
   if (lasso_.size() > 1)
   {

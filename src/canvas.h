@@ -6,7 +6,9 @@
 #include <optional>
 #include <set>
 #include <vector>
-#include <QWidget>
+#include <QOpenGLShaderProgram>
+#include <QOpenGLTexture>
+#include <QOpenGLWidget>
 #include "brush.h"
 #include "document.h"
 #include "references.h"
@@ -34,13 +36,19 @@ struct Session
   int untitled = 0; // N of "Untitled N", the tab label until the first save (#282)
 };
 
-class Canvas : public QWidget
+class Canvas : public QOpenGLWidget
 {
 public:
   Canvas()
   {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+  }
+  ~Canvas() override
+  {
+    makeCurrent(); // the GL objects need their context to be freed
+    tex_.reset();
+    prog_.reset();
   }
   void setDocument(Document doc, QString path = {})
   {
@@ -283,7 +291,8 @@ public:
   void drawInverted(QPainter &p, const QImage &doc, const QPainterPath &path);
 
 protected:
-  void paintEvent(QPaintEvent *) override;
+  void initializeGL() override;
+  void paintGL() override;
   void mousePressEvent(QMouseEvent *e) override;
   void mouseMoveEvent(QMouseEvent *e) override;
   // Double-click on a reference in the Reference tool enters crop mode on it
@@ -305,6 +314,11 @@ protected:
   void keyReleaseEvent(QKeyEvent *e) override;
 
 private:
+  // The linear frame on screen: uploaded as a texture and encoded to sRGB by a
+  // shader (#580). prog_ and tex_ live in the widget's GL context.
+  void drawFrame(QPainter &p, const QImage &linear);
+  std::unique_ptr<QOpenGLShaderProgram> prog_;
+  std::unique_ptr<QOpenGLTexture> tex_;
   // Pointer up, mouse or tablet: ends every drag, stroke and smoothing.
   void release()
   {
@@ -462,7 +476,7 @@ private:
   // corners and edge midpoints (grabbable, #231), and the rotate circle (5 px, 24
   // px up a stem).
   void drawTransformBox(QPainter &p, const BoxFrame &f);
-  // paintEvent's overlays, in its order: crop ghost, references and their picks,
+  // paintGL's overlays, in its order: crop ghost, references and their picks,
   // then the Spiro Pen's path, Node/Knot edit's handles, Select's and Box Select's
   // boxes, and last the brush outline.
   void drawReferenceOverlays(QPainter &p);

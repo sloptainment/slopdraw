@@ -14,7 +14,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(MYPAINT REQUIRED IMPORTED_TARGET libmypaint)
 target_link_libraries(slopdraw_core PUBLIC Qt6::Gui PkgConfig::MYPAINT)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
 add_executable(slopdraw 
   src/main.cpp 
   src/canvas.cpp 
@@ -34,7 +34,7 @@ add_executable(slopdraw
   src/newdialog.cpp 
   src/menus.cpp
   resources/res.qrc)
-target_link_libraries(slopdraw PRIVATE slopdraw_core Qt6::Widgets)
+target_link_libraries(slopdraw PRIVATE slopdraw_core Qt6::Widgets Qt6::OpenGLWidgets)
 # Power of 10 rule 10 (#622): src/ builds warning-free at the pedantic setting; tests/ and vendor/ C are not held to it (#644).
 target_compile_options(slopdraw_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>)
 target_compile_options(slopdraw PRIVATE -Wall -Wextra -Wpedantic)
@@ -48,3 +48,7 @@ add_test(NAME document COMMAND test_document)
 add_executable(test_resize_dialog tests/test_resize_dialog.cpp src/newdialog.cpp)
 target_link_libraries(test_resize_dialog PRIVATE slopdraw_core Qt6::Widgets)
 add_test(NAME resize_dialog COMMAND test_resize_dialog)
+add_executable(test_gpu_canvas tests/test_gpu_canvas.cpp src/canvas.cpp src/canvas_draw.cpp src/canvas_paint.cpp src/canvas_nodes.cpp src/canvas_select.cpp src/canvas_refs.cpp)
+target_link_libraries(test_gpu_canvas PRIVATE slopdraw_core Qt6::Widgets Qt6::OpenGLWidgets)
+target_compile_definitions(test_gpu_canvas PRIVATE BRUSH_DIR="${CMAKE_SOURCE_DIR}/brushes")
+add_test(NAME gpu_canvas COMMAND test_gpu_canvas)
