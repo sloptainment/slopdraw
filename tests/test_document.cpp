@@ -4,6 +4,8 @@
 #include <cstring>
 #include <QColorSpace>
 #include <QElapsedTimer>
+#include <QBuffer>
+#include <QFile>
 #include "brush.h"
 #include "miniz.h"
 #include "document.h"
@@ -745,6 +747,59 @@ static bool oraRoundTripsGroups() {
         else if (r.isEndElement() && r.name() == u"stack") open--;
     }
     return back->render() == doc.render() && stacks == 3 && deepest == 3;
+}
+
+// A zip entry's bytes, empty when absent.
+static QByteArray zipEntry(const QString& path, const char* name) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    QByteArray zip = f.readAll();
+    mz_zip_archive r{};
+    if (!mz_zip_reader_init_mem(&r, zip.constData(), size_t(zip.size()), 0)) return {};
+    size_t n = 0;
+    void* p = mz_zip_reader_extract_file_to_heap(&r, name, &n, 0);
+    QByteArray out(static_cast<const char*>(p), qsizetype(n));
+    mz_free(p); mz_zip_reader_end(&r);
+    return out;
+}
+
+// #576: an .ora from before linear (8-bit layer PNG, no mydraw storage attribute) opens converted from sRGB: a 128 pixel is linear ~0.2158 and shows as 128.
+static bool taglessOraOpensConvertedFromSrgb() {
+    QImage grey(8, 8, QImage::Format_RGBA8888);
+    grey.fill(QColor(128, 128, 128));
+    QByteArray pngBytes; QBuffer b(&pngBytes); b.open(QIODevice::WriteOnly); grey.save(&b, "PNG");
+    QByteArray xml = "<?xml version=\"1.0\"?><image version=\"0.0.3\" w=\"8\" h=\"8\"><stack>"
+                     "<layer name=\"Background\" src=\"data/layer0.png\" visibility=\"visible\" opacity=\"1\" x=\"0\" y=\"0\"/></stack></image>";
+    QTemporaryDir dir;
+    QString path = dir.filePath("old.ora");
+    mz_zip_archive z{};
+    if (!mz_zip_writer_init_heap(&z, 0, 0)) return false;
+    void* buf = nullptr; size_t size = 0;
+    bool ok = mz_zip_writer_add_mem(&z, "mimetype", "image/openraster", 16, MZ_NO_COMPRESSION)
+           && mz_zip_writer_add_mem(&z, "stack.xml", xml.constData(), size_t(xml.size()), MZ_DEFAULT_COMPRESSION)
+           && mz_zip_writer_add_mem(&z, "data/layer0.png", pngBytes.constData(), size_t(pngBytes.size()), MZ_DEFAULT_COMPRESSION)
+           && mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+    QFile f(path);
+    ok = ok && f.open(QIODevice::WriteOnly) && f.write(static_cast<const char*>(buf), qint64(size)) == qint64(size);
+    f.close(); mz_zip_writer_end(&z);
+    auto doc = readOra(path);
+    return ok && doc && std::abs(doc->render().pixelColor(3, 3).redF() - 0.2158) < 0.001 && doc->colorAt({3, 3}).red() == 128;
+}
+
+// #576: a saved layer PNG is 16-bit with no colour chunk, stack.xml names the Integer storage, and reopening keeps the linear values exactly.
+static bool oraLayersAreUntaggedSixteenBitLinear() {
+    Document doc(QSize(16, 16));
+    doc.addLayer();
+    doc.fill(QColor(255, 255, 255, 128), {{2, 2}, {12, 2}, {12, 12}, {2, 12}});
+    QTemporaryDir dir;
+    QString path = dir.filePath("t.ora");
+    if (!writeOra(doc, path)) return false;
+    QByteArray layer = zipEntry(path, "data/layer1.png");
+    QImage img = QImage::fromData(layer, "PNG");
+    for (const char* chunk : {"iCCP", "sRGB", "gAMA", "cHRM", "cICP"})
+        if (layer.contains(chunk)) return false;
+    auto back = readOra(path);
+    return img.depth() == 64 && zipEntry(path, "stack.xml").contains("storage=\"integer\"") && back && back->image(1) == doc.image(1) && back->render() == doc.render();
 }
 
 // #538: two references round-trip through .ora (pixels, transform, crop, order, opacity) with nothing to undo;
@@ -2646,6 +2701,8 @@ int main() {
     run("layerNamesAreStoredAndUndoable", layerNamesAreStoredAndUndoable);
     run("zipRoundTripsTwoEntries", zipRoundTripsTwoEntries);
     run("oraRoundTripsThreeLayers", oraRoundTripsThreeLayers);
+    run("taglessOraOpensConvertedFromSrgb", taglessOraOpensConvertedFromSrgb);
+    run("oraLayersAreUntaggedSixteenBitLinear", oraLayersAreUntaggedSixteenBitLinear);
     run("oraRoundTripsReferences", oraRoundTripsReferences);
     run("oraRoundTripsGroups", oraRoundTripsGroups);
     run("importedReferenceFitsTheView", importedReferenceFitsTheView);

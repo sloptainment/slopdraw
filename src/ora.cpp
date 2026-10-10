@@ -1,6 +1,7 @@
 #include "ora.h"
 #include <functional>
 #include <QBuffer>
+#include <QColorSpace>
 #include <QFile>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
@@ -16,6 +17,13 @@ QByteArray png(const QImage &img)
   b.open(QIODevice::WriteOnly);
   img.save(&b, "PNG");
   return out;
+}
+
+// Linear layers carry no colour chunk: stack.xml's storage attribute says linear (#570).
+QImage untagged(QImage img)
+{
+  img.setColorSpace(QColorSpace());
+  return img;
 }
 
 bool add(mz_zip_archive &z, const char *name, const QByteArray &data, mz_uint level)
@@ -226,6 +234,7 @@ bool writeOra(const Document &doc, const QString &path)
   w.writeAttribute("version", "0.0.3");
   w.writeAttribute("w", QString::number(doc.image(0).width()));
   w.writeAttribute("h", QString::number(doc.image(0).height()));
+  w.writeAttribute(kNs, "storage", "integer");
   w.writeStartElement("stack");
   int top = doc.layerCount() - 1;
   stackItems(w, doc, top, 0);
@@ -240,7 +249,7 @@ bool writeOra(const Document &doc, const QString &path)
     ok = doc.isGroup(i) ||
          (add(
             z, QString("data/layer%1.png").arg(i).toUtf8().constData(),
-            png(doc.image(i)), MZ_DEFAULT_COMPRESSION) &&
+            png(untagged(doc.image(i))), MZ_DEFAULT_COMPRESSION) &&
           (!doc.vector(i) ||
            add(
              z, QString("data/layer%1.svg").arg(i).toUtf8().constData(),
@@ -316,7 +325,8 @@ struct OraItem
 
 // Parses stack.xml into layers (top first) and the image size; false on bad XML.
 static bool
-readStack(const QByteArray &xml, std::vector<OraItem> &layers, QSize &size)
+readStack(
+  const QByteArray &xml, std::vector<OraItem> &layers, QSize &size, bool &linear)
 {
   QXmlStreamReader r(xml);
   int nest = 0; // <stack>s open: the root is 1, so an item's depth is nest - 1
@@ -331,7 +341,10 @@ readStack(const QByteArray &xml, std::vector<OraItem> &layers, QSize &size)
     bool vis = a.value("visibility") != u"hidden";
     double op = a.value("opacity").isEmpty() ? 1.0 : a.value("opacity").toDouble();
     if (r.name() == u"image")
+    {
       size = QSize(a.value("w").toInt(), a.value("h").toInt());
+      linear = a.hasAttribute(kNs, "storage");
+    }
     else if (r.name() == u"stack" && nest++ > 0)
       layers.push_back(
         {a.value("name").toString(),
@@ -373,7 +386,8 @@ std::optional<Document> readOra(const QString &path)
   };
   std::vector<OraItem> layers; // top first, as in stack.xml
   QSize size;
-  bool parsed = readStack(entry("stack.xml"), layers, size);
+  bool linear = false; // no storage attribute: a tagless .ora, layers are sRGB
+  bool parsed = readStack(entry("stack.xml"), layers, size, linear);
   std::optional<Document> doc;
   if (parsed && !layers.empty() && !size.isEmpty())
   {
@@ -389,6 +403,8 @@ std::optional<Document> readOra(const QString &path)
         doc.reset();
         break;
       }
+      if (linear)
+        img.setColorSpace(QColorSpace::SRgbLinear);
       if (i > 0)
         doc->addLayer();
       doc->restoreLayer(
