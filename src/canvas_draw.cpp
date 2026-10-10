@@ -80,7 +80,7 @@ void Canvas::paintEvent(QPaintEvent *)
   }
   p.setRenderHint(QPainter::SmoothPixmapTransform);
   p.setTransform(s_.view.matrix());
-  QImage doc = s_.doc.render();
+  QImage doc = encodeSrgb(s_.doc.render());
   p.drawImage(0, 0, doc);
   drawReferenceOverlays(p);
   if (lasso_.size() > 1)

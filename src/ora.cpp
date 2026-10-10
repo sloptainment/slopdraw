@@ -252,7 +252,7 @@ bool writeOra(const Document &doc, const QString &path)
   if (ok && !doc.references().empty())
     ok =
       add(z, "mydraw/references.xml", referencesXml(doc), MZ_DEFAULT_COMPRESSION);
-  QImage merged = doc.render();
+  QImage merged = encodeSrgb(doc.render());
   ok =
     ok && add(z, "mergedimage.png", png(merged), MZ_DEFAULT_COMPRESSION) &&
     add(
@@ -406,5 +406,5 @@ std::optional<Document> readOra(const QString &path)
 
 bool exportPng(const Document &doc, const QString &path)
 {
-  return doc.render().save(path, "PNG");
+  return encodeSrgb(doc.render()).save(path, "PNG");
 }

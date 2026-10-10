@@ -43,7 +43,7 @@ target_compile_definitions(slopdraw PRIVATE BRUSH_DIR="${CMAKE_SOURCE_DIR}/brush
 enable_testing()
 add_executable(test_document tests/test_document.cpp)
 target_link_libraries(test_document PRIVATE slopdraw_core)
-target_compile_definitions(test_document PRIVATE GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden" TEST_PENCIL="${CMAKE_SOURCE_DIR}/tests/pencil.myb" BRUSH_DIR="${CMAKE_SOURCE_DIR}/brushes")
+target_compile_definitions(test_document PRIVATE GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden" TEST_PENCIL="${CMAKE_SOURCE_DIR}/tests/pencil.myb" TEST_IMPRESSIONISM="${CMAKE_SOURCE_DIR}/tests/impressionism.myb" BRUSH_DIR="${CMAKE_SOURCE_DIR}/brushes")
 add_test(NAME document COMMAND test_document)
 add_executable(test_resize_dialog tests/test_resize_dialog.cpp src/newdialog.cpp)
 target_link_libraries(test_resize_dialog PRIVATE slopdraw_core Qt6::Widgets)

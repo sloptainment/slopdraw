@@ -20,7 +20,7 @@ struct BrushEntry
 std::vector<BrushEntry> listBrushes(const QString &dir);
 
 // Sets the brush's base color (libmypaint color_h/color_s/color_v) for the strokes
-// painted after.
+// painted after. color is sRGB, as picked; the brush holds it in linear light.
 void setBrushColor(MyPaintBrush *brush, const QColor &color);
 
 // One pen reading in document coordinates; dt is seconds since the previous sample.
@@ -30,8 +30,8 @@ struct PenSample
   double dt;
 };
 
-// Replays samples through brush onto an RGBA8888 image (the Raster Layer), one
-// mypaint_brush_stroke_to_2 per sample. continuing = true carries on the brush's
+// Replays samples through brush onto a linear RGBA64 image (the Raster Layer), one
+// mypaint_brush_stroke_to_2_linearsRGB per sample. continuing = true carries on the brush's
 // current stroke instead of starting a new one. alphaLock = true recolors pixels
 // but keeps every alpha, so pixels with alpha 0 stay untouched.
 void paintStroke(
@@ -56,3 +56,7 @@ float dragRadius(float radius, float dx);
 // kept. srgbToLinear takes a QColor holding sRGB values, linearToSrgb the inverse.
 QColor srgbToLinear(const QColor &c);
 QColor linearToSrgb(const QColor &c);
+
+// A linear-light image (a layer, or render()) encoded to 8-bit sRGB for the screen,
+// thumbnails and previews.
+QImage encodeSrgb(const QImage &linear);

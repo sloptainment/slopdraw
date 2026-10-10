@@ -1,6 +1,7 @@
 #include "document.h"
 #include <algorithm>
-#include <QPainter>
+#include <cstring>
+#include <QColorSpace>
 
 Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget)
 {
@@ -10,15 +11,57 @@ Document::Document(QSize size, qsizetype undoBudget) : budget_(undoBudget)
 
 QImage Document::layerImage(QSize size) const
 {
-  QImage out(size, QImage::Format_RGBA8888);
+  QImage out(size, QImage::Format_RGBA64);
+  out.setColorSpace(QColorSpace::SRgbLinear);
   out.fill(Qt::transparent);
   return out;
 }
 
+// A picture with no profile is read as sRGB, one with a profile from that profile.
 QImage Document::layerImage(const QImage &from) const
 {
-  return from.convertToFormat(QImage::Format_RGBA8888);
+  QImage out = from.convertToFormat(QImage::Format_RGBA64);
+  if (!out.colorSpace().isValid())
+    out.setColorSpace(QColorSpace::SRgb);
+  return out.convertedToColorSpace(QColorSpace::SRgbLinear);
 }
+
+namespace
+{
+
+// src scaled by opacity over dst (or, atop, only where dst has alpha), both
+// RGBA64 with straight alpha, in float so opacity is not cut to 1/255.
+void blend(QImage &dst, const QImage &src, float opacity, bool atop)
+{
+  constexpr float k = 65535;
+  for (int y = 0; y < dst.height(); y++)
+  {
+    auto *d = reinterpret_cast<quint16 *>(dst.scanLine(y));
+    auto *s = reinterpret_cast<const quint16 *>(src.constScanLine(y));
+    for (int x = 0; x < dst.width(); x++, d += 4, s += 4)
+    {
+      if (!s[3])
+        continue;
+      if (!atop && opacity == 1 && s[3] == 65535)
+      { // opaque over anything is the source
+        std::memcpy(d, s, 8);
+        continue;
+      }
+      const float sa = s[3] / k * opacity, da = d[3] / k;
+      const float oa = atop ? da : sa + da * (1 - sa);
+      if (sa <= 0 || oa <= 0)
+        continue;
+      for (int c = 0; c < 3; c++)
+        d[c] = quint16(
+          (atop ? s[c] * sa + d[c] * (1 - sa)
+                : (s[c] * sa + d[c] * da * (1 - sa)) / oa) +
+          0.5f);
+      d[3] = quint16(oa * k + 0.5f);
+    }
+  }
+}
+
+} // namespace
 
 QImage Document::render() const
 {
@@ -47,19 +90,14 @@ QImage Document::compose(int lo, int hi, int d) const
     items.push_back({i, s});
     i = s - 1;
   }
-  QPainter p(&out);
   for (size_t k = items.size(); k-- > 0;)
   {
     const Layer &l = layers_[items[k].first];
     if (!l.visible)
       continue;
-    p.setOpacity(l.opacity);
-    p.setCompositionMode(
-      k + 1 < items.size() && l.inheritAlpha
-        ? QPainter::CompositionMode_SourceAtop
-        : QPainter::CompositionMode_SourceOver);
-    p.drawImage(
-      0, 0, l.group ? compose(items[k].second, items[k].first, d + 1) : l.image);
+    blend(
+      out, l.group ? compose(items[k].second, items[k].first, d + 1) : l.image,
+      l.opacity, k + 1 < items.size() && l.inheritAlpha);
   }
   return out;
 }
@@ -68,7 +106,9 @@ QImage Document::compose(int lo, int hi, int d) const
 // runs per mouse move
 QColor Document::colorAt(QPoint p) const
 {
-  return layers_[0].image.rect().contains(p) ? render().pixelColor(p) : QColor();
+  return layers_[0].image.rect().contains(p)
+           ? QColor::fromRgba(linearToSrgb(render().pixelColor(p)).rgba())
+           : QColor();
 }
 
 int Document::addLayer()

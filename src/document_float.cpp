@@ -158,9 +158,9 @@ QRectF Document::groupBounds(int group) const
     QRect r;
     for (int y = 0; y < l.image.height(); y++)
     {
-      auto *p = reinterpret_cast<const QRgb *>(l.image.constScanLine(y));
+      auto *p = reinterpret_cast<const quint16 *>(l.image.constScanLine(y));
       for (int x = 0; x < l.image.width(); x++)
-        if (qAlpha(p[x]))
+        if (p[4 * x + 3])
           r |= QRect(x, y, 1, 1);
     }
     box |= QRectF(r);

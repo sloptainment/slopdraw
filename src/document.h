@@ -71,7 +71,8 @@ public:
   // steps drop first, never the newest.
   explicit Document(QSize size, qsizetype undoBudget = qsizetype(1) << 30);
   // The visible layers composited bottom to top, source-over, each scaled by its
-  // opacity.
+  // opacity, in linear light: a linear RGBA64 image. encodeSrgb() gives the pixels
+  // to show or save.
   QImage render() const;
   // Replays samples through the brush onto the current Raster Layer, one
   // mypaint_brush_stroke_to_2 per sample. continuing = true carries on the current
@@ -85,7 +86,7 @@ public:
   // While rect is not null, stroke and fill change pixels inside it only (#422).
   void setClip(const QRect &rect) { clip_ = rect; }
   // Fills the closed polygon through points on the current Raster Layer:
-  // antialiased, non-zero winding, solid color. eraser = true cuts the shape out of
+  // antialiased, non-zero winding, solid color (sRGB, as picked). eraser = true cuts the shape out of
   // the alpha instead (to white under alpha lock). One call is one undo step.
   void fill(
     const QColor &color, const std::vector<QPointF> &points, bool eraser = false);
@@ -144,8 +145,8 @@ public:
   // What a group draws: its raster items' non-transparent pixels united with its
   // vector items' path outlines; null if nothing.
   QRectF groupBounds(int group) const;
-  // The visible (composite) color at a document pixel; an invalid QColor when p is
-  // off the canvas.
+  // The visible (composite) color at a document pixel, as 8-bit sRGB; an invalid
+  // QColor when p is off the canvas.
   QColor colorAt(QPoint p) const;
   // Adds a transparent Raster Layer on top and makes it current; returns its index
   // (0 is the white background).
@@ -301,6 +302,7 @@ public:
   // For loading: makes a layer (already restored) a Vector Layer with these paths
   // and redraws it. Drops the undo history.
   void restorePaths(int layer, const std::vector<VPath> &paths);
+  // A layer's pixels: linear RGBA64.
   const QImage &image(int layer) const { return layers_[layer].image; }
   // For loading a file into a fresh Document: replaces a layer's contents outright
   // and drops the undo history.
@@ -457,7 +459,8 @@ private:
   void seal();
 
   // The one place a layer's image is made: a transparent image of size, or from
-  // converted to the layer storage format.
+  // converted to the layer storage format (RGBA64, linear light); from with no
+  // profile is read as sRGB.
   QImage layerImage(QSize size) const;
   QImage layerImage(const QImage &from) const;
 

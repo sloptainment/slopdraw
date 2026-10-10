@@ -178,7 +178,7 @@ QWidget *layerRow(Canvas *canvas, const Document &d, int i)
   tp.fill(QColor(200, 200, 200)); // so a transparent layer's thumbnail still shows
   QPainter tpp(&tp);
   tpp.setRenderHint(QPainter::SmoothPixmapTransform);
-  tpp.drawImage(tp.rect(), group ? d.groupImage(i) : d.image(i));
+  tpp.drawImage(tp.rect(), encodeSrgb(group ? d.groupImage(i) : d.image(i)));
   thumb->setPixmap(tp);
   h->addWidget(eyeButton(canvas, d, i));
   if (group)

@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QColorSpace>
 #include <algorithm>
 #include <cmath>
 
@@ -30,7 +31,7 @@ std::vector<BrushEntry> listBrushes(const QString &dir)
 namespace
 {
 
-// A MyPaintSurface2 over a QImage; lock_alpha, colorize, posterize and paint
+// A MyPaintSurface2 over a linear RGBA64 QImage (straight alpha); lock_alpha, colorize, posterize and paint
 // (spectral mixing) are ignored.
 // eraser takes dabs out of the alpha (white under alpha lock, which keeps alpha).
 struct ImageSurface : MyPaintSurface2
@@ -64,7 +65,7 @@ void forEachDabPixel(
               std::min(img.height() - 1, int(std::ceil(y + radius * aspect + 1)));
   for (int py = y0; py <= y1; py++)
   {
-    uchar *row = img.scanLine(py);
+    auto *row = reinterpret_cast<quint16 *>(img.scanLine(py));
     for (int px = x0; px <= x1; px++)
     {
       const float yy = py + 0.5f - y, xx = px + 0.5f - x;
@@ -101,7 +102,7 @@ int drawDab(
   const float rgb[3] = {eraser ? 1 : r, eraser ? 1 : g, eraser ? 1 : b};
   forEachDabPixel(
     *static_cast<ImageSurface *>(s)->img, x, y, radius, hardness, aspect, angle,
-    [&](uchar *p, float opa)
+    [&](quint16 *p, float opa)
     {
       const float a = opa * opaque;
       if (lock)
@@ -109,24 +110,24 @@ int drawDab(
         if (p[3] == 0)
           return;
         for (int c = 0; c < 3; c++)
-          p[c] = uchar(std::lround(a * rgb[c] * 255 + (1 - a) * p[c]));
+          p[c] = quint16(std::lround(a * rgb[c] * 65535 + (1 - a) * p[c]));
         return;
       }
       if (eraser)
       {
-        p[3] = uchar(std::lround((1 - a) * p[3]));
+        p[3] = quint16(std::lround((1 - a) * p[3]));
         return;
       } // destination-out
       // libmypaint's Normal_and_Eraser on non-premultiplied pixels, so a
       // transparent layer takes paint; alphaEraser 0 is destination-out
-      const float srcA = a * alphaEraser, dstA = p[3] / 255.f,
+      const float srcA = a * alphaEraser, dstA = p[3] / 65535.f,
                   outA = srcA + (1 - a) * dstA;
       if (outA <= 0)
         return;
       for (int c = 0; c < 3; c++)
-        p[c] =
-          uchar(std::lround((srcA * rgb[c] * 255 + (1 - a) * dstA * p[c]) / outA));
-      p[3] = uchar(std::lround(outA * 255));
+        p[c] = quint16(std::lround(
+          (srcA * rgb[c] * 65535 + (1 - a) * dstA * p[c]) / outA));
+      p[3] = quint16(std::lround(outA * 65535));
     });
   return 1;
 }
@@ -146,11 +147,11 @@ void getColor(
                                       // pixels don't pull the colour toward black
   forEachDabPixel(
     *static_cast<ImageSurface *>(s)->img, x, y, radius, 0.5f, 1, 0,
-    [&](uchar *p, float opa)
+    [&](quint16 *p, float opa)
     {
-      const float pa = opa * p[3] / 255.f;
+      const float pa = opa * p[3] / 65535.f;
       for (int c = 0; c < 3; c++)
-        sum[c] += pa * p[c] / 255.f;
+        sum[c] += pa * p[c] / 65535.f;
       sumA += pa;
       w += opa;
     });
@@ -199,17 +200,18 @@ void paintStroke(
     if (!samples.empty())
     {
       const auto &p = samples.front();
-      mypaint_brush_stroke_to_2(
+      mypaint_brush_stroke_to_2_linearsRGB(
         brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, 6.0, 1, 0, 0);
     }
   }
   for (const auto &p : samples)
-    mypaint_brush_stroke_to_2(
+    mypaint_brush_stroke_to_2_linearsRGB(
       brush, &s, p.x, p.y, p.pressure, p.xtilt, p.ytilt, p.dt, 1, 0, 0);
 }
 
-void setBrushColor(MyPaintBrush *brush, const QColor &color)
+void setBrushColor(MyPaintBrush *brush, const QColor &srgb)
 {
+  const QColor color = srgbToLinear(srgb);
   mypaint_brush_set_base_value(
     brush, MYPAINT_BRUSH_SETTING_COLOR_H,
     std::max(0.f, color.hsvHueF())); // hue is -1 for grays
@@ -257,4 +259,14 @@ QColor linearToSrgb(const QColor &c)
   return mapRgb(
     c, [](float v)
     { return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1 / 2.4f) - 0.055f; });
+}
+
+QImage encodeSrgb(const QImage &linear)
+{
+  QImage l = linear;
+  l.setColorSpace(QColorSpace::SRgbLinear);
+  QImage out = l.convertedToColorSpace(QColorSpace::SRgb)
+                 .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  out.setColorSpace(QColorSpace()); // plain sRGB pixels, as the screen and files take them
+  return out;
 }

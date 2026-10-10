@@ -14,7 +14,7 @@ void Navigator::paintEvent(QPaintEvent *)
   QRectF r =
     toThumb.mapRect(QRectF(QPointF(), QSizeF(canvas_->doc().image(0).size())));
   if (thumb_.isNull())
-    thumb_ = canvas_->doc().render().scaled(
+    thumb_ = encodeSrgb(canvas_->doc().render()).scaled(
       r.size().toSize(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
   p.fillRect(r, Qt::white);
   p.drawImage(r.topLeft(), thumb_);

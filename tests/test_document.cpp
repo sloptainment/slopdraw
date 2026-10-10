@@ -2,6 +2,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <QColorSpace>
+#include <QElapsedTimer>
 #include "brush.h"
 #include "miniz.h"
 #include "document.h"
@@ -21,11 +23,14 @@
 #include "spiro_fixtures.h"
 #include "view.h"
 
+// The 8-bit sRGB pixels the screen shows for a linear image, in the plain format the goldens were made in.
+static QImage shown(const QImage& linear) { return encodeSrgb(linear).convertToFormat(QImage::Format_RGBA8888); }
+
 // New Document renders white, matching a golden PNG.
 static bool newDocumentRendersWhite() {
     QImage golden(GOLDEN_DIR "/new_64x64.pbm");
     if (golden.isNull()) return false;
-    QImage got = Document(QSize(64, 64)).render();
+    QImage got = shown(Document(QSize(64, 64)).render());
     return got.convertToFormat(QImage::Format_RGB32) == golden.convertToFormat(QImage::Format_RGB32);
 }
 
@@ -158,7 +163,7 @@ static bool replayedPencilStrokeMatchesGolden() {
         samples.push_back({4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01});
     Document doc(QSize(64, 64));
     doc.stroke(pencil, samples);
-    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage got = shown(doc.render()).convertToFormat(QImage::Format_Grayscale8);
     QImage golden(GOLDEN_DIR "/pencil_wave_64x64.pgm");
     bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
     if (!same) {  // write plain-text PGM (Qt only writes binary) to eyeball and copy into golden/
@@ -180,7 +185,7 @@ static bool liveFedPencilStrokeMatchesGolden() {
     for (int i = 0; i < 16; i++)
         doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
     QImage golden(GOLDEN_DIR "/pencil_wave_64x64.pgm");
-    return !golden.isNull() && doc.render().convertToFormat(QImage::Format_Grayscale8) == golden.convertToFormat(QImage::Format_Grayscale8);
+    return !golden.isNull() && shown(doc.render()).convertToFormat(QImage::Format_Grayscale8) == golden.convertToFormat(QImage::Format_Grayscale8);
 }
 
 // A wavy stroke across row y with pressure ramping up, so different y give strokes that touch different pixels.
@@ -274,7 +279,7 @@ static bool stepIdsTrackTheHistory() {
            tiny.stepId() == dropped && dropped != 0 && dropped != last;
 }
 
-// After the pencil wave, colorAt reads the golden's gray at a painted pixel (53,34), white elsewhere, and invalid off the canvas.
+// After the pencil wave, colorAt reads the golden's gray (194, lighter than the sRGB-blended 137 it was) at a painted pixel (53,34), white elsewhere, and invalid off the canvas.
 static bool colorAtReadsCompositePixel() {
     auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
@@ -282,7 +287,7 @@ static bool colorAtReadsCompositePixel() {
     for (int i = 0; i < 16; i++)  // the golden's samples, as in replayedPencilStrokeMatchesGolden
         doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
     QColor painted = doc.colorAt({53, 34}), white = doc.colorAt({0, 0});
-    return painted == QColor(137, 137, 137, 255) && white == QColor(255, 255, 255, 255) &&
+    return painted == QColor(194, 194, 194, 255) && white == QColor(255, 255, 255, 255) &&
            !doc.colorAt({-1, 0}).isValid() && !doc.colorAt({64, 0}).isValid() && !doc.colorAt({0, 64}).isValid();
 }
 
@@ -299,6 +304,7 @@ static bool eraserStrokeErasesAndUndoes() {
     doc.stroke(pencil, samples, false, true);
     QImage got = doc.render().convertToFormat(QImage::Format_Alpha8);  // erase lives in the alpha; the golden is that channel
     got.reinterpretAsFormat(QImage::Format_Grayscale8);
+    got.setColorSpace(QColorSpace());  // the golden is untagged
     QImage golden(GOLDEN_DIR "/pencil_wave_erased_64x64.pgm");
     bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
     if (!same) {  // write plain-text PGM to eyeball and copy into golden/
@@ -313,7 +319,7 @@ static bool eraserStrokeErasesAndUndoes() {
     return same && lighter && doc.undo() && doc.render() == painted;
 }
 
-// The pencil wave painted after setBrushColor(red) is red at (53,34), where the default gray left 137.
+// The pencil wave painted after setBrushColor(red) is red at (53,34), where the default gray left 194.
 static bool brushColorPaintsInThatColor() {
     auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
@@ -322,7 +328,7 @@ static bool brushColorPaintsInThatColor() {
     for (int i = 0; i < 16; i++)  // the golden's samples, as in colorAtReadsCompositePixel
         doc.stroke(pencil, {{4.f + 3.8f * i, 32.f + 12.f * std::sin(i * 0.5f), 0.1f + 0.06f * i, 0, 0, 0.01}}, i > 0);
     QColor c = doc.colorAt({53, 34});
-    return c == QColor(255, 137, 137, 255);
+    return c == QColor(255, 194, 194, 255);
 }
 
 // Every 8-bit sRGB gray survives sRGB -> linear -> sRGB, and sRGB 128 is linear 0.2158.
@@ -330,6 +336,115 @@ static bool srgbLinearHelpersRoundTrip() {
     for (int v = 0; v < 256; v++)
         if (linearToSrgb(srgbToLinear(QColor(v, v, v))).rgb() != qRgb(v, v, v)) return false;
     return std::abs(srgbToLinear(QColor(128, 128, 128)).redF() - 0.2158) < 0.0005;
+}
+
+// A 64x64 document whose Background is black and whose layer 1 is a white square over all of it at the given opacity.
+static Document whiteOverBlack(double opacity) {
+    const std::vector<QPointF> all = {{0, 0}, {64, 0}, {64, 64}, {0, 64}};
+    Document doc(QSize(64, 64));
+    doc.fill(Qt::black, all);
+    doc.addLayer();
+    doc.fill(Qt::white, all);
+    doc.setOpacity(1, opacity);
+    return doc;
+}
+
+// 50% white over black composites to linear 0.5, which shows as sRGB 188 (not 127).
+static bool halfWhiteOverBlackIsLinearHalf() {
+    Document doc = whiteOverBlack(0.5);
+    return std::abs(doc.render().pixelColor(10, 10).redF() - 0.5) < 0.0002 && doc.colorAt({10, 10}).red() == 188;
+}
+
+// Layer opacity 0.3 composites as 0.3 to 16-bit precision, not as 77/255.
+static bool layerOpacityIsExact() {
+    Document doc = whiteOverBlack(0.3);
+    return std::abs(doc.render().pixelColor(10, 10).redF() - 0.3) < 0.0001;
+}
+
+// The brush dabs once per 10 ms sample (after the first) without moving, and ignores pressure.
+static void stillDabs(MyPaintBrush* brush) {
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_DABS_PER_SECOND, 100);
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_DABS_PER_BASIC_RADIUS, 0);
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_DABS_PER_ACTUAL_RADIUS, 0);
+    for (auto s : {MYPAINT_BRUSH_SETTING_OPAQUE, MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, MYPAINT_BRUSH_SETTING_SMUDGE})
+        for (int in = 0; in < MYPAINT_BRUSH_INPUTS_COUNT; in++) mypaint_brush_set_mapping_n(brush, s, MyPaintBrushInput(in), 0);
+}
+
+// A half-opaque white dab over black lands on linear 0.5 (sRGB 188); a full-smudge brush dragged across a white|black edge picks up their linear mean (188), not the sRGB one (127).
+static bool dabAndSmudgeMixInLinearLight() {
+    auto brush = loadBrush(TEST_PENCIL);
+    if (!brush) return false;
+    Document dab(QSize(64, 64));
+    dab.fill(Qt::black, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+    setBrushColor(brush.get(), Qt::white);
+    setBrushOpacity(brush.get(), 1);
+    setBrushRadius(brush.get(), 10);
+    mypaint_brush_set_base_value(brush.get(), MYPAINT_BRUSH_SETTING_HARDNESS, 1);
+    mypaint_brush_set_base_value(brush.get(), MYPAINT_BRUSH_SETTING_OPAQUE_MULTIPLY, 0);
+    mypaint_brush_set_base_value(brush.get(), MYPAINT_BRUSH_SETTING_OPAQUE, 0.5f);
+    stillDabs(brush.get());
+    dab.stroke(brush, std::vector<PenSample>(2, {32.f, 32.f, 1.f, 0, 0, 0.01}));  // the first sample only lands the pen
+    int dabbed = dab.colorAt({32, 32}).red();
+    Document smudge(QSize(64, 64));
+    smudge.fill(Qt::black, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+    smudge.fill(Qt::white, {{0, 0}, {32, 0}, {32, 64}, {0, 64}});
+    auto smudger = loadBrush(TEST_PENCIL);
+    stillDabs(smudger.get());
+    mypaint_brush_set_base_value(smudger.get(), MYPAINT_BRUSH_SETTING_SMUDGE, 1);
+    mypaint_brush_set_base_value(smudger.get(), MYPAINT_BRUSH_SETTING_SMUDGE_LENGTH, 0);
+    setBrushOpacity(smudger.get(), 1);
+    setBrushRadius(smudger.get(), 8);
+    std::vector<PenSample> still(60, {32.f, 32.f, 1.f, 0, 0, 0.05});
+    smudge.stroke(smudger, still);
+    int smudged = smudge.colorAt({32, 32}).red();
+    std::printf("dab %d smudge %d\n", dabbed, smudged);
+    return std::abs(dabbed - 188) <= 2 && std::abs(smudged - 188) <= 4;
+}
+
+// A colour-dynamics brush (impressionism) still paints.
+static bool colourDynamicsBrushPaints() {
+    auto brush = loadBrush(TEST_IMPRESSIONISM);
+    if (!brush) return false;
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.stroke(brush, waveAt(32));
+    for (int y = 0; y < 64; y++)
+        for (int x = 0; x < 64; x++)
+            if (doc.image(1).pixelColor(x, y).alpha() > 0) return true;
+    return false;
+}
+
+// A colour painted at full opacity and picked comes back as the same 8-bit sRGB, for a fill and for a brush.
+static bool pickedColourRoundTrips() {
+    for (QColor c : {QColor(200, 30, 90), QColor(10, 10, 10), QColor(250, 250, 250), QColor(128, 128, 128)}) {
+        Document filled(QSize(64, 64));
+        filled.fill(c, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+        if (filled.colorAt({5, 5}).rgb() != c.rgb()) return false;
+        auto brush = loadBrush(TEST_PENCIL);
+        setBrushColor(brush.get(), c);
+        setBrushOpacity(brush.get(), 1);
+        setBrushRadius(brush.get(), 12);
+        mypaint_brush_set_base_value(brush.get(), MYPAINT_BRUSH_SETTING_HARDNESS, 1);
+        mypaint_brush_set_base_value(brush.get(), MYPAINT_BRUSH_SETTING_OPAQUE_MULTIPLY, 0);
+        stillDabs(brush.get());
+        Document painted(QSize(64, 64));
+        painted.stroke(brush, std::vector<PenSample>(8, {32.f, 32.f, 1.f, 0, 0, 0.01}));
+        if (painted.colorAt({32, 32}).rgb() != c.rgb()) return false;
+    }
+    return true;
+}
+
+// Encoding a 1920x1080 frame to sRGB is timed and logged against one 60 Hz frame; it never fails the run.
+static bool encodeTimingIsLogged() {
+    Document doc(QSize(1920, 1080));
+    QElapsedTimer t;
+    t.start();
+    QImage linear = doc.render();
+    std::printf("render 1920x1080: %.1f ms\n", t.nsecsElapsed() / 1e6);
+    t.restart();
+    QImage frame = encodeSrgb(linear);
+    std::printf("encode 1920x1080: %.1f ms (frame budget 16.7 ms)\n", t.nsecsElapsed() / 1e6);
+    return !frame.isNull();
 }
 
 // The pencil wave painted with a larger radius covers more pixels, and with lower opacity is lighter at (53,34), than the default.
@@ -423,8 +538,9 @@ static bool dragResizesRadiusWithinRange() {
 // (golden); undo restores each; a pentagram's doubly-wound center is filled (non-zero, not even-odd).
 static bool fillsFigureEightAndErases() {
     auto grayGolden = [](const Document& doc, const char* name, const char* actual, bool alpha = false) {
-        QImage got = doc.render().convertToFormat(alpha ? QImage::Format_Alpha8 : QImage::Format_Grayscale8);  // erase lives in the alpha
+        QImage got = alpha ? doc.render().convertToFormat(QImage::Format_Alpha8) : shown(doc.render()).convertToFormat(QImage::Format_Grayscale8);  // erase lives in the alpha
         got.reinterpretAsFormat(QImage::Format_Grayscale8);
+        got.setColorSpace(QColorSpace());  // the golden is untagged
         QImage golden(QString(GOLDEN_DIR "/") + name);
         bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
         if (!same) {  // write plain-text PGM to eyeball and copy into golden/
@@ -466,10 +582,10 @@ static bool fillHonoursAlpha() {
     black.fill(QColor(255, 255, 255, 128), square, true);
     int grey = black.colorAt({32, 32}).red();  // moved halfway toward white
     black.fill(QColor(255, 255, 255, 255), square, true);
-    return half > 100 && half < 156 && grey > 100 && grey < 156 && black.colorAt({32, 32}) == Qt::white && black.undo() && black.colorAt({32, 32}).red() == grey;
+    return half > 170 && half < 206 && grey > 170 && grey < 206 && black.colorAt({32, 32}) == Qt::white && black.undo() && black.colorAt({32, 32}).red() == grey;
 }
 
-// A stroke on an added layer lands on it alone: hiding it leaves the blank white render, showing it reads the single-layer golden's gray at (53,34).
+// A stroke on an added layer lands on it alone: hiding it leaves the blank white render, showing it reads the single-layer golden's gray (194) at (53,34).
 static bool strokeLandsOnCurrentLayerOnly() {
     auto pencil = loadBrush(TEST_PENCIL);
     if (!pencil) return false;
@@ -485,20 +601,20 @@ static bool strokeLandsOnCurrentLayerOnly() {
     doc.setCurrent(0);
     doc.fill(Qt::black, {{0, 0}, {8, 0}, {8, 8}, {0, 8}});  // lands on the background: still there with layer 1 hidden
     doc.setVisible(1, false);
-    return std::abs(shown - 137) <= 2 && hidden && doc.colorAt({4, 4}) == Qt::black;
+    return std::abs(shown - 194) <= 2 && hidden && doc.colorAt({4, 4}) == Qt::black;
 }
 
 // Background, then a 50% layer with a black square (8,8)-(40,40), a hidden layer with a black square, and a full layer with a black square
-// (24,24)-(56,56): 50% gray where only the first shows, black in the overlap, white elsewhere (golden).
+// (24,24)-(56,56): 50% gray (188 encoded: half the light) where only the first shows, black in the overlap, white elsewhere (golden).
 static bool compositeOfThreeLayersMatchesGolden() {
     Document doc(QSize(64, 64));
     auto square = [&](double lo, double hi) { doc.fill(Qt::black, {{lo, lo}, {hi, lo}, {hi, hi}, {lo, hi}}); };
     doc.addLayer(); square(8, 40); doc.setOpacity(1, 0.5);
     doc.addLayer(); square(0, 64); doc.setVisible(2, false);
     doc.addLayer(); square(24, 56);
-    bool pixels = std::abs(doc.colorAt({12, 12}).red() - 128) <= 1 && doc.colorAt({30, 30}) == Qt::black &&
+    bool pixels = std::abs(doc.colorAt({12, 12}).red() - 188) <= 1 && doc.colorAt({30, 30}) == Qt::black &&
                   doc.colorAt({60, 60}) == Qt::white && doc.colorAt({50, 50}) == Qt::black;
-    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage got = shown(doc.render()).convertToFormat(QImage::Format_Grayscale8);
     QImage golden(GOLDEN_DIR "/layers_composite_64x64.pgm");
     bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
     if (!same) {  // write plain-text PGM to eyeball and copy into golden/
@@ -854,7 +970,7 @@ static bool exportedPngEqualsRender() {
     QString path = dir.filePath("t.png");
     if (!exportPng(doc, path)) return false;
     QImage back(path);
-    return !back.isNull() && back.convertToFormat(QImage::Format_ARGB32) == doc.render().convertToFormat(QImage::Format_ARGB32);
+    return !back.isNull() && back.convertToFormat(QImage::Format_ARGB32) == shown(doc.render()).convertToFormat(QImage::Format_ARGB32);
 }
 
 // A Vector Layer over a red Raster Layer, holding one straight 3-node Spiro path (black, 8 wide, flat ends at x=8 and x=56): the path
@@ -869,7 +985,7 @@ static bool vectorPathRendersAsPowerStroke() {
     auto painted = [&] { return doc.colorAt({32, 31}) == Qt::black && doc.colorAt({32, 35}) == Qt::black; };
     auto bare = [&] { return doc.colorAt({32, 31}) == Qt::red && doc.colorAt({32, 35}) == Qt::red; };
     bool onPath = painted() && doc.colorAt({32, 27}) == Qt::red && doc.colorAt({32, 37}) == Qt::red && doc.colorAt({4, 31}) == Qt::red;
-    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage got = shown(doc.render()).convertToFormat(QImage::Format_Grayscale8);
     QImage golden(GOLDEN_DIR "/vector_path_64x64.pgm");
     bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
     if (!same) {  // write plain-text PGM to eyeball and copy into golden/
@@ -899,7 +1015,7 @@ static bool setKnotsRedrawsAndUndoes() {
     doc.addPath({{8, 32, T::G2}, {32, 32, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
     QImage before = doc.render();
     bool set = doc.setKnots(1, 0, {{0, 4}, {1, 14}});
-    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage got = shown(doc.render()).convertToFormat(QImage::Format_Grayscale8);
     QImage golden(GOLDEN_DIR "/vector_knots_64x64.pgm");
     bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
     if (!same) {  // write plain-text PGM to eyeball and copy into golden/
@@ -1035,7 +1151,7 @@ static bool setNodesRedrawsAndUndoes() {
     doc.addPath({{8, 32, T::G2}, {32, 8, T::G2}, {56, 32, T::G2}}, false, Qt::black, 8);
     QImage before = doc.render();
     bool set = doc.setNodes(1, 0, {{8, 32, T::G2}, {32, 8, T::Corner}, {56, 32, T::G2}}, false);
-    QImage got = doc.render().convertToFormat(QImage::Format_Grayscale8);
+    QImage got = shown(doc.render()).convertToFormat(QImage::Format_Grayscale8);
     QImage golden(GOLDEN_DIR "/vector_nodes_64x64.pgm");
     bool same = !golden.isNull() && got == golden.convertToFormat(QImage::Format_Grayscale8);
     if (!same) {  // write plain-text PGM to eyeball and copy into golden/
@@ -1542,7 +1658,7 @@ static bool scalingResizeStretchesLayersAndPaths() {
     doc.setPaths(1, {v});
     int id = doc.stepId();
     bool scaled = doc.resize(QSize(8, 8), QPoint(5, 5), true) && doc.stepId() != id && doc.image(0).size() == QSize(8, 8) && doc.image(1).size() == QSize(8, 8)
-        && doc.image(0).pixelColor(7, 7) == QColor(Qt::red) && doc.image(0).pixelColor(0, 0) == QColor(Qt::red)
+        && doc.image(0).pixelColor(7, 7).rgb() == qRgb(255, 0, 0) && doc.image(0).pixelColor(0, 0).rgb() == qRgb(255, 0, 0)
         && doc.paths(1)[0].bezier[0].p == QPointF(2, 2) && std::abs(doc.paths(1)[0].knots[0].width - 4) < 1e-9;
     bool undone = doc.undo() && doc.image(0).size() == QSize(4, 4) && doc.paths(1)[0].bezier[0].p == QPointF(1, 1) && doc.paths(1)[0].knots[0].width == 2;
     Document wide(QSize(400, 300));
@@ -1831,7 +1947,7 @@ static bool alphaLockHoldsAlphaUnderPaint() {
     auto alphas = [](const QImage& im) {
         QImage a(im.size(), QImage::Format_Grayscale8);
         for (int y = 0; y < im.height(); y++)
-            for (int x = 0; x < im.width(); x++) a.scanLine(y)[x] = im.constScanLine(y)[4 * x + 3];
+            for (int x = 0; x < im.width(); x++) a.scanLine(y)[x] = im.pixelColor(x, y).alpha();
         return a;
     };
     Document doc(QSize(64, 64));
@@ -1989,7 +2105,7 @@ static bool referencesAreOneUndoStepEachAndNeverRendered() {
     if (doc.references().size() != 1 || doc.references()[0].opacity != 0.5 || doc.render() != before) return false;
     QTemporaryDir dir;
     QString png = dir.filePath("a.png");
-    if (!exportPng(doc, png) || QImage(png).convertToFormat(before.format()) != before) return false;
+    if (!exportPng(doc, png) || QImage(png).convertToFormat(QImage::Format_ARGB32) != shown(before).convertToFormat(QImage::Format_ARGB32)) return false;
     Reference moved = r;
     moved.transform = QTransform::fromTranslate(9, 9);
     int id = doc.stepId();
@@ -2346,7 +2462,7 @@ static bool bucketFillObeysItsRules() {
     half.bucketFill({2, 2}, QColor(0, 0, 0, 128), 0);
     int grey = half.colorAt({2, 2}).red();
     half.bucketFill({2, 2}, Qt::black, 0, 0, true, true, true);
-    bool opacity = grey > 100 && grey < 156 && half.colorAt({2, 2}) == Qt::white;  // erase clears the region
+    bool opacity = grey > 170 && grey < 206 && half.colorAt({2, 2}) == Qt::white;  // erase clears the region
 
     Document lock(QSize(32, 32));
     lock.addLayer();
@@ -2463,6 +2579,12 @@ int main() {
         failed += !ok;
     };
     run("newDocumentRendersWhite", newDocumentRendersWhite);
+    run("halfWhiteOverBlackIsLinearHalf", halfWhiteOverBlackIsLinearHalf);
+    run("layerOpacityIsExact", layerOpacityIsExact);
+    run("dabAndSmudgeMixInLinearLight", dabAndSmudgeMixInLinearLight);
+    run("colourDynamicsBrushPaints", colourDynamicsBrushPaints);
+    run("pickedColourRoundTrips", pickedColourRoundTrips);
+    run("encodeTimingIsLogged", encodeTimingIsLogged);
     run("clipLimitsStrokesAndFills", clipLimitsStrokesAndFills);
     run("bucketFillStopsAtARing", bucketFillStopsAtARing);
     run("bucketFillStopsAtTheClip", bucketFillStopsAtTheClip);

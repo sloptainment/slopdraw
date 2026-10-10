@@ -50,7 +50,8 @@ void Document::fill(
     p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
   else if (eraser)
     p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
-  p.fillPath(path, eraser ? QColor(255, 255, 255, color.alpha()) : color);
+  p.fillPath(
+    path, eraser ? QColor(255, 255, 255, color.alpha()) : srgbToLinear(color));
   p.end();
   seal(); // its own step, so a live stroke after it starts fresh
 }
@@ -143,23 +144,23 @@ bool Document::bucketFill(
   history_.resize(applied_); // a new edit discards the redo branch
   strokeStart_ = l.image;
   const QImage src =
-    (sampleMerged ? render() : l.image)
+    encodeSrgb(sampleMerged ? render() : l.image)
       .convertToFormat(
         QImage::Format_ARGB32); // render() skips hidden layers and references
   const int w = src.width(), h = src.height();
   auto at_ = [&](int x, int y) { return size_t(y) * w + x; };
   std::vector<float> cover =
     expandCover(floodCover(src, at, threshold, antialiased), w, h, expand);
-  QImage mask(src.size(), QImage::Format_ARGB32_Premultiplied);
-  mask.fill(Qt::transparent);
-  QColor paint = eraser ? QColor(255, 255, 255, color.alpha()) : color;
+  QImage mask = layerImage(src.size());
+  QColor paint =
+    eraser ? QColor(255, 255, 255, color.alpha()) : srgbToLinear(color);
   for (int y = 0; y < h; ++y)
     for (int x = 0; x < w; ++x)
       if (cover[at_(x, y)] > 0)
       {
         QColor c = paint;
         c.setAlphaF(paint.alphaF() * cover[at_(x, y)]);
-        mask.setPixel(x, y, qPremultiply(c.rgba()));
+        mask.setPixelColor(x, y, c);
       }
   QPainter p(&l.image);
   if (!clip_.isNull())

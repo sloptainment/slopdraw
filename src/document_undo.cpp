@@ -7,15 +7,15 @@
 namespace
 {
 
-// Smallest rect holding every pixel where a and b (same size, RGBA8888) differ;
+// Smallest rect holding every pixel where a and b (same size, RGBA64) differ;
 // null if they are equal.
 QRect diffRect(const QImage &a, const QImage &b)
 {
   int x0 = a.width(), x1 = -1, y0 = -1, y1 = -1;
   for (int y = 0; y < a.height(); y++)
   {
-    auto *p = reinterpret_cast<const QRgb *>(a.constScanLine(y));
-    auto *q = reinterpret_cast<const QRgb *>(b.constScanLine(y));
+    auto *p = reinterpret_cast<const quint64 *>(a.constScanLine(y));
+    auto *q = reinterpret_cast<const quint64 *>(b.constScanLine(y));
     for (int x = 0; x < a.width(); x++)
     {
       if (p[x] == q[x])
@@ -32,10 +32,11 @@ QRect diffRect(const QImage &a, const QImage &b)
 
 void paste(QImage &dst, const QImage &src, QPoint at)
 {
+  const size_t px = size_t(src.depth()) / 8;
   for (int y = 0; y < src.height(); y++)
     std::memcpy(
-      dst.scanLine(at.y() + y) + 4 * at.x(), src.constScanLine(y),
-      4 * size_t(src.width()));
+      dst.scanLine(at.y() + y) + px * at.x(), src.constScanLine(y),
+      px * size_t(src.width()));
 }
 
 } // namespace
