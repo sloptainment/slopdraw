@@ -1,0 +1,39 @@
+{
+  "version": 3,
+  "settings": {
+    "anti_aliasing": {
+        "base_value": 1.0, 
+        "inputs": {}
+    }, 
+    "hardness": {
+      "base_value": 0.3,
+      "inputs": {}
+    },
+    "opaque": {
+      "base_value": 1,
+      "inputs": {}
+    },
+    "opaque_multiply": {
+      "base_value": 0.0,
+      "inputs": {
+        "pressure": [[0.0, 0.0], [1.0, 1.0]]
+      }
+    },
+    "dabs_per_actual_radius": {
+      "base_value": 8.0,
+      "inputs": {}
+    },
+    "opaque_linearize": {
+      "base_value": 0.0,
+      "inputs": {}
+    },
+    "radius_logarithmic": {
+      "base_value": 1.0,
+      "inputs": {}
+    },
+    "elliptical_dab_ratio": {
+      "base_value": 1.0,
+      "inputs": {}
+    }
+  }
+}
