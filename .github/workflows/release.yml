@@ -1,0 +1,96 @@
+# A v*.* tag builds the Windows .zip and the Linux AppImage and puts them on a draft
+# GitHub Release for that tag. Tests are not run here.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build qt6-base-dev qt6-base-dev-tools qt6-qpa-plugins libgl-dev file
+      - name: Build
+        run: |
+          cmake -B build -G Ninja
+          cmake --build build --target slopdraw
+      - name: AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1 # the runner has no FUSE
+          QMAKE: /usr/lib/qt6/bin/qmake
+          OUTPUT: slopdraw-${{ github.ref_name }}-x86_64.AppImage
+        run: |
+          base=https://github.com/linuxdeploy
+          wget -q $base/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q $base/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+          mkdir -p AppDir/usr/bin
+          cp -r build/brushes AppDir/usr/bin/
+          printf '[Desktop Entry]\nType=Application\nName=slopdraw\nExec=slopdraw\nIcon=slopdraw\nCategories=Graphics;\n' > slopdraw.desktop
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --executable build/slopdraw \
+            --desktop-file slopdraw.desktop --icon-file resources/slopdraw.png \
+            --plugin qt --output appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: slopdraw-*.AppImage
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: >-
+            zip
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+      - name: Build
+        run: |
+          cmake -B build -G Ninja
+          cmake --build build --target slopdraw
+      - name: Zip
+        run: |
+          dir=slopdraw-${{ github.ref_name }}-windows-x64
+          mkdir $dir
+          cp build/slopdraw.exe $dir/
+          cp -r build/brushes $dir/
+          windeployqt6 --no-translations $dir/slopdraw.exe
+          # the MinGW runtime and the DLLs Qt itself needs (ICU, zstd, ...), until none is missing
+          for pass in 1 2 3; do
+            find $dir -name '*.exe' -o -name '*.dll' | xargs ldd | awk '/ucrt64/ {print $3}' | sort -u | xargs -r cp -n -t $dir
+          done
+          zip -r $dir.zip $dir
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: slopdraw-*.zip
+
+  release:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" \
+            --draft --title "${{ github.ref_name }}" --generate-notes \
+            slopdraw-*.AppImage slopdraw-*.zip

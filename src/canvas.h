@@ -6,6 +6,7 @@
 #include <optional>
 #include <set>
 #include <vector>
+#include <QCoreApplication>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
 #include <QOpenGLWidget>
@@ -581,7 +582,8 @@ private:
   QTimer *smoothTimer_ = nullptr;
   std::shared_ptr<MyPaintBrush> brush_ =
     [] { // the first brush listed: the Brushes list starts on the same one
-      auto all = listBrushes(BRUSH_DIR);
+      auto all =
+        listBrushes(QCoreApplication::applicationDirPath() + "/brushes");
       return all.empty() ? nullptr : loadBrush(all[0].path);
     }();
   ulong lastMs_ = 0;

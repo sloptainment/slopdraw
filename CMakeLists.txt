@@ -13,10 +13,19 @@ find_package(Qt6 REQUIRED COMPONENTS Gui)
 # Headless core: QtGui only, never QtWidgets (#35).
 add_library(slopdraw_core src/document.cpp src/document_paths.cpp src/document_undo.cpp src/document_paint.cpp src/document_float.cpp src/spiro.cpp src/brush.cpp src/powerstroke.cpp src/ora.cpp src/references.cpp vendor/miniz.c)
 target_include_directories(slopdraw_core PUBLIC src vendor)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(MYPAINT REQUIRED IMPORTED_TARGET libmypaint)
+# Vendored and static: json-c 0.19 and libmypaint 1.6.1 (no glib, gettext or OpenMP),
+# so a release carries no libmypaint or json-c library of its own.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE) # json-c's options ignore plain variables
+set(BUILD_APPS OFF CACHE BOOL "" FORCE)
+set(DISABLE_WERROR ON CACHE BOOL "" FORCE)
+set(DISABLE_EXTRA_LIBS ON CACHE BOOL "" FORCE)
+add_subdirectory(vendor/json-c EXCLUDE_FROM_ALL)
+file(GLOB MYPAINT_SOURCES vendor/libmypaint/*.c)
+add_library(mypaint STATIC ${MYPAINT_SOURCES})
+target_include_directories(mypaint PRIVATE vendor/libmypaint)
+target_link_libraries(mypaint PRIVATE json-c $<$<NOT:$<PLATFORM_ID:Windows>>:m>)
 find_package(OpenMP REQUIRED)
-target_link_libraries(slopdraw_core PUBLIC Qt6::Gui PkgConfig::MYPAINT PRIVATE OpenMP::OpenMP_CXX)
+target_link_libraries(slopdraw_core PUBLIC Qt6::Gui mypaint PRIVATE OpenMP::OpenMP_CXX)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
 add_executable(slopdraw 
@@ -42,7 +51,10 @@ target_link_libraries(slopdraw PRIVATE slopdraw_core Qt6::Widgets Qt6::OpenGLWid
 # Power of 10 rule 10 (#622): src/ builds warning-free at the pedantic setting; tests/ and vendor/ C are not held to it (#644).
 target_compile_options(slopdraw_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>)
 target_compile_options(slopdraw PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(slopdraw PRIVATE BRUSH_DIR="${CMAKE_SOURCE_DIR}/brushes")
+# The app finds its brushes in brushes/ next to the executable.
+add_custom_target(brushes ALL
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/brushes ${CMAKE_BINARY_DIR}/brushes)
+add_dependencies(slopdraw brushes)
 
 enable_testing()
 add_executable(test_document tests/test_document.cpp)
@@ -55,4 +67,5 @@ add_test(NAME resize_dialog COMMAND test_resize_dialog)
 add_executable(test_gpu_canvas tests/test_gpu_canvas.cpp src/canvas.cpp src/canvas_draw.cpp src/canvas_paint.cpp src/canvas_nodes.cpp src/canvas_select.cpp src/canvas_refs.cpp)
 target_link_libraries(test_gpu_canvas PRIVATE slopdraw_core Qt6::Widgets Qt6::OpenGLWidgets)
 target_compile_definitions(test_gpu_canvas PRIVATE BRUSH_DIR="${CMAKE_SOURCE_DIR}/brushes")
+add_dependencies(test_gpu_canvas brushes)
 add_test(NAME gpu_canvas COMMAND test_gpu_canvas)

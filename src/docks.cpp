@@ -1,6 +1,7 @@
 // The Navigation, Color and Brushes docks.
 #include "shell.h"
 #include <cmath>
+#include <QCoreApplication>
 #include <QDockWidget>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -117,7 +118,8 @@ void buildBrushesDock(Shell &sh)
 {
   Canvas *canvas = sh.canvas;
   auto *brushList = new QListWidget;
-  auto brushes = listBrushes(BRUSH_DIR);
+  auto brushes =
+    listBrushes(QCoreApplication::applicationDirPath() + "/brushes");
   for (const auto &b : brushes)
     brushList->addItem(b.name);
   brushList->setCurrentRow(0); // matches Canvas's starting brush
