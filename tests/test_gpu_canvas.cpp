@@ -63,6 +63,21 @@ static bool backgroundFilled()
   return got.pixelColor(399, 299).rgb() == canvas.palette().window().color().rgb();
 }
 
+// Transparent Background pixels show a checkerboard of 8 px screen squares; outside the document stays the palette.
+static bool checkerboardShown()
+{
+  Canvas canvas;
+  Document doc(QSize(100, 100), qsizetype(1) << 30, false);
+  doc.clearRect(QRegion(0, 0, 100, 100));
+  canvas.setDocument(std::move(doc));
+  static_cast<QWidget &>(canvas).resize(400, 300);
+  canvas.show();
+  QImage got = canvas.grabFramebuffer();
+  QRgb a = got.pixelColor(0, 0).rgb(), b = got.pixelColor(8, 0).rgb();
+  return a != b && got.pixelColor(7, 7).rgb() == a && got.pixelColor(0, 8).rgb() == b && got.pixelColor(8, 8).rgb() == a &&
+         got.pixelColor(150, 50).rgb() == canvas.palette().window().color().rgb();
+}
+
 // After a resize the document keeps its size on screen, not stretched with the old framebuffer.
 static bool resizeFollowed(QApplication &app)
 {
@@ -99,6 +114,7 @@ int main(int argc, char **argv)
   QApplication app(argc, argv);
   CHECK(resizeFollowed(app));
   CHECK(backgroundFilled());
+  CHECK(checkerboardShown());
   auto [integer, integerStroke] = worstDiffs(false);
   auto [floatPoint, floatPointStroke] = worstDiffs(true);
   CHECK(integer <= 1);

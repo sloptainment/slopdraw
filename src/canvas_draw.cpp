@@ -167,6 +167,20 @@ void Canvas::paintGL()
   }
   p.fillRect(rect(), palette().window()); // the GL framebuffer starts undefined; a QWidget showed its parent here
   p.setRenderHint(QPainter::SmoothPixmapTransform);
+  static const QPixmap squares = []
+  { // 8 px squares in screen space, light and mid grey (#408)
+    QPixmap px(16, 16);
+    px.fill(QColor(204, 204, 204));
+    QPainter q(&px);
+    q.fillRect(0, 0, 8, 8, QColor(153, 153, 153));
+    q.fillRect(8, 8, 8, 8, QColor(153, 153, 153));
+    return px;
+  }();
+  p.save();
+  p.setPen(Qt::NoPen);
+  p.setBrush(squares);
+  p.drawPolygon(s_.view.matrix().map(QPolygonF(QRectF(QPointF(0, 0), QSizeF(s_.doc.image(0).size()))))); // under the document, inside its rect only
+  p.restore();
   p.setTransform(s_.view.matrix());
   QImage frame = s_.doc.render();
   drawFrame(p, frame);
