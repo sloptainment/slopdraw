@@ -106,6 +106,8 @@ public:
   double pathWidth() const { return pathWidth_; }
   Document::PaintMode paintMode() const { return paintMode_; }
   bool selecting() const { return tool_ == SelectTool; }
+  // Select's drag on empty canvas draws a lasso instead of a rectangle.
+  void setLassoSelect(bool on) { lassoSelect_ = on; }
   // The Reference tool's picks' opacity for Tool Options (the first pick's), none
   // without picks (#544).
   std::optional<double> refOpacity() const;
@@ -206,8 +208,8 @@ public:
   void undo(bool redo);
   // Edit > Resize... (#415): Document::resize, then the view and docks refresh.
   void resize(QSize size, QPoint offset, bool scale);
-  // Edit > Crop to Selection (#419): resize to the Box Select rectangle; hasBox()
-  // enables it.
+  // Edit > Crop to Selection (#419): resize to the raster selection's bounding box;
+  // hasBox() enables it.
   bool hasBox() const { return hasDoc() && !box_.isEmpty(); }
   void cropToBox();
   // The Crop tool (#420): Confined? keeps its rectangle inside the document.
@@ -227,8 +229,8 @@ public:
   // larger, as one undo step; the shell has switched to the Reference tool, and the
   // new one is picked.
   void importReference(const QImage &img);
-  // Edit > Copy / Cut on a Raster Layer (#506): the Box Select rectangle (a
-  // floating piece where it now lies), else the whole layer, onto the system
+  // Edit > Copy / Cut on a Raster Layer (#506): the raster selection (a floating
+  // piece where it now lies), else the whole layer, onto the system
   // clipboard as an image; Cut then clears it as one undo step. Does nothing on a
   // Vector Layer.
   void copy(bool cut);
@@ -345,7 +347,7 @@ private:
   void tabletTool(QTabletEvent *e);
   void refTablet(QTabletEvent *e);
   // Ends every selection: Node/Knot edit's path and nodes, Select's and the
-  // Reference tool's picks, the Box Select rectangle.
+  // Reference tool's picks, the raster selection.
   void clearSelection()
   {
     selected_ = -1;
@@ -405,8 +407,9 @@ private:
   bool editSelected(
     const std::function<bool(Document::VPath &, const std::set<int> &)> &f);
   // Select press on a Vector Layer: on a path it picks that path alone (Shift
-  // toggles it); on empty canvas it clears the pick (Shift keeps it) and starts a
-  // box that endBox turns into the paths it touches.
+  // toggles it, Alt drops it); on empty canvas it clears the pick (Shift and Alt
+  // keep it) and starts a rectangle or lasso that endBox turns into the paths it
+  // touches (added, or with Alt taken out).
   void objectPress(QPointF pos, Qt::KeyboardModifiers mods);
   // Reference tool press (#542): inside the Transform box (not on an unpicked
   // reference) a drag moves the picks; otherwise a reference is picked alone (Shift
@@ -429,12 +432,16 @@ private:
   void drawCropFrame(QPainter &p);
   // Delete: removes the picked references as one undo step.
   void deleteRefPicks();
-  // Select press on a Raster Layer: with a Box Select rectangle, a handle, the
-  // rotate circle or the inside of the box starts a drag of the piece; outside
-  // commits a floating one.
-  void rasterPress(QPointF pos);
+  // Select press on a Raster Layer: with a selection, a handle, the rotate circle
+  // or the inside of the Transform box starts a drag of the piece; elsewhere, or
+  // with Shift or Alt, a floating piece commits and a rectangle or lasso starts that
+  // endBox makes the selection (Shift adds to it, Alt takes from it). On a group
+  // only the Transform box works.
+  void rasterPress(QPointF pos, Qt::KeyboardModifiers mods);
+  // Commits a floating piece but keeps the selection, where its pixels now lie.
+  void commitKeepingBox();
   // The floating piece drawn through m: box_'s lifted pixels, or a pasted image
-  // sitting on box_ in its own new layer (#508). commit makes it one undo step.
+  // sitting on box_'s bounding box in its own new layer (#508). commit makes it one undo step.
   bool floatPiece(const QTransform &m, bool commit = false);
   // Enter or a click outside: commit, and a paste gives the tool before it back
   // (onPasteEnd).
@@ -453,23 +460,26 @@ private:
   // Refreshes groupRect_ when the group or the document changed (a float keeps the
   // step id, so it never refreshes mid-drag).
   void updateGroupRect();
-  // A Box Select rectangle on the current Raster Layer: Select's Transform box
-  // shows on it.
+  // A raster selection on the current Raster Layer: Select's Transform box shows
+  // on its bounding box.
   bool rasterBox() const
   {
     return hasDoc() && !s_.doc.vector(s_.doc.current()) && !box_.isEmpty() &&
            boxLayer_ == s_.doc.current();
   }
-  // Brush, Lasso Fill and Bucket Fill paint inside a Box Select rectangle only (#422).
-  void clipToBox() { s_.doc.setClip(rasterBox() ? box_ : QRect()); }
-  // Box Select press: starts a drag; endBox makes it the rectangle, or a click
-  // outside the old one clears it.
-  void boxPress(QPointF pos);
-  // Delete in Box Select: clears the rectangle's pixels on its layer to transparent
-  // as one undo step.
+  // Brush, Lasso Fill and Bucket Fill paint inside a raster selection only (#422).
+  void clipToBox() { s_.doc.setClip(rasterBox() ? box_ : QRegion()); }
+  // Select press on empty canvas: starts a rectangle or lasso, with the Shift and
+  // Alt it began with.
+  void boxPress(QPointF pos, Qt::KeyboardModifiers mods);
+  // A move while it is under way: a lasso takes the point.
+  void boxTo(QPointF pos);
+  // Delete in Select on a Raster Layer: clears the selection's pixels on its layer
+  // to transparent as one undo step.
   void deleteBox();
-  // Release: a box dragged more than 3 screen px picks the paths it touches (added
-  // to the pick, which a press without Shift cleared).
+  // Release: a rectangle or lasso dragged more than 3 screen px picks the paths it
+  // touches, or on a Raster Layer becomes the selection; a click without Shift or
+  // Alt there clears the selection.
   void endBox();
   // Crop tool: press starts a new rectangle, a move or a handle drag; drags follow
   // the pointer, Enter or a double-click inside crops.
@@ -482,8 +492,8 @@ private:
   // px up a stem).
   void drawTransformBox(QPainter &p, const BoxFrame &f);
   // paintGL's overlays, in its order: crop ghost, references and their picks,
-  // then the Spiro Pen's path, Node/Knot edit's handles, Select's and Box Select's
-  // boxes, and last the brush outline.
+  // then the Spiro Pen's path, Node/Knot edit's handles, Select's boxes and
+  // selection, and last the brush outline.
   void drawReferenceOverlays(QPainter &p);
   void drawPenPath(QPainter &p, const QImage &doc);
   void drawNodeHandles(QPainter &p);
@@ -648,8 +658,10 @@ private:
   double cropRatio_ = 0; // width / height when locked, 0 until a rectangle exists
   bool boxing_ = false; // a Select box drag is under way
   QPointF boxStart_;    // where it began, in document coordinates
-  QRect box_; // Box Select's rectangle in document pixels, null for none; it
-              // belongs to layer boxLayer_
+  Qt::KeyboardModifiers boxMods_; // Shift or Alt at its press: add or take away
+  bool lassoSelect_ = false; // Select drags a lasso (into lasso_), not a rectangle
+  QRegion box_; // the raster selection in document pixels, empty for none; it
+                // belongs to layer boxLayer_
   SpiroType editType_ =
     SpiroType::G2; // Node/Knot edit's picker choice: retypes selected nodes and
                    // types a node added with Ctrl+Shift+click

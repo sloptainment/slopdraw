@@ -47,7 +47,7 @@ void Document::fill(
   p.setRenderHint(QPainter::Antialiasing);
   p.setPen(Qt::NoPen);
   if (!clip_.isNull())
-    p.setClipRect(clip_);
+    p.setClipRegion(clip_);
   if (layers_[current_].alphaLock)
     p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
   else if (eraser)
@@ -168,7 +168,7 @@ bool Document::bucketFill(
       }
   QPainter p(&l.image);
   if (!clip_.isNull())
-    p.setClipRect(clip_);
+    p.setClipRegion(clip_);
   if (l.alphaLock)
     p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
   else if (eraser)

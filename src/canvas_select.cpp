@@ -1,5 +1,5 @@
-// Canvas input for Select and Box Select: picks, the Transform box, floating pixels
-// and groups.
+// Canvas input for Select: picks, the raster selection, the Transform box,
+// floating pixels and groups.
 #include "canvas.h"
 #include <algorithm>
 #include <QMenu>
@@ -46,8 +46,8 @@ bool Canvas::editPicks(const std::function<void(Document::VPath &)> &f)
 void Canvas::objectPress(QPointF pos, Qt::KeyboardModifiers mods)
 {
   if (!s_.doc.vector(s_.doc.current()))
-    return rasterPress(pos); // a group too: groupBox() is the box
-  bool shift = mods & Qt::ShiftModifier;
+    return rasterPress(pos, mods); // a group too: groupBox() is the box
+  bool shift = mods & Qt::ShiftModifier, alt = mods & Qt::AltModifier;
   int i = s_.doc.pathAt(
     s_.doc.current(), s_.view.toDoc(pos), 6 / s_.view.screenRadius(1));
   auto was = picked();
@@ -70,7 +70,7 @@ void Canvas::objectPress(QPointF pos, Qt::KeyboardModifiers mods)
     return;
   }
   if (
-    !shift && !was.empty() &&
+    !shift && !alt && !was.empty() &&
     frame().rect.contains(frame().toDoc().inverted().map(s_.view.toDoc(pos))) &&
     (i < 0 || was.count(i)))
   { // inside the Transform box: drag moves the picked paths
@@ -85,32 +85,61 @@ void Canvas::objectPress(QPointF pos, Qt::KeyboardModifiers mods)
   }
   pickedLayer_ = s_.doc.current();
   frame_.reset();
-  picked_ = shift ? was : std::set<int>{};
+  picked_ = shift || alt ? was : std::set<int>{};
   if (i >= 0)
   {
-    if (!shift)
+    if (alt)
+      picked_.erase(i);
+    else if (!shift)
       picked_ = {i};
     else if (!picked_.erase(i))
       picked_.insert(i);
   }
   else
-  {
-    boxing_ = true;
-    boxStart_ = s_.view.toDoc(pos);
-  }
+    boxPress(pos, mods);
   update();
 }
 
-void Canvas::rasterPress(QPointF pos)
+void Canvas::boxPress(QPointF pos, Qt::KeyboardModifiers mods)
 {
-  if (!rasterBox() && !groupBox())
+  boxing_ = true;
+  boxStart_ = s_.view.toDoc(pos);
+  boxMods_ = mods & (Qt::ShiftModifier | Qt::AltModifier);
+  lasso_.clear();
+  if (lassoSelect_)
+    lasso_.push_back(boxStart_);
+}
+
+void Canvas::boxTo(QPointF pos)
+{
+  if (tool_ == SelectTool && lassoSelect_)
+    lasso_.push_back(s_.view.toDoc(pos));
+}
+
+void Canvas::rasterPress(QPointF pos, Qt::KeyboardModifiers mods)
+{
+  bool group = s_.doc.isGroup(s_.doc.current());
+  if (group && !groupBox())
     return;
   BoxFrame f = frame();
   QPointF d = s_.view.toDoc(pos);
-  auto handle = frameHandleAt(f, d, 6 / s_.view.screenRadius(1));
-  bool rotate = onRotateHandle(pos);
-  if (!handle && !rotate && !f.rect.contains(f.toDoc().inverted().map(d)))
-    return endPaste();
+  bool box = rasterBox() || groupBox();
+  auto handle = box ? frameHandleAt(f, d, 6 / s_.view.screenRadius(1)) : std::nullopt;
+  bool rotate = box && onRotateHandle(pos);
+  bool modded = mods & (Qt::ShiftModifier | Qt::AltModifier);
+  if (
+    !handle && !rotate &&
+    (!box || modded || !f.rect.contains(f.toDoc().inverted().map(d))))
+  { // outside: a paste or a group commits; a raster selection gets a new shape
+    if (group || !pasted_.isNull())
+      return endPaste();
+    if (modded)
+      commitKeepingBox();
+    else
+      commitFloat();
+    boxPress(pos, mods);
+    return update();
+  }
   moveFrame_ = f;
   moveDrag_ = true;
   handle_ = handle;
@@ -123,7 +152,8 @@ bool Canvas::floatPiece(const QTransform &m, bool commit)
 {
   if (pasted_.isNull())
     return commit ? s_.doc.transformRect(box_, m) : s_.doc.floatRect(box_, m);
-  QTransform at = QTransform::fromTranslate(box_.left(), box_.top()) * m;
+  QRect b = box_.boundingRect();
+  QTransform at = QTransform::fromTranslate(b.left(), b.top()) * m;
   return commit ? s_.doc.pasteImage(pasted_, at, pasteNew_)
                 : s_.doc.floatImage(pasted_, at, pasteNew_);
 }
@@ -154,9 +184,18 @@ void Canvas::commitFloat()
   floating_ = false;
   floatM_ = {};
   frame_.reset();
-  box_ = QRect();
+  box_ = QRegion();
   update();
   layersChanged();
+}
+
+void Canvas::commitKeepingBox()
+{
+  if (!floating_)
+    return;
+  QRegion moved = floatM_.map(box_) & s_.doc.image(0).rect();
+  commitFloat();
+  box_ = moved;
 }
 
 void Canvas::cancelFloat()
@@ -198,15 +237,9 @@ void Canvas::updateGroupRect()
   groupRect_ = s_.doc.groupBounds(cur);
 }
 
-void Canvas::boxPress(QPointF pos)
-{
-  boxing_ = true;
-  boxStart_ = s_.view.toDoc(pos);
-  update();
-}
-
 void Canvas::deleteBox()
 {
+  commitKeepingBox();
   if (box_.isEmpty() || boxLayer_ != s_.doc.current() || !s_.doc.clearRect(box_))
     return;
   update();
@@ -218,21 +251,37 @@ void Canvas::endBox()
   if (!boxing_)
     return;
   boxing_ = false;
+  QPolygonF lasso = std::exchange(lasso_, {});
   if (cursor_)
   {
     QRectF box = QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized();
+    bool lassoed = tool_ == SelectTool && lassoSelect_;
+    if (lassoed)
+      box = lasso.boundingRect();
     bool dragged =
       std::max(box.width(), box.height()) * s_.view.screenRadius(1) > 3;
-    if (tool_ == BoxSelectTool)
+    QPainterPath area;
+    if (lassoed)
+      area.addPolygon(lasso);
+    else
+      area.addRect(box);
+    bool add = boxMods_ & Qt::ShiftModifier, take = boxMods_ & Qt::AltModifier;
+    if (tool_ == SelectTool && !s_.doc.vector(s_.doc.current()))
     {
+      if (boxLayer_ != s_.doc.current())
+        box_ = QRegion();
+      QRegion shape =
+        (lassoed ? QRegion(lasso.toPolygon(), Qt::WindingFill)
+                 : QRegion(box.toAlignedRect())) &
+        s_.doc.image(0).rect();
       if (dragged)
       {
-        box_ = box.toAlignedRect() & s_.doc.image(0).rect();
+        box_ = add ? box_ | shape : take ? box_ - shape : shape;
         boxLayer_ = s_.doc.current();
         frame_.reset();
       }
-      else if (!box_.contains(box.topLeft().toPoint()))
-        box_ = QRect();
+      else if (!add && !take)
+        box_ = QRegion();
     }
     else if (dragged && tool_ == ReferenceTool)
     {
@@ -241,8 +290,12 @@ void Canvas::endBox()
     }
     else if (dragged)
     {
-      auto in = s_.doc.pathsIn(s_.doc.current(), box);
-      picked_.insert(in.begin(), in.end());
+      auto in = s_.doc.pathsIn(s_.doc.current(), area);
+      for (int i : in)
+        if (take)
+          picked_.erase(i);
+        else
+          picked_.insert(i);
     }
   }
   update();
@@ -346,7 +399,7 @@ BoxFrame Canvas::frame() const
   if (rasterBox())
     return moveDrag_ ? frameAfter(moveFrame_, dragM_)
            : frame_  ? *frame_
-                     : BoxFrame{QRectF(box_), 0};
+                     : BoxFrame{QRectF(box_.boundingRect()), 0};
   if (moveDrag_ && (rotating_ || frame_))
     return frameAfter(moveFrame_, dragM_);
   return frame_

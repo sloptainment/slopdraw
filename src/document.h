@@ -3,6 +3,7 @@
 #include <QImage>
 #include <QPainterPath>
 #include <QPointF>
+#include <QRegion>
 #include <QString>
 #include <QTransform>
 #include <QSize>
@@ -90,8 +91,8 @@ public:
     const std::vector<PenSample> &samples,
     bool continuing = false,
     bool eraser = false);
-  // While rect is not null, stroke and fill change pixels inside it only (#422).
-  void setClip(const QRect &rect) { clip_ = rect; }
+  // While region is not null, stroke and fill change pixels inside it only (#422).
+  void setClip(const QRegion &region) { clip_ = region; }
   // Fills the closed polygon through points on the current Raster Layer:
   // antialiased, non-zero winding, solid color (sRGB, as picked). eraser = true cuts the shape out of
   // the alpha instead (to white under alpha lock). One call is one undo step.
@@ -112,10 +113,10 @@ public:
     bool antialiased = true,
     bool sampleMerged = true,
     bool eraser = false);
-  // Clears a rectangle of the current Raster Layer to transparent, the background
+  // Clears a region of the current Raster Layer to transparent, the background
   // (layer 0) included. One undo step. Returns false, changing nothing, for a
   // Vector Layer.
-  bool clearRect(const QRect &rect);
+  bool clearRect(const QRegion &rect);
   // The canvas becomes `size`, the old picture at `offset` in it: new area is
   // transparent on every layer, the Background included, pixels past the edge are
   // cropped, Vector Paths move by `offset` with every node kept and Vector Layers
@@ -125,14 +126,14 @@ public:
   // and Vector Path nodes scale per axis, Width Knots by the root of the area change
   // (#658).
   bool resize(QSize size, QPoint offset, bool scale = false);
-  // Select on a raster selection (#205). floatRect lifts rect's pixels from the
-  // current Raster Layer, clears rect, and draws the lifted pixels through m
+  // Select on a raster selection (#205). floatRect lifts the pixels of region rect
+  // from the current Raster Layer, clears them, and draws the lifted pixels through m
   // (smooth): the live drag, no undo step. Every call starts again from the pixels
   // as they were before the first one, so resampling never compounds. transformRect
   // is floatRect plus the one undo step; cancelFloat puts the layer back. Both
   // calls refuse a Vector Layer (false).
-  bool floatRect(const QRect &rect, const QTransform &m);
-  bool transformRect(const QRect &rect, const QTransform &m);
+  bool floatRect(const QRegion &rect, const QTransform &m);
+  bool transformRect(const QRegion &rect, const QTransform &m);
   void cancelFloat();
   // Paste (#504): floatImage draws img through m over the current Raster Layer,
   // live like floatRect; newLayer first adds a Raster Layer on top for it (no step
@@ -198,8 +199,14 @@ public:
   // p, or -1 (also for a Raster Layer).
   int pathAt(int layer, QPointF p, double tol) const;
   // The indexes, bottom first, of the paths of Vector Layer `layer` whose drawn
-  // stroke (or, closed, Spiro curve fill) touches box; empty for a Raster Layer.
-  std::vector<int> pathsIn(int layer, const QRectF &box) const;
+  // stroke (or, closed, Spiro curve fill) touches area; empty for a Raster Layer.
+  std::vector<int> pathsIn(int layer, const QPainterPath &area) const;
+  std::vector<int> pathsIn(int layer, const QRectF &box) const
+  {
+    QPainterPath area;
+    area.addRect(box);
+    return pathsIn(layer, area);
+  }
   // The Spiro Node of path `path` nearest to p within tol, as its index, or -1
   // (also for a bad layer or path index).
   int nodeAt(int layer, int path, QPointF p, double tol) const;
@@ -513,7 +520,7 @@ private:
   // The current layer as it was when the stroke in progress began; null when none
   // is in progress. Shares pixels with that layer until the first dab detaches it,
   // so starting a stroke copies once.
-  QRect clip_; // null: paint anywhere
+  QRegion clip_; // null: paint anywhere
   QImage strokeStart_;
   std::vector<Layer> groupStart_; // while a group floats: the items as they were,
                                   // for seal to push as one Tree step

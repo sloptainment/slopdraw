@@ -1506,6 +1506,29 @@ static bool transformRectMovesPixelsAndUndoesOnce() {
     return moved && undone && redone && live && cancelled && refused;
 }
 
+// A lasso selection is a region, not its bounding box: on a layer blue left of x=30 and red right of it, a triangle region below the
+// diagonal of (10,10)-(30,30) lifts, clears and clips only its own pixels. floatRect moves the triangle's pixels by (20,0) onto the red
+// without the other half of its box; clearRect clears the triangle alone; a clipped Lasso Fill paints red inside it only.
+static bool regionSelectionTouchesOnlyItsPixels() {
+    Document doc(QSize(64, 64));
+    doc.addLayer();
+    doc.fill(Qt::blue, {{0, 0}, {30, 0}, {30, 64}, {0, 64}});
+    doc.fill(Qt::red, {{30, 0}, {64, 0}, {64, 64}, {30, 64}});
+    QImage before = doc.image(1);
+    QRegion tri(QPolygon({{10, 10}, {10, 30}, {30, 30}}), Qt::WindingFill);
+    bool lifted = doc.floatRect(tri, QTransform::fromTranslate(20, 0)) && doc.image(1).pixelColor(12, 28).alpha() == 0
+        && doc.image(1).pixelColor(28, 12) == QColor(Qt::blue) && doc.image(1).pixelColor(32, 28) == QColor(Qt::blue)
+        && doc.image(1).pixelColor(48, 12) == QColor(Qt::red);  // the box's other half lifted transparent, not blue
+    doc.cancelFloat();
+    bool cleared = doc.image(1) == before && doc.clearRect(tri) && doc.image(1).pixelColor(12, 28).alpha() == 0
+        && doc.image(1).pixelColor(28, 12) == QColor(Qt::blue) && doc.undo() && doc.image(1) == before;
+    doc.setClip(tri);
+    doc.fill(Qt::red, {{0, 0}, {64, 0}, {64, 64}, {0, 64}});
+    doc.setClip(QRegion());
+    bool clipped = doc.image(1).pixelColor(12, 28) == QColor(Qt::red) && doc.image(1).pixelColor(28, 12) == QColor(Qt::blue);
+    return lifted && cleared && clipped;
+}
+
 // The Spiro Pen's click sequence: nodes take the current type, finishing open or closed is one undo step, clicking near the first node
 // asks to close, Backspace drops the last node, cancel drops all, and too few nodes leave the pen as it was.
 static bool spiroPenPlacesNodesAndFinishes() {
@@ -1635,8 +1658,7 @@ static bool toolFollowsLayerKind() {
         && toolForLayer(true, LassoFillTool, LassoFillTool, NodeKnotEditTool) == NodeKnotEditTool
         && toolForLayer(false, LassoFillTool) == LassoFillTool && toolForLayer(true, NodeKnotEditTool) == NodeKnotEditTool
         && toolForLayer(false, SelectTool) == SelectTool && toolForLayer(true, SelectTool) == SelectTool  // Select fits both kinds (#221)
-        && toolForLayer(false, BoxSelectTool) == BoxSelectTool && toolForLayer(true, BoxSelectTool) == SpiroPenTool  // Box Select fits Raster Layers only (#204)
-        && toolForLayer(true, BoxSelectTool, BrushTool, NodeKnotEditTool) == NodeKnotEditTool
+        && toolForLayer(false, BucketFillTool) == BucketFillTool && toolForLayer(true, BucketFillTool, BrushTool, NodeKnotEditTool) == NodeKnotEditTool
         && toolForLayer(false, ReferenceTool) == ReferenceTool && toolForLayer(true, ReferenceTool) == ReferenceTool  // fits every kind (#539)
         && toolForLayer(false, CropTool) == CropTool && toolForLayer(true, CropTool) == CropTool && toolFitsKind(false, CropTool, true)  // Crop fits every kind, groups too (#420)
         && toolForLayer(false, BrushTool, BrushTool, SpiroPenTool, true) == SelectTool && toolForLayer(true, SpiroPenTool, BrushTool, SpiroPenTool, true) == SelectTool  // a group takes Select alone (#458)
@@ -2851,6 +2873,7 @@ int main() {
     run("flipMirrorsAndScaleWidthsIsOptIn", flipMirrorsAndScaleWidthsIsOptIn);
     run("rewidthPathScalesKnots", rewidthPathScalesKnots);
     run("transformRectMovesPixelsAndUndoesOnce", transformRectMovesPixelsAndUndoesOnce);
+    run("regionSelectionTouchesOnlyItsPixels", regionSelectionTouchesOnlyItsPixels);
     run("pastedImageFloatsAndCommitsOnce", pastedImageFloatsAndCommitsOnce);
     run("pasteAfterLiveStrokeKeepsTheStroke", pasteAfterLiveStrokeKeepsTheStroke);
     run("pastedNewLayerGoesAboveTheCurrentItem", pastedNewLayerGoesAboveTheCurrentItem);

@@ -134,12 +134,12 @@ void Canvas::paintGL()
   updateGroupRect();
   if (boxLayer_ != s_.doc.current())
   {
-    box_ = QRect();
+    box_ = QRegion();
     floating_ = false;
     floatM_ = {};
     if (tool_ != ReferenceTool)
       frame_.reset();
-  } // a layer switch clears the Box Select rectangle; setCurrent already sealed any
+  } // a layer switch clears the raster selection; setCurrent already sealed any
     // floating piece
   flushPreview();
   if (penLayer_ != s_.doc.current())
@@ -347,24 +347,26 @@ void Canvas::drawSelectOverlays(QPainter &p)
       p.drawPath(Document::outline(s_.doc.paths(s_.doc.current())[i]));
     if (!picked().empty() || rasterBox() || groupBox())
       drawTransformBox(p, frame());
-    if (boxing_ && cursor_)
-    {
+    if (boxing_ && cursor_ && !lassoSelect_)
+    { // a lasso draws as lasso_
       pen.setStyle(Qt::DashLine);
       p.setPen(pen);
       p.drawRect(QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized());
     }
   }
-  QRectF marked =
-    tool_ == BoxSelectTool && boxing_ && cursor_
-      ? QRectF(boxStart_, s_.view.toDoc(*cursor_)).normalized()
-      : QRectF(box_); // Box Select: the rectangle, or the one being dragged
-  if (!marked.isEmpty())
-  {
+  if (!box_.isEmpty())
+  { // the raster selection's outline, moved with its floating pixels
+    QPainterPath marked;
+    marked.addRegion(box_);
     QPen pen(Qt::blue, 1, Qt::DashLine);
     pen.setCosmetic(true);
+    p.save();
+    if (floating_)
+      p.setTransform(moveDrag_ ? floatM_ * dragM_ : floatM_, true);
     p.setPen(pen);
     p.setBrush(Qt::NoBrush);
-    p.drawRect(marked);
+    p.drawPath(marked.simplified());
+    p.restore();
   }
 }
 

@@ -39,7 +39,8 @@ struct Options
   QCheckBox *eraseBox = nullptr;
   QWidget *brushBox = nullptr, *lassoBox = nullptr, *bucketBox = nullptr,
           *refBox = nullptr, *widthBox = nullptr, *paintBox = nullptr,
-          *swatchBox = nullptr, *curveBox = nullptr, *cropBox = nullptr;
+          *swatchBox = nullptr, *curveBox = nullptr, *cropBox = nullptr,
+          *shapeBox = nullptr;
   QSpinBox *cropFields[4] = {}; // X, Y, W, H
   QSlider *brushOpacity = nullptr, *lassoOpacity = nullptr, *refOpacity = nullptr,
           *pathWidth = nullptr;
@@ -383,6 +384,35 @@ void nodeTypeLists(Options &o)
 
 // The Pen's Spiro / Bezier toggle, Spiro by default (#308); Bezier has no node
 // picker.
+// Select's drag on empty canvas: a Rectangle or a Lasso.
+QWidget *shapeOptions(Options &o)
+{
+  Canvas *canvas = o.canvas;
+  auto *box = new QWidget;
+  auto *row = new QHBoxLayout(box);
+  row->setContentsMargins(0, 0, 0, 0);
+  row->setSpacing(0);
+  row->addWidget(new QLabel("Shape"));
+  for (bool lasso : {false, true})
+  {
+    auto *b = new QToolButton;
+    b->setText(lasso ? "Lasso" : "Rectangle");
+    b->setCheckable(true);
+    b->setAutoExclusive(true);
+    b->setChecked(!lasso);
+    QObject::connect(
+      b, &QToolButton::toggled,
+      [canvas, lasso](bool on)
+      {
+        if (on)
+          canvas->setLassoSelect(lasso);
+      });
+    row->addWidget(b);
+  }
+  row->addStretch();
+  return box;
+}
+
 QWidget *curveOptions(Options &o)
 {
   Canvas *canvas = o.canvas;
@@ -461,21 +491,34 @@ QWidget *cropOptions(Options &o)
   return box;
 }
 
+// The path options: the Pen's, and Select's on a Vector Layer; Scale widths on a
+// group too, whose transform scales its paths' widths.
+void showPathOptions(const Options &o, int tool)
+{
+  Canvas *canvas = o.canvas;
+  int cur = canvas->hasDoc() ? canvas->doc().current() : -1;
+  bool vec = cur >= 0 && canvas->doc().vector(cur),
+       grp = cur >= 0 && canvas->doc().isGroup(cur);
+  bool paths = tool == SpiroPenTool || (tool == SelectTool && vec);
+  o.scaleWidths->setVisible(tool == SelectTool && (vec || grp));
+  o.widthBox->setVisible(paths);
+  o.paintBox->setVisible(paths);
+  o.swatchBox->setVisible(paths);
+  o.curveBox->setVisible(paths);
+}
+
 void showOptions(const Options &o, int tool)
 {
   o.cropBox->setVisible(tool == CropTool);
-  o.scaleWidths->setVisible(tool == SelectTool);
+  showPathOptions(o, tool);
   o.eraseBox->setVisible(tool <= LassoFillTool || tool == BucketFillTool);
   o.brushBox->setVisible(tool == BrushTool);
   o.lassoBox->setVisible(tool == LassoFillTool);
   o.bucketBox->setVisible(tool == BucketFillTool);
-  o.widthBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
-  o.paintBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
-  o.swatchBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
   o.picker->setColor(
     o.canvas->color()); // the Pen's active swatch or the brush color
   nameColorDock(o, tool);
-  o.curveBox->setVisible(tool == SpiroPenTool || tool == SelectTool);
+  o.shapeBox->setVisible(tool == SelectTool);
   o.penTypes->setVisible(tool == SpiroPenTool && !o.canvas->bezier());
   o.editTypes->setVisible(tool == NodeKnotEditTool && !o.canvas->bezierSelected());
   o.bezierTypes->setVisible(tool == NodeKnotEditTool && o.canvas->bezierSelected());
@@ -530,7 +573,7 @@ void onRepaint(const Options &o)
 {
   Canvas *canvas = o.canvas;
   if (canvas->selecting())
-    showPicks(o);
+    showPicks(o), showPathOptions(o, SelectTool); // a layer switch keeps Select
   QRect c = canvas->cropRect();
   for (int k = 0; k < 4; k++)
   { // the Crop tool's fields follow its rectangle
@@ -575,6 +618,7 @@ void buildToolOptionsDock(Shell &sh)
   wireColor(o);
   nodeTypeLists(*o);
   o->curveBox = curveOptions(*o);
+  o->shapeBox = shapeOptions(*o);
   o->scaleWidths = new QCheckBox("Scale widths"); // Select's, off by default (#203)
   QObject::connect(
     o->scaleWidths, &QCheckBox::toggled,
@@ -595,7 +639,7 @@ void buildToolOptionsDock(Shell &sh)
   auto *optionsCol = new QVBoxLayout(optionsPanel);
   for (QWidget *w : std::initializer_list<QWidget *>{
          o->eraseBox, o->brushBox, o->lassoBox, o->bucketBox, o->refBox,
-         o->cropBox, o->curveBox, o->widthBox, o->paintBox, o->swatchBox, o->scaleWidths,
+         o->cropBox, o->shapeBox, o->curveBox, o->widthBox, o->paintBox, o->swatchBox, o->scaleWidths,
          o->penTypes, o->editTypes, o->bezierTypes})
     optionsCol->addWidget(w);
   optionsCol->addStretch(); // spare height goes below the options, not between them

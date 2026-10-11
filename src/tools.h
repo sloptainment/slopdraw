@@ -8,13 +8,12 @@ enum Tool
   SpiroPenTool,
   NodeKnotEditTool,
   SelectTool,
-  BoxSelectTool,
   ReferenceTool,
   BucketFillTool,
   CropTool
 };
 
-// Brush, Lasso Fill, Box Select and Bucket Fill fit a Raster Layer, Spiro Pen and
+// Brush, Lasso Fill and Bucket Fill fit a Raster Layer, Spiro Pen and
 // Node/Knot edit a Vector Layer, Select and Reference either (#221, #204, #539). A
 // group takes Select and Reference alone (#426); Crop fits every kind, groups too
 // (#409).
@@ -22,8 +21,7 @@ inline bool toolFitsKind(bool vector, int tool, bool group = false)
 {
   return group ? tool == SelectTool || tool == ReferenceTool || tool == CropTool
                : tool == SelectTool || tool == ReferenceTool || tool == CropTool ||
-                   (tool >= SpiroPenTool && tool != BoxSelectTool &&
-                    tool != BucketFillTool) == vector;
+                   (tool >= SpiroPenTool && tool != BucketFillTool) == vector;
 }
 
 // The tool after a layer switch (#170, #161): the current one if it fits the new

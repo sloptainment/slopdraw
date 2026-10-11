@@ -4,7 +4,7 @@
 #include <QPainter>
 #include "transform.h"
 
-bool Document::clearRect(const QRect &rect)
+bool Document::clearRect(const QRegion &rect)
 {
   if (layers_[current_].vector)
     return false;
@@ -13,7 +13,8 @@ bool Document::clearRect(const QRect &rect)
   strokeStart_ = layers_[current_].image;
   QPainter p(&layers_[current_].image);
   p.setCompositionMode(QPainter::CompositionMode_Source);
-  p.fillRect(rect, Qt::transparent);
+  for (const QRect &r : rect)
+    p.fillRect(r, Qt::transparent);
   p.end();
   seal(); // its own step; a rect that changed nothing pushes none
   return true;
@@ -63,7 +64,7 @@ bool Document::resize(QSize size, QPoint offset, bool scale)
   return true;
 }
 
-bool Document::floatRect(const QRect &rect, const QTransform &m)
+bool Document::floatRect(const QRegion &rect, const QTransform &m)
 {
   if (layers_[current_].vector)
     return false;
@@ -74,19 +75,26 @@ bool Document::floatRect(const QRect &rect, const QTransform &m)
     strokeStart_ = layers_[current_].image;
     pasting_ = true; // not a step yet: stepId must not seal it
   }
-  QImage lifted = strokeStart_.copy(rect);
+  QRect bounds = rect.boundingRect();
+  QImage lifted = strokeStart_.copy(bounds);
+  QPainter cut(&lifted); // only the region's pixels lift, not its whole bounding box
+  cut.setCompositionMode(QPainter::CompositionMode_Source);
+  for (const QRect &r : QRegion(bounds) - rect)
+    cut.fillRect(r.translated(-bounds.topLeft()), Qt::transparent);
+  cut.end();
   layers_[current_].image = strokeStart_;
   QPainter p(&layers_[current_].image);
   p.setCompositionMode(QPainter::CompositionMode_Source);
-  p.fillRect(rect, current_ == 0 ? QColor(Qt::white) : QColor(Qt::transparent));
+  for (const QRect &r : rect)
+    p.fillRect(r, current_ == 0 ? QColor(Qt::white) : QColor(Qt::transparent));
   p.setCompositionMode(QPainter::CompositionMode_SourceOver);
   p.setRenderHint(QPainter::SmoothPixmapTransform);
   p.setTransform(m);
-  p.drawImage(rect.topLeft(), lifted);
+  p.drawImage(bounds.topLeft(), lifted);
   return true;
 }
 
-bool Document::transformRect(const QRect &rect, const QTransform &m)
+bool Document::transformRect(const QRegion &rect, const QTransform &m)
 {
   if (!floatRect(rect, m))
     return false;

@@ -204,7 +204,7 @@ int Document::pathAt(int layer, QPointF p, double tol) const
   return -1;
 }
 
-std::vector<int> Document::pathsIn(int layer, const QRectF &box) const
+std::vector<int> Document::pathsIn(int layer, const QPainterPath &area) const
 {
   std::vector<int> hit;
   if (!layers_[layer].vector)
@@ -213,8 +213,8 @@ std::vector<int> Document::pathsIn(int layer, const QRectF &box) const
   {
     const VPath &v = layers_[layer].paths[i];
     if (
-      outline(v).intersects(box) ||
-      (v.mode != PaintMode::Stroke && curveOf(v).intersects(box)))
+      outline(v).intersects(area) ||
+      (v.mode != PaintMode::Stroke && curveOf(v).intersects(area)))
       hit.push_back(i);
   }
   return hit;

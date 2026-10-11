@@ -5,6 +5,7 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QStyleHints>
 #include <QTabletEvent>
 #include <QWheelEvent>
@@ -40,6 +41,8 @@ void Canvas::setTool(int t)
   refPicks_.clear();
   frame_.reset();
   endCrop();
+  if (boxing_)
+    lasso_.clear(); // a Select lasso under way
   boxing_ = false;
   cropRect_ = QRect();
   cropDrag_ = 0;
@@ -74,7 +77,8 @@ void Canvas::cropToBox()
 {
   if (!hasBox())
     return;
-  QRect r = (floating_ ? floatM_.mapRect(box_) : box_) & s_.doc.image(0).rect();
+  QRect r = (floating_ ? floatM_.map(box_) : box_).boundingRect() &
+            s_.doc.image(0).rect();
   if (!r.isEmpty())
     resize(r.size(), -r.topLeft(), false); // commits a float, clears the box
 }
@@ -86,9 +90,15 @@ void Canvas::copy(bool cut)
     s_.doc.isGroup(s_.doc.current()))
     return;
   QRect all = s_.doc.image(0).rect();
-  QRect r = !rasterBox() ? all : floating_ ? floatM_.mapRect(box_) & all : box_;
-  QGuiApplication::clipboard()->setImage(
-    encodeSrgb(s_.doc.image(s_.doc.current()).copy(r)));
+  QRegion r = !rasterBox() ? QRegion(all) : floating_ ? floatM_.map(box_) & all : box_;
+  QRect b = r.boundingRect();
+  QImage piece = s_.doc.image(s_.doc.current()).copy(b);
+  QPainter p(&piece); // a lasso's corners outside it copy as transparent
+  p.setCompositionMode(QPainter::CompositionMode_Source);
+  for (const QRect &out : QRegion(b) - r)
+    p.fillRect(out.translated(-b.topLeft()), Qt::transparent);
+  p.end();
+  QGuiApplication::clipboard()->setImage(encodeSrgb(piece));
   if (!cut)
     return;
   commitFloat();
@@ -194,8 +204,6 @@ void Canvas::mousePressEvent(QMouseEvent *e)
     selectPress(e->position(), e->modifiers());
   else if (e->button() == Qt::LeftButton && !space_ && tool_ == SelectTool)
     objectPress(e->position(), e->modifiers());
-  else if (e->button() == Qt::LeftButton && !space_ && tool_ == BoxSelectTool)
-    boxPress(e->position());
   else if (e->button() == Qt::LeftButton && !space_ && tool_ == CropTool)
     cropRectPress(e->position());
   else if (
@@ -211,8 +219,7 @@ void Canvas::mousePressEvent(QMouseEvent *e)
       bucketAt(e->position());
   }
   else if (
-    e->button() == Qt::LeftButton && !space_ && !resizing_ && tool_ != SelectTool &&
-    tool_ != BoxSelectTool)
+    e->button() == Qt::LeftButton && !space_ && !resizing_ && tool_ != SelectTool)
     paintAt(e->position(), 0.5f, 0, 0, e->timestamp(), erase());
 }
 
@@ -239,7 +246,7 @@ void Canvas::mouseMoveEvent(QMouseEvent *e)
   if (penDrag_)
     return pen_.drag(s_.view.toDoc(e->position()));
   if (boxing_)
-    return;
+    return boxTo(e->position());
   if (tool_ == SelectTool || tool_ == ReferenceTool)
     setCursor(
       !(tool_ == ReferenceTool ? refPicks_.empty() : picked().empty()) &&
@@ -378,11 +385,8 @@ void Canvas::tabletTool(QTabletEvent *e)
       objectPress(e->position(), e->modifiers());
     else if (moveDrag_)
       dragMoveTo(e->position(), e->modifiers() & Qt::ShiftModifier);
-  }
-  else if (tool_ == BoxSelectTool)
-  {
-    if (e->type() == QEvent::TabletPress)
-      boxPress(e->position());
+    else if (boxing_)
+      boxTo(e->position());
   }
   else if (tool_ == CropTool)
   {
@@ -412,7 +416,7 @@ void Canvas::tabletTool(QTabletEvent *e)
     tool_ == LassoFillTool && (e->type() == QEvent::TabletPress || lassoing_))
     lassoAt(e->position(), erase() || eraser);
   else if (
-    tool_ != SelectTool && tool_ != BoxSelectTool &&
+    tool_ != SelectTool &&
     (e->pointerType() == QPointingDevice::PointerType::Pen ||
      e->pointerType() == QPointingDevice::PointerType::Eraser) &&
     (e->type() == QEvent::TabletPress || painting_))
@@ -438,12 +442,12 @@ void Canvas::keyPressEvent(QKeyEvent *e)
   {
     if (tool_ == NodeKnotEditTool)
       deleteSelectedNodes();
+    else if (tool_ == SelectTool && rasterBox())
+      deleteBox();
     else if (tool_ == SelectTool)
       deletePicked();
     else if (tool_ == ReferenceTool)
       deleteRefPicks();
-    else if (tool_ == BoxSelectTool)
-      deleteBox();
     else
       pen_.backspace();
     update();
@@ -494,11 +498,11 @@ QString Canvas::hint() const
            "right-click flips · Enter or click outside commits · Esc puts it back";
   if (tool_ == SelectTool && rasterBox())
     return "Drag inside the box moves the pixels · handles scale · circle rotates "
-           "· right-click flips · Enter or click outside commits · Esc puts them "
-           "back";
+           "· right-click flips · Delete clears · Enter commits · drag outside "
+           "selects anew, a click there drops the selection · Shift+drag adds · "
+           "Alt+drag takes away · Esc puts moved pixels back";
   if (tool_ == SelectTool && !s_.doc.vector(s_.doc.current()))
-    return "Make a rectangle with Box Select first, then Select transforms its "
-           "pixels";
+    return "Drag to select pixels · Shift+drag adds · Alt+drag takes away";
   if (cropping_ >= 0)
     return "Drag an edge or corner to crop, inside to move the crop · the whole "
            "picture is kept · Enter or click outside finishes";
@@ -514,19 +518,14 @@ QString Canvas::hint() const
   if (tool_ == CropTool)
     return "Drag a rectangle · drag inside moves it · handles resize · Enter or "
            "double-click crops · Esc drops it";
-  if (tool_ == BoxSelectTool && box_.isEmpty())
-    return "Drag a rectangle to select pixels";
-  if (tool_ == BoxSelectTool)
-    return "Delete clears the pixels · drag a new rectangle to replace it · click "
-           "outside or Esc clears the selection";
   if (tool_ == SelectTool && picked().empty())
-    return "Click a path to pick it · Shift+click toggles · drag a box on empty "
-           "canvas picks the paths it touches";
+    return "Click a path to pick it · Shift+click toggles · drag on empty canvas "
+           "picks the paths it touches";
   if (tool_ == SelectTool)
     return QString("%1 picked · drag inside the box moves them · drag a handle "
                    "scales (Shift keeps the ratio on a corner) · the circle rotates "
                    "· right-click Flips or Converts to Bezier · Delete removes "
-                   "them · click or drag a box to pick again · Shift adds")
+                   "them · click or drag to pick again · Shift adds · Alt takes away")
       .arg(picked().size());
   if (tool_ == BucketFillTool)
     return "Click fills the connected region within Threshold · Ctrl+click picks a "
